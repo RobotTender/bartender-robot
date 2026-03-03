@@ -251,9 +251,7 @@
 
     {% if submitted %}
       <div class="result">
-        <div>분류: {{ intent }}</div>
         <div>입력: {{ order_text|default:"(입력 없음)" }}</div>
-        <div>응답: {{ assistant_reply }}</div>
       </div>
     {% endif %}
   </main>
@@ -265,69 +263,121 @@
     const micBtn = document.getElementById("mic-btn");
     const orderForm = document.getElementById("order-form");
     const chips = document.querySelectorAll(".chip");
+    const csrfToken = document.querySelector("input[name='csrfmiddlewaretoken']").value;
+    const transcribeUrl = "{% url 'stt_transcribe' %}";
 
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    let recognition = null;
-    let listening = false;
+    let mediaRecorder = null;
+    let mediaStream = null;
+    let chunks = [];
+    let recording = false;
 
-    if (!SpeechRecognition) {
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
       statusEl.textContent = "Mic Unsupported";
-      previewEl.textContent = "이 브라우저는 음성 인식을 지원하지 않습니다.";
+      previewEl.textContent = "이 브라우저는 음성 녹음을 지원하지 않습니다.";
       micBtn.disabled = true;
-    } else {
-      recognition = new SpeechRecognition();
-      recognition.lang = "ko-KR";
-      recognition.interimResults = true;
-      recognition.continuous = true;
-
-      recognition.onstart = function () {
-        listening = true;
-        micBtn.classList.add("active");
-        statusEl.textContent = "Listening...";
-      };
-
-      recognition.onend = function () {
-        listening = false;
-        micBtn.classList.remove("active");
-        statusEl.textContent = "Ready";
-        if (orderInput.value.trim()) {
-          orderForm.submit();
-        }
-      };
-
-      recognition.onerror = function (event) {
-        statusEl.textContent = "Error";
-        previewEl.textContent = "음성 인식 오류: " + event.error;
-      };
-
-      recognition.onresult = function (event) {
-        let finalText = "";
-        let interimText = "";
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const text = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            finalText += text + " ";
-          } else {
-            interimText += text;
-          }
-        }
-
-        if (finalText) {
-          orderInput.value = (orderInput.value + " " + finalText).trim();
-        }
-
-        previewEl.textContent = interimText || orderInput.value;
-      };
     }
 
-    micBtn.addEventListener("click", function () {
-      if (!recognition) return;
-      if (listening) {
-        recognition.stop();
-      } else {
-        orderInput.value = "";
-        previewEl.textContent = "";
-        recognition.start();
+    async function sendForTranscription(blob) {
+      statusEl.textContent = "Transcribing...";
+      const formData = new FormData();
+      let filename = "recording.webm";
+      if (blob.type.includes("mp4")) filename = "recording.mp4";
+      if (blob.type.includes("mpeg")) filename = "recording.mp3";
+      if (blob.type.includes("wav")) filename = "recording.wav";
+      formData.append("audio", blob, filename);
+
+      const response = await fetch(transcribeUrl, {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": csrfToken,
+        },
+        body: formData,
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "STT failed");
+      }
+
+      const text = (data.text || "").trim();
+      orderInput.value = text;
+      previewEl.textContent = text || "인식 결과가 없습니다.";
+      statusEl.textContent = "Ready";
+      if (text) {
+        orderForm.submit();
+      }
+    }
+
+    async function startRecording() {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const preferredTypes = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+      ];
+      const selectedType = preferredTypes.find(function (t) {
+        return MediaRecorder.isTypeSupported(t);
+      });
+      mediaRecorder = selectedType
+        ? new MediaRecorder(mediaStream, { mimeType: selectedType })
+        : new MediaRecorder(mediaStream);
+      chunks = [];
+      mediaRecorder.ondataavailable = function (event) {
+        if (event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+      mediaRecorder.onstop = async function () {
+        const blob = new Blob(chunks, { type: mediaRecorder.mimeType || "audio/webm" });
+        if (blob.size < 2048) {
+          statusEl.textContent = "Error";
+          previewEl.textContent = "녹음이 너무 짧습니다. 1~2초 이상 말씀해 주세요.";
+          mediaStream.getTracks().forEach(function (track) {
+            track.stop();
+          });
+          recording = false;
+          micBtn.classList.remove("active");
+          return;
+        }
+        mediaStream.getTracks().forEach(function (track) {
+          track.stop();
+        });
+        try {
+          await sendForTranscription(blob);
+        } catch (error) {
+          statusEl.textContent = "Error";
+          previewEl.textContent = "음성 인식 오류: " + error.message;
+        } finally {
+          recording = false;
+          micBtn.classList.remove("active");
+        }
+      };
+
+      recording = true;
+      micBtn.classList.add("active");
+      statusEl.textContent = "Listening...";
+      orderInput.value = "";
+      previewEl.textContent = "";
+      mediaRecorder.start(250);
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && recording && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+      }
+    }
+
+    micBtn.addEventListener("click", async function () {
+      if (micBtn.disabled) return;
+      try {
+        if (recording) {
+          stopRecording();
+        } else {
+          await startRecording();
+        }
+      } catch (error) {
+        statusEl.textContent = "Error";
+        previewEl.textContent = "마이크 접근 실패: " + error.message;
       }
     });
 

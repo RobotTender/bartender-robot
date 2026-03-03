@@ -1,28 +1,46 @@
 from django.test import TestCase
 from django.urls import reverse
-
-from order_engine.llm import answer_user, user_classify
-
-
-class OrderEngineTests(TestCase):
-    def test_user_classify_order(self):
-        self.assertEqual(user_classify("모히또 한 잔 만들어줘"), "order")
-
-    def test_user_classify_recommend(self):
-        self.assertEqual(user_classify("오늘 기분에 맞는 술 추천해줘"), "recommend")
-
-    def test_user_classify_chit(self):
-        self.assertEqual(user_classify("안녕 로보텐더"), "chit")
-
-    def test_answer_user_recommend_has_choice_question(self):
-        message = answer_user("피곤해서 추천해줘", "recommend")
-        self.assertIn("아니면", message)
-        self.assertIn("?", message)
+from django.core.files.uploadedfile import SimpleUploadedFile
+from unittest.mock import patch
 
 
 class HomeViewTests(TestCase):
-    def test_home_post_renders_engine_result(self):
+    def test_home_post_renders_input_text(self):
         response = self.client.post(reverse("home"), {"order_text": "모히또 한 잔 주세요"})
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "분류: order")
-        self.assertContains(response, "응답:")
+        self.assertContains(response, "입력: 모히또 한 잔 주세요")
+
+
+class STTViewTests(TestCase):
+    @patch("web.views.transcribe_audio_bytes")
+    def test_stt_transcribe_returns_json(self, mock_transcribe):
+        from web.order_engine.stt_pipeline import STTResult
+
+        mock_transcribe.return_value = STTResult(
+            text="모히또 한 잔 주세요",
+            model="gpt-4o-mini-transcribe",
+            language="ko",
+        )
+        audio = SimpleUploadedFile("recording.webm", b"a" * 4096, content_type="audio/webm")
+        response = self.client.post(
+            reverse("stt_transcribe"),
+            {"audio": audio},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertJSONEqual(
+            response.content,
+            {
+                "text": "모히또 한 잔 주세요",
+                "model": "gpt-4o-mini-transcribe",
+                "language": "ko",
+            },
+        )
+
+    def test_stt_transcribe_rejects_too_short_audio(self):
+        audio = SimpleUploadedFile("recording.webm", b"tiny", content_type="audio/webm")
+        response = self.client.post(reverse("stt_transcribe"), {"audio": audio})
+        self.assertEqual(response.status_code, 400)
+        self.assertJSONEqual(
+            response.content,
+            {"error": "audio too short; please record a bit longer"},
+        )

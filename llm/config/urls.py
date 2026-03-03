@@ -16,8 +16,9 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from web.views import home
+from web.views import home, stt_transcribe
 urlpatterns = [
     path('admin/', admin.site.urls),
     path("", home, name="home"),
+    path("stt/transcribe/", stt_transcribe, name="stt_transcribe"),
 ]

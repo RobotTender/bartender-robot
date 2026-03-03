@@ -15,4 +15,6 @@ uv pip install -r requirements.txt
 python manage.py runserver
 브라우저에서 http://127.0.0.1:8000/ 확인
 
+4) 터미널 STT 테스트(OpenAI)
+uv run python web/order_engine/stt_cli.py
 
