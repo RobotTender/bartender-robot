@@ -47,3 +47,17 @@ htmlcov/
 # ==============================
 .DS_Store
 Thumbs.db
+
+# ==============================
+# ROS2 / Robot workspace artifacts
+# ==============================
+.colcon/
+build/
+install/
+log/
+robot/build/
+robot/install/
+robot/log/
+robot/src/**/build/
+robot/src/**/install/
+robot/src/**/log/
