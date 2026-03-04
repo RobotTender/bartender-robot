@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Robotender Voice UI</title>
+  <style>
+    :root {
+      --bg-1: #050b2b;
+      --bg-2: #0d1b4f;
+      --neon: #3aa9ff;
+      --neon-strong: #35e0ff;
+      --text: #e4f2ff;
+      --muted: #b5d0f0;
+      --line: rgba(108, 181, 255, 0.35);
+      --chip-bg: rgba(8, 28, 81, 0.55);
+      --chip-border: rgba(100, 160, 255, 0.45);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Noto Sans KR", sans-serif;
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background:
+        radial-gradient(circle at 20% 15%, rgba(54, 116, 255, 0.38), transparent 35%),
+        radial-gradient(circle at 80% 20%, rgba(65, 229, 255, 0.26), transparent 32%),
+        linear-gradient(170deg, var(--bg-2), var(--bg-1) 72%);
+    }
+
+    .panel {
+      width: min(740px, 100%);
+      border-radius: 20px;
+      padding: 28px 22px 24px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(rgba(14, 42, 115, 0.58), rgba(5, 14, 45, 0.8)),
+        radial-gradient(circle at center, rgba(53, 180, 255, 0.12), transparent 60%);
+      border: 1px solid var(--line);
+      box-shadow:
+        0 0 0 1px rgba(112, 187, 255, 0.15) inset,
+        0 30px 70px rgba(0, 0, 0, 0.55),
+        0 0 45px rgba(65, 180, 255, 0.3);
+    }
+
+    .panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(0deg, rgba(78, 163, 255, 0.1), rgba(78, 163, 255, 0) 25%),
+        repeating-linear-gradient(
+          to bottom,
+          rgba(125, 190, 255, 0.05) 0,
+          rgba(125, 190, 255, 0.05) 1px,
+          transparent 1px,
+          transparent 6px
+        );
+      pointer-events: none;
+    }
+
+    h1 {
+      margin: 6px 0 12px;
+      font-size: clamp(30px, 5vw, 46px);
+      letter-spacing: -0.02em;
+      text-shadow: 0 0 22px rgba(88, 189, 255, 0.45);
+    }
+
+    .subtitle {
+      margin: 0 auto 18px;
+      width: min(540px, 100%);
+      font-size: 24px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .mic-wrap {
+      margin-top: 16px;
+      display: flex;
+      justify-content: center;
+    }
+
+    #mic-btn {
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      border: 0;
+      cursor: pointer;
+      color: #f3fbff;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at center, rgba(17, 38, 115, 0.9), rgba(8, 20, 64, 0.95));
+      box-shadow:
+        0 0 0 5px rgba(44, 130, 255, 0.25),
+        0 0 0 12px rgba(53, 162, 255, 0.14),
+        0 0 45px rgba(75, 190, 255, 0.7),
+        inset 0 0 30px rgba(38, 169, 255, 0.45);
+      transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+      position: relative;
+      z-index: 2;
+    }
+
+    #mic-btn:hover {
+      transform: translateY(-2px) scale(1.02);
+      filter: brightness(1.08);
+    }
+
+    #mic-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    #mic-btn svg {
+      width: 78px;
+      height: 78px;
+      filter: drop-shadow(0 0 16px rgba(130, 220, 255, 0.7));
+    }
+
+    #mic-btn.active {
+      animation: pulse 1.5s infinite;
+      box-shadow:
+        0 0 0 5px rgba(44, 130, 255, 0.45),
+        0 0 0 14px rgba(53, 162, 255, 0.2),
+        0 0 65px rgba(69, 226, 255, 0.95),
+        inset 0 0 40px rgba(86, 215, 255, 0.65);
+    }
+
+    .wave {
+      position: absolute;
+      inset: 50% auto auto 50%;
+      width: 290px;
+      height: 290px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      border: 1px solid rgba(118, 210, 255, 0.35);
+      pointer-events: none;
+      z-index: 1;
+      opacity: 0.3;
+    }
+
+    #mic-btn.active + .wave {
+      animation: spread 1.8s infinite;
+    }
+
+    .status {
+      margin: 22px 0 8px;
+      font-size: 34px;
+      font-weight: 700;
+      color: #bde8ff;
+      text-shadow: 0 0 18px rgba(99, 206, 255, 0.48);
+    }
+
+    .preview {
+      min-height: 28px;
+      margin: 0;
+      color: #d8ebff;
+      font-size: 17px;
+      opacity: 0.95;
+      white-space: pre-line;
+    }
+
+    .chips {
+      margin-top: 20px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .chip {
+      border: 1px solid var(--chip-border);
+      background: var(--chip-bg);
+      color: #dceeff;
+      font-size: 14px;
+      padding: 10px 16px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: 0.2s ease;
+    }
+
+    .chip:hover {
+      transform: translateY(-1px);
+      border-color: rgba(148, 217, 255, 0.85);
+      box-shadow: 0 0 14px rgba(97, 200, 255, 0.36);
+    }
+
+    .result {
+      margin-top: 18px;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(122, 208, 255, 0.5);
+      background: rgba(8, 26, 77, 0.5);
+      color: #d8ecff;
+      font-size: 14px;
+      word-break: keep-all;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.04); }
+      100% { transform: scale(1); }
+    }
+
+    @keyframes spread {
+      0% {
+        transform: translate(-50%, -50%) scale(0.86);
+        opacity: 0.5;
+      }
+      100% {
+        transform: translate(-50%, -50%) scale(1.18);
+        opacity: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="panel">
+    <h1>안녕하세요, 로보텐더입니다.</h1>
+    <p class="subtitle">원하시는 음료를 말씀해 주세요.</p>
+
+    <form method="post" id="order-form">
+      {% csrf_token %}
+      <input type="hidden" id="order-text" name="order_text">
+
+      <div class="mic-wrap">
+        <button type="button" id="mic-btn" aria-label="음성 인식 토글" title="음성 인식 토글">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 15a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Zm5-3a1 1 0 1 1 2 0 7 7 0 0 1-6 6.93V21h3a1 1 0 1 1 0 2H8a1 1 0 1 1 0-2h3v-2.07A7 7 0 0 1 5 12a1 1 0 1 1 2 0 5 5 0 1 0 10 0Z"/>
+          </svg>
+        </button>
+        <div class="wave"></div>
+      </div>
+
+      <p id="status" class="status">Ready</p>
+      <p id="preview" class="preview"></p>
+      <p id="reply" class="preview"></p>
+
+      <div class="chips">
+        <button class="chip" type="button" data-order="상큼한 칵테일 추천해줘">상큼한 칵테일 추천해줘</button>
+        <button class="chip" type="button" data-order="위스키 베이스로 만들어줘">위스키 베이스로 만들어줘</button>
+      </div>
+    </form>
+
+    {% if submitted %}
+      <div class="result">
+        <div>입력: {{ order_text|default:"(입력 없음)" }}</div>
+      </div>
+    {% endif %}
+  </main>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const previewEl = document.getElementById("preview");
+    const replyEl = document.getElementById("reply");
+    const orderInput = document.getElementById("order-text");
+    const micBtn = document.getElementById("mic-btn");
+    const orderForm = document.getElementById("order-form");
+    const chips = document.querySelectorAll(".chip");
+    const csrfToken = document.querySelector("input[name='csrfmiddlewaretoken']").value;
+    const transcribeUrl = "{% url 'stt_transcribe' %}";
+    const ttsUrl = "{% url 'tts' %}";
+
+    let mediaRecorder = null;
+    let mediaStream = null;
+    let chunks = [];
+    let recording = false;
+    let currentAudio = null;
+    let currentAudioUrl = null;
+
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
+      statusEl.textContent = "Mic Unsupported";
+      previewEl.textContent = "이 브라우저는 음성 녹음을 지원하지 않습니다.";
+      micBtn.disabled = true;
+    }
+
+    async function playTts(text) {
+      if (!text) return;
+      statusEl.textContent = "Speaking...";
+
+      const formData = new FormData();
+      formData.append("text", text);
+
+      const response = await fetch(ttsUrl, {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": csrfToken,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let message = "TTS failed";
+        try {
+          const data = await response.json();
+          message = data.error || message;
+        } catch (_e) {
+          message = "TTS failed";
+        }
+        throw new Error(message);
+      }
+
+      const audioBlob = await response.blob();
+
+      if (currentAudio) {
+        currentAudio.pause();
+      }
+      if (currentAudioUrl) {
+        URL.revokeObjectURL(currentAudioUrl);
+      }
+
+      currentAudioUrl = URL.createObjectURL(audioBlob);
+      currentAudio = new Audio(currentAudioUrl);
+      await currentAudio.play();
+      currentAudio.onended = function () {
+        statusEl.textContent = "Ready";
+      };
+    }
+
+    async function sendForTranscription(blob) {
+      statusEl.textContent = "Transcribing...";
+      const formData = new FormData();
+      let filename = "recording.webm";
+      if (blob.type.includes("mp4")) filename = "recording.mp4";
+      if (blob.type.includes("mpeg")) filename = "recording.mp3";
+      if (blob.type.includes("wav")) filename = "recording.wav";
+      formData.append("audio", blob, filename);
+
+      const response = await fetch(transcribeUrl, {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": csrfToken,
+        },
+        body: formData,
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "STT failed");
+      }
+
+      const text = (data.text || "").trim();
+      const recommendationText = (data.recommendation_text || "").trim();
+      orderInput.value = text;
+      previewEl.textContent = text || "인식 결과가 없습니다.";
+      replyEl.textContent = recommendationText ? "추천: " + recommendationText : "";
+
+      if (recommendationText) {
+        await playTts(recommendationText);
+      } else {
+        statusEl.textContent = "Ready";
+      }
+    }
+
+    async function startRecording() {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const preferredTypes = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+      ];
+      const selectedType = preferredTypes.find(function (t) {
+        return MediaRecorder.isTypeSupported(t);
+      });
+      mediaRecorder = selectedType
+        ? new MediaRecorder(mediaStream, { mimeType: selectedType })
+        : new MediaRecorder(mediaStream);
+      chunks = [];
+      mediaRecorder.ondataavailable = function (event) {
+        if (event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+      mediaRecorder.onstop = async function () {
+        const blob = new Blob(chunks, { type: mediaRecorder.mimeType || "audio/webm" });
+        if (blob.size < 2048) {
+          statusEl.textContent = "Error";
+          previewEl.textContent = "녹음이 너무 짧습니다. 1~2초 이상 말씀해 주세요.";
+          mediaStream.getTracks().forEach(function (track) {
+            track.stop();
+          });
+          recording = false;
+          micBtn.classList.remove("active");
+          return;
+        }
+        mediaStream.getTracks().forEach(function (track) {
+          track.stop();
+        });
+        try {
+          await sendForTranscription(blob);
+        } catch (error) {
+          statusEl.textContent = "Error";
+          previewEl.textContent = "음성 인식 오류: " + error.message;
+        } finally {
+          recording = false;
+          micBtn.classList.remove("active");
+        }
+      };
+
+      recording = true;
+      micBtn.classList.add("active");
+      statusEl.textContent = "Listening...";
+      orderInput.value = "";
+      previewEl.textContent = "";
+      replyEl.textContent = "";
+      mediaRecorder.start(250);
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && recording && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+      }
+    }
+
+    micBtn.addEventListener("click", async function () {
+      if (micBtn.disabled) return;
+      try {
+        if (recording) {
+          stopRecording();
+        } else {
+          await startRecording();
+        }
+      } catch (error) {
+        statusEl.textContent = "Error";
+        previewEl.textContent = "마이크 접근 실패: " + error.message;
+      }
+    });
+
+    chips.forEach(function (chip) {
+      chip.addEventListener("click", function () {
+        orderInput.value = chip.dataset.order || "";
+        previewEl.textContent = orderInput.value;
+        orderForm.submit();
+      });
+    });
+  </script>
+</body>
+</html>
