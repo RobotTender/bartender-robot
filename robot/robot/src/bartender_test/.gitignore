@@ -1,0 +1,17 @@
+# ROS 2 build artifacts
+build/
+install/
+log/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+
+# System files
+.DS_Store
+.vscode/
+.tmp/
