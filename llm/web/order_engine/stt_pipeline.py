@@ -37,7 +37,17 @@ class STTResult:
     reason: str = ""
 
 
+_AUDIO_MIME_OVERRIDES = {
+    ".webm": "audio/webm",
+    ".mp4": "audio/mp4",
+}
+
+
 def _guess_mime_type(filename: str | None) -> str:
+    if filename:
+        ext = os.path.splitext(filename)[-1].lower()
+        if ext in _AUDIO_MIME_OVERRIDES:
+            return _AUDIO_MIME_OVERRIDES[ext]
     guessed, _ = mimetypes.guess_type(filename or "")
     return guessed or "audio/webm"
 
