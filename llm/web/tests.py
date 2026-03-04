@@ -4,6 +4,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from unittest.mock import patch
 
 from web.order_engine.classify_order import generate_recommendation_text
+from web.order_engine.make_order import parse_reply
 
 
 class HomeViewTests(TestCase):
@@ -98,3 +99,26 @@ class ClassifyOrderTests(TestCase):
             reason="기분 전환이 필요해 보임",
         )
         self.assertEqual(text, "")
+
+
+class ParseReplyTests(TestCase):
+    def test_direct_menu_returns_menu_code(self):
+        self.assertEqual(parse_reply("소주 줘"), "soju")
+
+    def test_direct_menu_with_rejection_still_returns_menu(self):
+        # "말고" 같은 거절 표현이 있어도 메뉴가 있으면 해당 메뉴 반환
+        self.assertEqual(parse_reply("소주 말고 맥주"), "beer")
+
+    def test_plain_rejection_returns_empty(self):
+        self.assertEqual(parse_reply("아니"), "")
+
+    def test_confirm_cue_with_context_menu_returns_context_menu(self):
+        self.assertEqual(parse_reply("그걸로 줘", context_menu="soju"), "soju")
+
+    def test_confirm_cue_without_context_menu_falls_through(self):
+        # context_menu 없으면 LLM 폴백 → API 키 없을 시 ""
+        with patch("web.order_engine.make_order.os.getenv", return_value=None):
+            self.assertEqual(parse_reply("그래"), "")
+
+    def test_empty_input_returns_empty(self):
+        self.assertEqual(parse_reply(""), "")
