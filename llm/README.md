@@ -13,7 +13,7 @@ uv pip install -r requirements.txt
 
 3) 필수 API 키 값
 - OPENAI_API_KEY
-- GEMINI_API_KEY
+- GEMINI_API_KEY or GOOGLE_API_KEY
 3) 웹 실행
 python manage.py runserver
 브라우저에서 http://127.0.0.1:8000/ 확인
