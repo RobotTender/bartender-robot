@@ -61,6 +61,21 @@ def fallback_recommendation_text(
     return ""
 
 
+def _extract_response_text(response) -> str:
+    text = (getattr(response, "output_text", "") or "").strip()
+    if text:
+        return text
+
+    for item in getattr(response, "output", []) or []:
+        for content in getattr(item, "content", []) or []:
+            content_type = getattr(content, "type", "")
+            if content_type in ("output_text", "text"):
+                candidate = (getattr(content, "text", "") or "").strip()
+                if candidate:
+                    return candidate
+    return ""
+
+
 def generate_recommendation_text(
     *,
     input_text: str,
@@ -99,12 +114,16 @@ def generate_recommendation_text(
         response = client.responses.create(
             model=model,
             input=prompt,
-            temperature=0.7,
-            max_output_tokens=100,
         )
-        generated = (response.output_text or "").strip()
+        generated = _extract_response_text(response)
         if generated:
             return generated
+
+        logger.warning(
+            "Empty recommendation text. status=%s incomplete_details=%s",
+            getattr(response, "status", None),
+            getattr(response, "incomplete_details", None),
+        )
     except Exception as exc:
         return fallback_recommendation_text(error_message=str(exc))
 
