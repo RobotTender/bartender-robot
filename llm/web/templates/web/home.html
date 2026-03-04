@@ -166,6 +166,7 @@
       color: #d8ebff;
       font-size: 17px;
       opacity: 0.95;
+      white-space: pre-line;
     }
 
     .chips {
@@ -242,6 +243,7 @@
 
       <p id="status" class="status">Ready</p>
       <p id="preview" class="preview"></p>
+      <p id="reply" class="preview"></p>
 
       <div class="chips">
         <button class="chip" type="button" data-order="상큼한 칵테일 추천해줘">상큼한 칵테일 추천해줘</button>
@@ -259,22 +261,69 @@
   <script>
     const statusEl = document.getElementById("status");
     const previewEl = document.getElementById("preview");
+    const replyEl = document.getElementById("reply");
     const orderInput = document.getElementById("order-text");
     const micBtn = document.getElementById("mic-btn");
     const orderForm = document.getElementById("order-form");
     const chips = document.querySelectorAll(".chip");
     const csrfToken = document.querySelector("input[name='csrfmiddlewaretoken']").value;
     const transcribeUrl = "{% url 'stt_transcribe' %}";
+    const ttsUrl = "{% url 'tts' %}";
 
     let mediaRecorder = null;
     let mediaStream = null;
     let chunks = [];
     let recording = false;
+    let currentAudio = null;
+    let currentAudioUrl = null;
 
     if (!navigator.mediaDevices || !window.MediaRecorder) {
       statusEl.textContent = "Mic Unsupported";
       previewEl.textContent = "이 브라우저는 음성 녹음을 지원하지 않습니다.";
       micBtn.disabled = true;
+    }
+
+    async function playTts(text) {
+      if (!text) return;
+      statusEl.textContent = "Speaking...";
+
+      const formData = new FormData();
+      formData.append("text", text);
+
+      const response = await fetch(ttsUrl, {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": csrfToken,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let message = "TTS failed";
+        try {
+          const data = await response.json();
+          message = data.error || message;
+        } catch (_e) {
+          message = "TTS failed";
+        }
+        throw new Error(message);
+      }
+
+      const audioBlob = await response.blob();
+
+      if (currentAudio) {
+        currentAudio.pause();
+      }
+      if (currentAudioUrl) {
+        URL.revokeObjectURL(currentAudioUrl);
+      }
+
+      currentAudioUrl = URL.createObjectURL(audioBlob);
+      currentAudio = new Audio(currentAudioUrl);
+      await currentAudio.play();
+      currentAudio.onended = function () {
+        statusEl.textContent = "Ready";
+      };
     }
 
     async function sendForTranscription(blob) {
@@ -300,11 +349,15 @@
       }
 
       const text = (data.text || "").trim();
+      const recommendationText = (data.recommendation_text || "").trim();
       orderInput.value = text;
       previewEl.textContent = text || "인식 결과가 없습니다.";
-      statusEl.textContent = "Ready";
-      if (text) {
-        orderForm.submit();
+      replyEl.textContent = recommendationText ? "추천: " + recommendationText : "";
+
+      if (recommendationText) {
+        await playTts(recommendationText);
+      } else {
+        statusEl.textContent = "Ready";
       }
     }
 
@@ -358,6 +411,7 @@
       statusEl.textContent = "Listening...";
       orderInput.value = "";
       previewEl.textContent = "";
+      replyEl.textContent = "";
       mediaRecorder.start(250);
     }
 

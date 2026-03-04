@@ -3,6 +3,8 @@ from django.urls import reverse
 from django.core.files.uploadedfile import SimpleUploadedFile
 from unittest.mock import patch
 
+from web.order_engine.classify_order import generate_recommendation_text
+
 
 class HomeViewTests(TestCase):
     def test_home_post_renders_input_text(self):
@@ -12,14 +14,17 @@ class HomeViewTests(TestCase):
 
 
 class STTViewTests(TestCase):
+    @patch("web.views.generate_recommendation_text")
     @patch("web.views.transcribe_audio_bytes")
-    def test_stt_transcribe_returns_json(self, mock_transcribe):
+    def test_stt_transcribe_returns_json(self, mock_transcribe, mock_generate_recommendation):
         from web.order_engine.stt_pipeline import STTResult
 
+        mock_generate_recommendation.return_value = "기분에 맞춰 맥주 한 잔 추천드려요."
         mock_transcribe.return_value = STTResult(
             text="모히또 한 잔 주세요",
-            model="gpt-4o-mini-transcribe",
-            language="ko",
+            emotion="happy",
+            selected_menu="beer",
+            reason="상쾌한 주문 톤이라 가볍게 추천했습니다.",
         )
         audio = SimpleUploadedFile("recording.webm", b"a" * 4096, content_type="audio/webm")
         response = self.client.post(
@@ -31,8 +36,12 @@ class STTViewTests(TestCase):
             response.content,
             {
                 "text": "모히또 한 잔 주세요",
-                "model": "gpt-4o-mini-transcribe",
-                "language": "ko",
+                "inputtext": "모히또 한 잔 주세요",
+                "transcript": "모히또 한 잔 주세요",
+                "emotion": "happy",
+                "selected_menu": "beer",
+                "reason": "상쾌한 주문 톤이라 가볍게 추천했습니다.",
+                "recommendation_text": "기분에 맞춰 맥주 한 잔 추천드려요.",
             },
         )
 
@@ -68,3 +77,24 @@ class TTSViewTests(TestCase):
         response = self.client.post(reverse("tts"), {"text": ""})
         self.assertEqual(response.status_code, 400)
         self.assertJSONEqual(response.content, {"error": "text is required"})
+
+
+class ClassifyOrderTests(TestCase):
+    def test_generate_recommendation_direct_order_returns_confirmation(self):
+        text = generate_recommendation_text(
+            input_text="소주 말아줘",
+            emotion="happy",
+            selected_menu="beer",
+            reason="요청 분위기에 맞음",
+        )
+        self.assertEqual(text, "소주 주문 확인했습니다.")
+
+    @patch("web.order_engine.classify_order.os.getenv", return_value=None)
+    def test_generate_recommendation_question_returns_recommendation(self, _mock_getenv):
+        text = generate_recommendation_text(
+            input_text="오늘 뭐 마시면 좋을까?",
+            emotion="tired",
+            selected_menu="somaek",
+            reason="기분 전환이 필요해 보임",
+        )
+        self.assertEqual(text, "")

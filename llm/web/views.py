@@ -3,6 +3,7 @@ from django.shortcuts import render
 from django.views.decorators.http import require_POST
 from django.views import View
 
+from web.order_engine.classify_order import generate_recommendation_text
 from web.order_engine.stt_pipeline import transcribe_audio_bytes
 from web.order_engine.tts_pipeline import synthesize_speech
 
@@ -37,7 +38,6 @@ def stt_transcribe(request):
     try:
         result = transcribe_audio_bytes(
             audio_bytes,
-            language="ko",
             filename=audio_file.name or "recording.webm",
         )
     except Exception as exc:
@@ -46,11 +46,22 @@ def stt_transcribe(request):
             status_code = 500
         return JsonResponse({"error": str(exc)}, status=status_code)
 
+    recommendation_text = generate_recommendation_text(
+        input_text=result.text,
+        emotion=result.emotion,
+        selected_menu=result.selected_menu,
+        reason=result.reason,
+    )
+
     return JsonResponse(
         {
             "text": result.text,
-            "model": result.model,
-            "language": result.language,
+            "inputtext": result.text,
+            "transcript": result.text,
+            "emotion": result.emotion,
+            "selected_menu": result.selected_menu,
+            "reason": result.reason,
+            "recommendation_text": recommendation_text,
         }
     )
 
