@@ -1,3 +1,5 @@
+MODEL = "gpt-5-nano"
+
 MENU_LABELS = {
     "soju": "소주",
     "beer": "맥주",

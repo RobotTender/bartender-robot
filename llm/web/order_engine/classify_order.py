@@ -4,12 +4,11 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from .common import MENU_ALIASES, MENU_LABELS, detect_menu_from_text
+from .common import MODEL, MENU_ALIASES, MENU_LABELS, detect_menu_from_text
 
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-CLASSIFY_MODEL = "gpt-5-nano"
 
 ORDER_CUES = ("줘", "주세요", "주문", "말아", "말아줘", "한잔", "한 잔", "주라", "내놔")
 QUESTION_CUES = ("추천", "뭐", "무엇", "어때", "어떤", "가능", "있어", "있나요", "할까", "?", "왜")
@@ -66,7 +65,7 @@ def generate_recommendation_text(
     emotion: str,
     selected_menu: str,
     reason: str,
-    model: str = CLASSIFY_MODEL,
+    model: str = MODEL,
 ) -> str:
     is_direct_order, _ = _is_direct_order(input_text)
     if is_direct_order:
