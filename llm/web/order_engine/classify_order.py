@@ -4,31 +4,15 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from .common import MENU_ALIASES, MENU_LABELS, detect_menu_from_text
+
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 CLASSIFY_MODEL = "gpt-5-nano"
 
-
-MENU_LABELS = {
-    "soju": "소주",
-    "beer": "맥주",
-    "somaek": "소맥",
-}
-MENU_ALIASES = {
-    "soju": ("소주",),
-    "beer": ("맥주", "비어"),
-    "somaek": ("소맥", "소주맥주", "소주 맥주"),
-}
 ORDER_CUES = ("줘", "주세요", "주문", "말아", "말아줘", "한잔", "한 잔", "주라", "내놔")
 QUESTION_CUES = ("추천", "뭐", "무엇", "어때", "어떤", "가능", "있어", "있나요", "할까", "?", "왜")
-
-
-def _detect_menu_from_text(text: str) -> str:
-    for menu_code, aliases in MENU_ALIASES.items():
-        if any(alias in text for alias in aliases):
-            return menu_code
-    return ""
 
 
 def _is_direct_order(input_text: str) -> tuple[bool, str]:
@@ -39,7 +23,7 @@ def _is_direct_order(input_text: str) -> tuple[bool, str]:
     if any(cue in text for cue in QUESTION_CUES):
         return False, ""
 
-    menu_code = _detect_menu_from_text(text)
+    menu_code = detect_menu_from_text(text)
     has_order_cue = any(cue in text for cue in ORDER_CUES)
     if menu_code and has_order_cue:
         return True, menu_code
