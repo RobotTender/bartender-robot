@@ -16,9 +16,12 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from web.views import home, stt_transcribe
+from web.views import home, stt_transcribe, TTSView
+
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path("", home, name="home"),
     path("stt/transcribe/", stt_transcribe, name="stt_transcribe"),
+    path("tts/", TTSView.as_view(), name="tts"),
 ]
