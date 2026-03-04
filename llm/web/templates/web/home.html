@@ -264,8 +264,7 @@
     const replyEl = document.getElementById("reply");
     const orderInput = document.getElementById("order-text");
     const micBtn = document.getElementById("mic-btn");
-    const orderForm = document.getElementById("order-form");
-    const chips = document.querySelectorAll(".chip");
+    const chipsEl = document.querySelector(".chips");
     const csrfToken = document.querySelector("input[name='csrfmiddlewaretoken']").value;
     const transcribeUrl = "{% url 'stt_transcribe' %}";
     const ttsUrl = "{% url 'tts' %}";
@@ -277,6 +276,9 @@
     let currentAudio = null;
     let currentAudioUrl = null;
 
+    let rejectCount = 0;
+    let contextMenu = "";
+
     if (!navigator.mediaDevices || !window.MediaRecorder) {
       statusEl.textContent = "Mic Unsupported";
       previewEl.textContent = "이 브라우저는 음성 녹음을 지원하지 않습니다.";
@@ -286,15 +288,14 @@
     async function playTts(text) {
       if (!text) return;
       statusEl.textContent = "Speaking...";
+      micBtn.disabled = true;
 
       const formData = new FormData();
       formData.append("text", text);
 
       const response = await fetch(ttsUrl, {
         method: "POST",
-        headers: {
-          "X-CSRFToken": csrfToken,
-        },
+        headers: { "X-CSRFToken": csrfToken },
         body: formData,
       });
 
@@ -303,27 +304,48 @@
         try {
           const data = await response.json();
           message = data.error || message;
-        } catch (_e) {
-          message = "TTS failed";
-        }
+        } catch (_e) {}
         throw new Error(message);
       }
 
       const audioBlob = await response.blob();
 
-      if (currentAudio) {
-        currentAudio.pause();
-      }
-      if (currentAudioUrl) {
-        URL.revokeObjectURL(currentAudioUrl);
-      }
+      if (currentAudio) currentAudio.pause();
+      if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
 
       currentAudioUrl = URL.createObjectURL(audioBlob);
       currentAudio = new Audio(currentAudioUrl);
       await currentAudio.play();
       currentAudio.onended = function () {
         statusEl.textContent = "Ready";
+        micBtn.disabled = false;
       };
+    }
+
+    function handleConfirmed(menuLabel) {
+      statusEl.textContent = "주문 완료!";
+      replyEl.textContent = menuLabel + " 주문이 확정되었습니다.";
+      previewEl.textContent = "";
+      micBtn.disabled = false;
+      rejectCount = 0;
+      contextMenu = "";
+    }
+
+    function showForceChoice(options) {
+      statusEl.textContent = "메뉴를 선택해 주세요";
+      replyEl.textContent = "원하시는 메뉴를 직접 선택해 주세요.";
+      micBtn.disabled = true;
+      chipsEl.innerHTML = "";
+      options.forEach(function (option) {
+        const btn = document.createElement("button");
+        btn.className = "chip";
+        btn.type = "button";
+        btn.textContent = option.label;
+        btn.addEventListener("click", function () {
+          handleConfirmed(option.label);
+        });
+        chipsEl.appendChild(btn);
+      });
     }
 
     async function sendForTranscription(blob) {
@@ -334,12 +356,12 @@
       if (blob.type.includes("mpeg")) filename = "recording.mp3";
       if (blob.type.includes("wav")) filename = "recording.wav";
       formData.append("audio", blob, filename);
+      formData.append("reject_count", rejectCount);
+      formData.append("context_menu", contextMenu);
 
       const response = await fetch(transcribeUrl, {
         method: "POST",
-        headers: {
-          "X-CSRFToken": csrfToken,
-        },
+        headers: { "X-CSRFToken": csrfToken },
         body: formData,
       });
       const data = await response.json();
@@ -348,11 +370,25 @@
         throw new Error(data.error || "STT failed");
       }
 
+      if (data.confirmed) {
+        handleConfirmed(data.menu_label);
+        return;
+      }
+
+      if (data.force_choice) {
+        rejectCount++;
+        previewEl.textContent = (data.text || "").trim();
+        showForceChoice(data.options);
+        return;
+      }
+
       const text = (data.text || "").trim();
       const recommendationText = (data.recommendation_text || "").trim();
-      orderInput.value = text;
       previewEl.textContent = text || "인식 결과가 없습니다.";
       replyEl.textContent = recommendationText ? "추천: " + recommendationText : "";
+
+      if (contextMenu) rejectCount++;
+      contextMenu = data.selected_menu || "";
 
       if (recommendationText) {
         await playTts(recommendationText);
@@ -363,11 +399,7 @@
 
     async function startRecording() {
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const preferredTypes = [
-        "audio/webm;codecs=opus",
-        "audio/webm",
-        "audio/mp4",
-      ];
+      const preferredTypes = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
       const selectedType = preferredTypes.find(function (t) {
         return MediaRecorder.isTypeSupported(t);
       });
@@ -376,25 +408,19 @@
         : new MediaRecorder(mediaStream);
       chunks = [];
       mediaRecorder.ondataavailable = function (event) {
-        if (event.data.size > 0) {
-          chunks.push(event.data);
-        }
+        if (event.data.size > 0) chunks.push(event.data);
       };
       mediaRecorder.onstop = async function () {
         const blob = new Blob(chunks, { type: mediaRecorder.mimeType || "audio/webm" });
         if (blob.size < 2048) {
           statusEl.textContent = "Error";
           previewEl.textContent = "녹음이 너무 짧습니다. 1~2초 이상 말씀해 주세요.";
-          mediaStream.getTracks().forEach(function (track) {
-            track.stop();
-          });
+          mediaStream.getTracks().forEach(function (t) { t.stop(); });
           recording = false;
           micBtn.classList.remove("active");
           return;
         }
-        mediaStream.getTracks().forEach(function (track) {
-          track.stop();
-        });
+        mediaStream.getTracks().forEach(function (t) { t.stop(); });
         try {
           await sendForTranscription(blob);
         } catch (error) {
@@ -433,14 +459,6 @@
         statusEl.textContent = "Error";
         previewEl.textContent = "마이크 접근 실패: " + error.message;
       }
-    });
-
-    chips.forEach(function (chip) {
-      chip.addEventListener("click", function () {
-        orderInput.value = chip.dataset.order || "";
-        previewEl.textContent = orderInput.value;
-        orderForm.submit();
-      });
     });
   </script>
 </body>

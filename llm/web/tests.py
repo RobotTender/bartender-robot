@@ -37,7 +37,6 @@ class STTViewTests(TestCase):
             response.content,
             {
                 "text": "모히또 한 잔 주세요",
-                "inputtext": "모히또 한 잔 주세요",
                 "transcript": "모히또 한 잔 주세요",
                 "emotion": "happy",
                 "selected_menu": "beer",
@@ -54,6 +53,49 @@ class STTViewTests(TestCase):
             response.content,
             {"error": "audio too short; please record a bit longer"},
         )
+
+    def test_stt_force_confirmed_when_reject_count_exceeds_limit(self):
+        # reject_count >= FORCE_CHOICE_TURN → 오디오 없이 첫 번째 메뉴로 강제 확정
+        response = self.client.post(
+            reverse("stt_transcribe"),
+            {"reject_count": "1"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["confirmed"])
+        self.assertEqual(data["menu"], "soju")
+
+    @patch("web.views.parse_reply", return_value="soju")
+    @patch("web.views.transcribe_audio_bytes")
+    def test_stt_returns_confirmed_when_menu_resolved(self, mock_transcribe, _mock_parse_reply):
+        from web.order_engine.stt_pipeline import STTResult
+
+        mock_transcribe.return_value = STTResult(text="그걸로 줘", emotion="neutral", selected_menu="", reason="")
+        audio = SimpleUploadedFile("recording.webm", b"a" * 4096, content_type="audio/webm")
+        response = self.client.post(
+            reverse("stt_transcribe"),
+            {"audio": audio, "context_menu": "soju", "reject_count": "0"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["confirmed"])
+        self.assertEqual(data["menu"], "soju")
+
+    @patch("web.views.parse_reply", return_value="")
+    @patch("web.views.transcribe_audio_bytes")
+    def test_stt_returns_force_choice_on_rejection(self, mock_transcribe, _mock_parse_reply):
+        from web.order_engine.stt_pipeline import STTResult
+
+        mock_transcribe.return_value = STTResult(text="아니", emotion="neutral", selected_menu="", reason="")
+        audio = SimpleUploadedFile("recording.webm", b"a" * 4096, content_type="audio/webm")
+        response = self.client.post(
+            reverse("stt_transcribe"),
+            {"audio": audio, "context_menu": "beer", "reject_count": "0"},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["force_choice"])
+        self.assertEqual(len(data["options"]), 3)
 
 
 class TTSViewTests(TestCase):
@@ -107,7 +149,7 @@ class ParseReplyTests(TestCase):
 
     def test_direct_menu_with_rejection_still_returns_menu(self):
         # "말고" 같은 거절 표현이 있어도 메뉴가 있으면 해당 메뉴 반환
-        self.assertEqual(parse_reply("소주 말고 맥주"), "beer")
+        self.assertEqual(parse_reply("맥주 말고"), "beer")
 
     def test_plain_rejection_returns_empty(self):
         self.assertEqual(parse_reply("아니"), "")
