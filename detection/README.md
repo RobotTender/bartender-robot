@@ -9,8 +9,15 @@ ros2 launch realsense2_camera rs_launch.py \
 ```
 - 1번 카메라 토픽 확인
 ```
+ros2 topic list
+
 /camera/camera_1/color/image_raw
 /camera/camera_1/aligned_depth_to_color/image_raw
+```
+- 1번 카메라 객체 인식(object detection) 확인
+```
+# ros2, ultralytics가 설치된 가상환경에서 실행할 것
+python3 ./detection/realsense_cam1.py
 ```
 
 ## 카메라를 이용하여 컵 객체인식
@@ -23,6 +30,13 @@ ros2 launch realsense2_camera rs_launch.py \
 ```
 - 2번 카메라 토픽 확인
 ```
+ros2 topic list
+
 /camera/camera_2/color/image_raw
 /camera/camera_2/aligned_depth_to_color/image_raw
+```
+- 2번 카메라 객체 인식(object detection) 확인
+```
+# ros2, ultralytics가 설치된 가상환경에서 실행할 것
+python3 ./detection/realsense_cam2.py
 ```
