@@ -20,7 +20,7 @@ ros2 topic list
 python3 ./detection/realsense_cam1.py
 ```
 
-## 카메라를 이용하여 컵 객체인식
+## 카메라를 이용하여 액체 용량 측정
 - 2번 카메라 사용
 ```
 ros2 launch realsense2_camera rs_launch.py \
