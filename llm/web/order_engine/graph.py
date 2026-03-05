@@ -16,6 +16,12 @@ def route_entry(state: GraphState) -> str:
         "success": "menu_detail"
     }.get(status, END)  # 기본값
 
+def route_to_detail(state: GraphState) -> str:
+    if state.get("status") == "success":
+        return "menu_detail"
+    return END
+
+
 def create_graph_flow():
     graph_builder = StateGraph(GraphState)
 
@@ -24,9 +30,8 @@ def create_graph_flow():
     graph_builder.add_node("menu_detail", menu_detail_node)
 
     graph_builder.set_conditional_entry_point(route_entry)
-    graph_builder.add_edge("classify_order", END)
-    graph_builder.add_edge("makeorder", END)
+    graph_builder.add_conditional_edges("classify_order", route_to_detail)
+    graph_builder.add_conditional_edges("makeorder", route_to_detail)
     graph_builder.add_edge("menu_detail", END)
-    
 
     return graph_builder.compile()

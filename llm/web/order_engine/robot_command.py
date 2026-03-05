@@ -17,7 +17,7 @@ COMMANDS = {
 def run_ros_command(cmd: str) -> None:
     full_cmd = (
         "source /opt/ros/jazzy/setup.bash && "
-        "source ~/ros2_ws/install/setup.bash && "
+        "source ~/bartender-robot/robot/install/setup.bash && "
         f"{cmd}"
     )
     subprocess.run(["bash", "-lc", full_cmd], check=True)

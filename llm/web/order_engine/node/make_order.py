@@ -65,27 +65,29 @@ def make_order_node(state: GraphState) -> GraphState:
     if any(cue in text for cue in CONFIRM_CUES):
         selected_menu = recommend_menu
         tts_text = build_order_confirmation_text(selected_menu)
-    
+        status = "success"
+
     elif any(cue in text for cue in REJECT_CUES):
         if retry:
             status = "end"
             tts_text = "죄송합니다. 이해하지 못했습니다."
-            
+
         else:
             retry=True
             tts_text = "어떤 것을 그럼 원하시나요? 저희는 소주, 맥주, 소맥이 준비 되어있습니다."
- 
+
     else:
         selected_menu = _resolve_with_llm(text, recommend_menu)
         if not selected_menu:
             if retry:
                 status = "end"
                 tts_text = "다시 한번 말씀해주시겠어요?"
-                
+
             retry = True
             tts_text = "다시 한번 말씀해주시겠어요?"
         else:
             tts_text = build_order_confirmation_text(selected_menu)
+            status = "success"
             
     return {
         **state,
