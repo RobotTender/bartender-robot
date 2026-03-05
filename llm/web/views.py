@@ -1,45 +1,51 @@
+from pathlib import Path
+import sys
+import logging
+
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_POST
 from django.views import View
 
-from web.order_engine.classify_order import generate_recommendation_text
 from web.order_engine.common import MENU_LABELS
-from web.order_engine.make_order import parse_reply
 from web.order_engine.stt_pipeline import transcribe_audio_bytes
 from web.order_engine.tts_pipeline import synthesize_speech
+from web.order_engine.robot_command import _start_robot_job
 
-FORCE_CHOICE_TURN = 1
+ORDER_ENGINE_DIR = Path(__file__).resolve().parent / "order_engine"
+if str(ORDER_ENGINE_DIR) not in sys.path:
+    sys.path.append(str(ORDER_ENGINE_DIR))
+
+from web.order_engine.graph import create_graph_flow
+
+graph = create_graph_flow()
+logger = logging.getLogger(__name__)
+
+
 
 
 def home(request):
+    return render(request, "web/home.html")
+
+
+def order(request):
+    # Start page -> order page 진입 시 이전 주문 세션 상태 초기화
+    request.session["order_state"] = {}
     context = {
-        "submitted": False,
-        "order_text": "",
+        "status": "init",
+        "retry":False,
+        "recommand_menu":"",
     }
 
-    if request.method == "POST":
-        order_text = request.POST.get("order_text", "").strip()
-        context["submitted"] = True
-        context["order_text"] = order_text
+    return render(request, "web/order.html", context)
 
-    return render(request, "web/home.html", context)
 
 
 @require_POST
 def stt_transcribe(request):
-    reject_count = int(request.POST.get("reject_count", 0))
-    context_menu = request.POST.get("context_menu", "")
 
-    # 선택지 제시 후에도 거부 시 첫 번째 메뉴로 강제 확정
-    if reject_count >= FORCE_CHOICE_TURN:
-        forced_menu = list(MENU_LABELS.keys())[0]
-        return JsonResponse({
-            "confirmed": True,
-            "menu": forced_menu,
-            "menu_label": MENU_LABELS[forced_menu],
-        })
-
+    session_state = request.session.get("order_state", {})
+    
     audio_file = request.FILES.get("audio")
     if not audio_file:
         return JsonResponse({"error": "audio file is required"}, status=400)
@@ -62,39 +68,54 @@ def stt_transcribe(request):
             status_code = 500
         return JsonResponse({"error": str(exc)}, status=status_code)
 
-    # 2번째 턴부터는 사용자 응답으로 메뉴 확정 시도
-    if context_menu:
-        menu = parse_reply(result.text, context_menu)
-        if menu:
-            return JsonResponse({
-                "confirmed": True,
-                "menu": menu,
-                "menu_label": MENU_LABELS.get(menu, menu),
-                "text": result.text,
-            })
-        # 메뉴 미확정(거부) → 1번 거부 후 바로 선택지 제시
-        if reject_count + 1 >= FORCE_CHOICE_TURN:
-            options = [{"code": k, "label": v} for k, v in MENU_LABELS.items()]
-            return JsonResponse({
-                "force_choice": True,
-                "options": options,
-                "text": result.text,
-            })
 
-    recommendation_text = generate_recommendation_text(
-        input_text=result.text,
-        emotion=result.emotion,
-        selected_menu=result.selected_menu,
-        reason=result.reason,
-    )
+    saved_status = session_state.get("status", "init")
+    saved_retry = bool(session_state.get("retry", False))
+    saved_recommend_menu = session_state.get("recommend_menu")
+    if saved_recommend_menu:
+        recommend_menu  = saved_recommend_menu
+    else:
+        recommend_menu = result.recommend_menu
+        
+    
+  
+    graph_state = {
+        "input_text": result.text,
+        "status": saved_status,
+        "emotion": result.emotion,
+        "recommend_menu": recommend_menu,
+        "reason": result.reason,
+        "retry": saved_retry
+    }
+
+    try:
+        graph_result = graph.invoke(graph_state)
+    except Exception as exc:
+        return JsonResponse({"error": f"graph invoke failed: {exc}"}, status=500)
+
+    tts_text = graph_result.get("tts_text", "")
+    selected_menu = graph_result.get("selected_menu", "")
+    new_status = graph_result.get("status", "init")
+    new_retry = bool(graph_result.get("retry", False))
+    new_recommend_menu = graph_result.get("recommend_menu", "")
+    recipe = graph_result.get("recipe",{})
+    request.session["order_state"] = {
+        "status": new_status,
+        "retry": new_retry,
+        "recommand_menu": new_recommend_menu,
+    }
+
+    if recipe:
+        command_payload = {
+            "selected_menu": selected_menu,
+            "recipe": recipe,
+            "status": new_status,
+        }
+        _start_robot_job(command_payload)
 
     return JsonResponse({
-        "text": result.text,
-        "transcript": result.text,
-        "emotion": result.emotion,
-        "selected_menu": result.selected_menu,
-        "reason": result.reason,
-        "recommendation_text": recommendation_text,
+        "tts_text": tts_text,
+        "status": new_status,
     })
 
 

@@ -19,7 +19,7 @@ Analyze the provided audio and return strict JSON only with these keys:
 {
   "transcript": "recognized Korean text",
   "emotion": "happy|sad|angry|tired|neutral",
-  "selected_menu": "soju|beer|somaek",
+  "recommend_menu": "soju|beer|somaek",
   "reason": "short reason in Korean"
 }
 Rules:
@@ -33,7 +33,7 @@ Rules:
 class STTResult:
     text: str
     emotion: str = ""
-    selected_menu: str = ""
+    recommend_menu: str = ""
     reason: str = ""
 
 
@@ -114,12 +114,12 @@ def transcribe_audio_bytes(
     transcript = str(payload.get("transcript", "")).strip()
 
     emotion = str(payload.get("emotion", "")).strip()
-    selected_menu = str(payload.get("selected_menu", "")).strip()
+    recommend_menu = str(payload.get("recommend_menu", "")).strip()
     reason = str(payload.get("reason", "")).strip()
 
     return STTResult(
         text=transcript,
         emotion=emotion,
-        selected_menu=selected_menu,
+        recommend_menu=recommend_menu,
         reason=reason,
     )
