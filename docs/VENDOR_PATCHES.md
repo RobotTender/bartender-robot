@@ -19,7 +19,7 @@
 ## 적용 방법
 
 ```bash
-~/ros2_ws/src/bartender-robot/scripts/apply_doosan_vendor_patches.sh
+./scripts/apply_doosan_vendor_patches.sh
 ```
 
 적용 후 `colcon build`를 다시 수행해야 합니다.

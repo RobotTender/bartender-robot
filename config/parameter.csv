@@ -3,8 +3,8 @@ active_calibration_path,config/calibration/calib_matrix_260306_180446.txt
 active_calibration_path_1,config/calibration/calib_matrix_260306_180446.txt
 active_calibration_path_2,config/calibration/calib_matrix_260225_131257.txt
 home_posj,90.000000,-72.870000,88.990000,-181.570000,-70.250000,91.390000
-top_status_robot_enabled,0
-top_status_vision2_enabled,1
+top_status_robot_enabled,1
+top_status_vision2_enabled,0
 top_status_vision_enabled,1
 vision1_calib_seq_p10_enabled,1
 vision1_calib_seq_p10_j,288.690000,312.020000,821.700000,40.630000,106.920000,-97.720000
@@ -51,9 +51,9 @@ vision1_calib_seq_return_home_j,9.930000,-43.280000,80.370000,-151.760000,-90.68
 vision1_calib_seq_return_home_pose6,0.091000,0.001000,829.340000,43.500000,88.000000,-90.000000
 vision1_calib_seq_return_home_xyzabc,0.091000,0.001000,829.340000,43.500000,88.000000,-90.000000
 vision1_calib_seq_wait1_enabled,1
-vision1_calib_seq_wait1_j,120.295000,-17.251000,53.579000,-239.722000,-74.000000,115.563000
-vision1_calib_seq_wait1_pose6,78.802000,149.994000,829.853000,62.832000,88.010000,-90.010000
-vision1_calib_seq_wait1_xyzabc,78.802000,149.994000,829.853000,62.832000,88.010000,-90.010000
+vision1_calib_seq_wait1_j,90.000656,-37.644955,33.791607,-181.477692,-90.212151,90.850578
+vision1_calib_seq_wait1_pose6,11.370205,187.080933,899.999390,88.519981,86.360085,-89.049927
+vision1_calib_seq_wait1_xyzabc,11.370205,187.080933,899.999390,88.519981,86.360085,-89.049927
 vision1_calib_seq_wait2_enabled,1
 vision1_calib_seq_wait2_j,120.295000,-17.251000,53.579000,-239.722000,-74.000000,115.563000
 vision1_calib_seq_wait2_pose6,78.738000,504.540000,829.924000,62.824000,88.011000,-90.006000

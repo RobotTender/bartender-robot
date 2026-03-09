@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 import os
+import signal
+import subprocess
 import sys
+import time
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription, LaunchService
@@ -38,6 +41,88 @@ def _parse_cli_overrides(argv):
     if mode == 'virtual' and 'robot_host' not in overrides:
         overrides['robot_host'] = '127.0.0.1'
     return overrides
+
+
+def _is_true_text(value, default=False):
+    text = str(value if value is not None else '').strip().lower()
+    if text in ('1', 'true', 'yes', 'on'):
+        return True
+    if text in ('0', 'false', 'no', 'off'):
+        return False
+    return bool(default)
+
+
+def _collect_processes_by_pattern(pattern):
+    try:
+        output = subprocess.check_output(['pgrep', '-af', pattern], text=True)
+    except Exception:
+        return {}
+    found = {}
+    for raw in str(output).splitlines():
+        line = str(raw).strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if not parts:
+            continue
+        try:
+            pid = int(parts[0])
+        except Exception:
+            continue
+        if pid == os.getpid():
+            continue
+        found[pid] = parts[1] if len(parts) > 1 else ''
+    return found
+
+
+def _wait_for_exit(pids, timeout_sec):
+    remaining = set(int(pid) for pid in pids)
+    deadline = time.monotonic() + max(0.0, float(timeout_sec))
+    while remaining and time.monotonic() < deadline:
+        for pid in list(remaining):
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                remaining.discard(pid)
+        if remaining:
+            time.sleep(0.05)
+    return remaining
+
+
+def _cleanup_lingering_gazebo_processes(enabled=True):
+    if not enabled:
+        return
+    patterns = (
+        r'ruby .*/gz sim',
+        r'ruby .*/ign gazebo',
+        r'gzserver',
+        r'gzclient',
+        r'gazebo( |$)',
+    )
+    found = {}
+    for pattern in patterns:
+        found.update(_collect_processes_by_pattern(pattern))
+    if not found:
+        return
+    remaining = set(found.keys())
+    for sig, wait_sec in (
+        (signal.SIGINT, 1.0),
+        (signal.SIGTERM, 1.0),
+        (signal.SIGKILL, 0.2),
+    ):
+        if not remaining:
+            break
+        for pid in list(remaining):
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                remaining.discard(pid)
+        remaining = _wait_for_exit(remaining, wait_sec)
+    cleaned = sorted(set(found.keys()) - set(remaining))
+    if cleaned:
+        print(f"[system_launch] Gazebo 잔여 프로세스 정리: {', '.join(str(pid) for pid in cleaned)}")
+    if remaining:
+        print(f"[system_launch] Gazebo 잔여 프로세스 정리 실패: {', '.join(str(pid) for pid in sorted(remaining))}")
 
 
 def generate_launch_description(overrides=None):
@@ -101,9 +186,17 @@ def generate_launch_description(overrides=None):
 
 def main(argv=None):
     argv = argv or []
+    overrides = _parse_cli_overrides(argv)
     ls = LaunchService(argv=argv)
-    ls.include_launch_description(generate_launch_description(_parse_cli_overrides(argv)))
-    return ls.run()
+    ls.include_launch_description(generate_launch_description(overrides))
+    cleanup_gazebo = bool(
+        _is_true_text((overrides or {}).get('run_robot', 'true'), default=True)
+        and _is_true_text((overrides or {}).get('robot_gz', 'true'), default=True)
+    )
+    try:
+        return ls.run()
+    finally:
+        _cleanup_lingering_gazebo_processes(enabled=cleanup_gazebo)
 
 
 if __name__ == '__main__':

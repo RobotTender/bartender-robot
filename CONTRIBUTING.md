@@ -12,9 +12,9 @@
 ## 문서
 
 - Git 연결/업로드 절차:
-  - [docs/GIT_WORKFLOW.md](/home/fc/ros2_ws/src/robot_bartender/docs/GIT_WORKFLOW.md)
+  - [docs/GIT_WORKFLOW.md](docs/GIT_WORKFLOW.md)
 - 배포 절차:
-  - [docs/DEPLOYMENT.md](/home/fc/ros2_ws/src/robot_bartender/docs/DEPLOYMENT.md)
+  - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
 ## 브랜치 규칙
 

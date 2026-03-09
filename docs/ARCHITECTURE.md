@@ -44,17 +44,19 @@
 - `src/frontend/`
   - 개발자용 프론트엔드
   - 화면 표시, 버튼 입력, lightweight overlay만 담당
-  - 비전 raw image는 표시만 하고, 무거운 처리는 직접 하지 않음
+  - 비전 화면은 RealSense raw image를 기본으로 표시함
+  - calibration/object detection 메타데이터가 있으면 raw image 위에 overlay만 수행함
+  - 무거운 처리는 직접 하지 않음
   - 사용하지 않는 depth/camera_info 구독과 panel render timer는 끊어서 부하를 줄임
 - `src/backend/`
   - 로봇 제어, 상태 구독, pick/place, 수동 이동
   - 로봇 관련 ROS 구독/서비스는 backend에서만 관리
 - `src/vision/drink_detection.py`
   - 술 객체 인식용 placeholder
-  - 전용 RealSense 카메라 입력을 받을 예정입니다
+  - 전용 RealSense raw 입력을 받아 meta 데이터를 publish하는 구조로 구현할 예정입니다
 - `src/vision/glass_fill_level.py`
   - 잔 용량 체크용 placeholder
-  - 전용 RealSense 카메라 입력을 받을 예정입니다
+  - 전용 RealSense raw 입력을 받아 meta 데이터를 publish하는 구조로 구현할 예정입니다
 - `src/vision/camera_eye_to_hand_robot_calibration.py`
   - RealSense + OpenCV + 로봇을 이용한 Eye-to-Hand 캘리브레이션 프로세스입니다
   - 체커보드 검출/보드 전체 데이터 계산 같은 무거운 처리는 여기서 담당합니다
@@ -76,6 +78,7 @@
 - 백엔드
   - 로봇 이동, 상태, 명령 처리
 - 운영 인식
-  - 이후 `drink_detection.py`, `glass_fill_level.py`로 분리 구현
+  - 이후 `drink_detection.py`, `glass_fill_level.py`가 raw image 기반으로 meta만 publish
+  - frontend는 raw image 위에 detection overlay만 수행
 
 현재 운영 인식 실행 파일은 아직 비워 둔 placeholder 상태입니다.

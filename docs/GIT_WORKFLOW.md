@@ -46,7 +46,7 @@ git config --global pull.rebase true
 SSH 권장:
 
 ```bash
-cd ~/ros2_ws/src/bartender-robot
+cd <repo-root>
 git remote add origin git@github.com:<YOUR_ID>/bartender-robot.git
 ```
 
@@ -74,7 +74,7 @@ upstream  https://github.com/RobotTender/bartender-robot.git
 이 저장소는 아직 초기 커밋 전 상태일 수 있으니, 아래 순서로 올리면 됩니다.
 
 ```bash
-cd ~/ros2_ws/src/bartender-robot
+cd <repo-root>
 git status
 git add .
 git commit -m "chore: initialize bartender robot runtime repository"
@@ -130,7 +130,7 @@ GitHub에서:
 ## 원격 연결 예시 전체
 
 ```bash
-cd ~/ros2_ws/src/bartender-robot
+cd <repo-root>
 git remote add origin git@github.com:<YOUR_ID>/bartender-robot.git
 git remote set-url upstream https://github.com/RobotTender/bartender-robot.git
 git remote -v

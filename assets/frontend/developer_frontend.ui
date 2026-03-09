@@ -866,25 +866,6 @@ selection-color: #ffffff;</string>
       </property>
      </item>
     </widget>
-    <widget class="QLabel" name="current_tool_label">
-     <property name="geometry">
-      <rect>
-       <x>171</x>
-       <y>78</y>
-       <width>161</width>
-       <height>20</height>
-      </rect>
-     </property>
-     <property name="styleSheet">
-      <string notr="true">color: #555555;</string>
-     </property>
-     <property name="text">
-      <string>현재툴(TCP): -</string>
-     </property>
-     <property name="alignment">
-      <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
-     </property>
-    </widget>
     <widget class="QTableWidget" name="robot_state_table">
      <property name="geometry">
       <rect>
@@ -1297,20 +1278,77 @@ QPushButton:disabled {
        <string>비전 클릭이동</string>
       </property>
      </widget>
-     <widget class="QLineEdit" name="vision_z_margin_input">
+     <widget class="QLabel" name="vision_x_axis_label">
       <property name="geometry">
        <rect>
-        <x>160</x>
+        <x>120</x>
         <y>50</y>
-        <width>131</width>
-        <height>31</height>
+        <width>52</width>
+        <height>20</height>
+       </rect>
+      </property>
+      <property name="styleSheet">
+       <string notr="true">color: #205c2f; font-size: 9pt; font-weight: 700;</string>
+      </property>
+      <property name="text">
+       <string>X</string>
+      </property>
+      <property name="alignment">
+       <set>Qt::AlignCenter</set>
+      </property>
+     </widget>
+     <widget class="QLabel" name="vision_y_axis_label">
+      <property name="geometry">
+       <rect>
+        <x>176</x>
+        <y>50</y>
+        <width>52</width>
+        <height>20</height>
+       </rect>
+      </property>
+      <property name="styleSheet">
+       <string notr="true">color: #205c2f; font-size: 9pt; font-weight: 700;</string>
+      </property>
+      <property name="text">
+       <string>Y</string>
+      </property>
+      <property name="alignment">
+       <set>Qt::AlignCenter</set>
+      </property>
+     </widget>
+     <widget class="QLabel" name="vision_z_axis_label">
+      <property name="geometry">
+       <rect>
+        <x>232</x>
+        <y>50</y>
+        <width>52</width>
+        <height>20</height>
+       </rect>
+      </property>
+      <property name="styleSheet">
+       <string notr="true">color: #205c2f; font-size: 9pt; font-weight: 700;</string>
+      </property>
+      <property name="text">
+       <string>Z</string>
+      </property>
+      <property name="alignment">
+       <set>Qt::AlignCenter</set>
+      </property>
+     </widget>
+     <widget class="QLineEdit" name="vision_x_margin_input">
+      <property name="geometry">
+       <rect>
+        <x>120</x>
+        <y>72</y>
+        <width>52</width>
+        <height>24</height>
        </rect>
       </property>
       <property name="toolTip">
-       <string>비전 좌표 이동 시 적용할 Z+ 옵셋 (mm)</string>
+       <string>비전 좌표 이동 시 적용할 X 옵셋 (mm)</string>
       </property>
       <property name="text">
-       <string>200.0</string>
+       <string>0.0</string>
       </property>
       <property name="maxLength">
        <number>7</number>
@@ -1319,16 +1357,66 @@ QPushButton:disabled {
        <set>Qt::AlignCenter</set>
       </property>
       <property name="placeholderText">
-       <string>Z+ 옵셋(mm)</string>
+       <string>X(mm)</string>
+      </property>
+     </widget>
+     <widget class="QLineEdit" name="vision_y_margin_input">
+      <property name="geometry">
+       <rect>
+        <x>176</x>
+        <y>72</y>
+        <width>52</width>
+        <height>24</height>
+       </rect>
+      </property>
+      <property name="toolTip">
+       <string>비전 좌표 이동 시 적용할 Y 옵셋 (mm)</string>
+      </property>
+      <property name="text">
+       <string>0.0</string>
+      </property>
+      <property name="maxLength">
+       <number>7</number>
+      </property>
+      <property name="alignment">
+       <set>Qt::AlignCenter</set>
+      </property>
+      <property name="placeholderText">
+       <string>Y(mm)</string>
+      </property>
+     </widget>
+     <widget class="QLineEdit" name="vision_z_margin_input">
+      <property name="geometry">
+       <rect>
+        <x>232</x>
+        <y>72</y>
+        <width>52</width>
+        <height>24</height>
+       </rect>
+      </property>
+      <property name="toolTip">
+       <string>비전 좌표 이동 시 적용할 Z 옵셋 (mm)</string>
+      </property>
+      <property name="text">
+       <string>0.0</string>
+      </property>
+      <property name="maxLength">
+       <number>7</number>
+      </property>
+      <property name="alignment">
+       <set>Qt::AlignCenter</set>
+      </property>
+      <property name="placeholderText">
+       <string>Z(mm)</string>
       </property>
      </widget>
      <widget class="QPushButton" name="vision_move_button">
       <property name="geometry">
        <rect>
-        <x>160</x>
-        <y>90</y>
-        <width>131</width>
-        <height>31</height>
+        <x>180</x>
+        <y>98</y>
+        <width>111</width>
+        <height>24</height>
        </rect>
       </property>
       <property name="text">
@@ -1339,8 +1427,8 @@ QPushButton:disabled {
       <property name="geometry">
        <rect>
         <x>10</x>
-        <y>100</y>
-        <width>141</width>
+        <y>102</y>
+        <width>161</width>
         <height>16</height>
        </rect>
       </property>
@@ -1356,15 +1444,15 @@ QPushButton:disabled {
        <rect>
         <x>10</x>
         <y>50</y>
-        <width>151</width>
-        <height>31</height>
+        <width>111</width>
+        <height>20</height>
        </rect>
       </property>
       <property name="styleSheet">
-       <string notr="true">color: #205c2f; font-size: 9.5pt; font-weight: 700;</string>
+       <string notr="true">color: #205c2f; font-size: 7.5pt; font-weight: 700;</string>
       </property>
       <property name="text">
-       <string>Z 옵셋 입력 (mm)</string>
+       <string>XYZ 옵셋 입력 (mm)</string>
       </property>
      </widget>
     </widget>
@@ -1430,6 +1518,25 @@ QPushButton:disabled {
      </property>
      <property name="text">
       <string>ON</string>
+     </property>
+    </widget>
+    <widget class="QLabel" name="current_tool_label">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>70</y>
+       <width>321</width>
+       <height>31</height>
+      </rect>
+     </property>
+     <property name="styleSheet">
+      <string notr="true">color: #555555;</string>
+     </property>
+     <property name="text">
+      <string>툴(TCP): -</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
      </property>
     </widget>
    </widget>

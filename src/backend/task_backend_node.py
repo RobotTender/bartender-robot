@@ -51,6 +51,8 @@ except Exception:
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "e0509"
 VELOCITY, ACC = 100, 100
+ROBOT_STATE_WATCHDOG_STALE_SEC = float(os.environ.get("ROBOT_STATE_WATCHDOG_STALE_SEC", "2.5"))
+ROBOT_STATE_WATCHDOG_RESTART_INTERVAL_SEC = float(os.environ.get("ROBOT_STATE_WATCHDOG_RESTART_INTERVAL_SEC", "5.0"))
 
 DR_MV_RA_NONE = 0
 DR_MV_RA_DUPLICATE = 0
@@ -256,6 +258,11 @@ class RobotControllerNode(Node):
     def _fmt_list3(self, values):
         return "[" + ", ".join(f"{float(v):.3f}" for v in values) + "]"
 
+    def _cart_motion_profile(self, vel=None, acc=None):
+        v = VELOCITY if vel is None else float(vel)
+        a = ACC if acc is None else float(acc)
+        return [v, v], [a, a]
+
     def move_to_home_pose(self, home_posj=None, vel=None, acc=None):
         from DSR_ROBOT2 import movej, wait
         from DR_common2 import posj
@@ -281,10 +288,11 @@ class RobotControllerNode(Node):
             if abc is None or len(abc) < 3:
                 abc = [0.0, 0.0, 0.0]
             target = [float(x), float(y), float(z), float(abc[0]), float(abc[1]), float(abc[2])]
+            velx, accx = self._cart_motion_profile()
             self.get_logger().info(
                 f"비전 좌표 이동: XYZ=[{target[0]:.3f}, {target[1]:.3f}, {target[2]:.3f}], ABC={self._fmt_list3(abc)}"
             )
-            ret = movel(posx(target), vel=VELOCITY, acc=ACC, radius=0.0, ra=DR_MV_RA_DUPLICATE)
+            ret = movel(posx(target), vel=velx, acc=accx, radius=0.0, ra=DR_MV_RA_DUPLICATE)
             if not self._motion_ok(ret, "movel(비전 좌표 이동)"):
                 return False
             wait(0.5)
@@ -298,13 +306,13 @@ class RobotControllerNode(Node):
         from DR_common2 import posx
         try:
             target = [float(x), float(y), float(z), float(a), float(b), float(c)]
+            velx, accx = self._cart_motion_profile(vel=vel, acc=acc)
             self.get_logger().info(
                 f"카테시안 이동: XYZABC=[{target[0]:.3f}, {target[1]:.3f}, {target[2]:.3f}, "
-                f"{target[3]:.3f}, {target[4]:.3f}, {target[5]:.3f}]"
+                f"{target[3]:.3f}, {target[4]:.3f}, {target[5]:.3f}], "
+                f"vel=[{velx[0]:.3f}, {velx[1]:.3f}], acc=[{accx[0]:.3f}, {accx[1]:.3f}]"
             )
-            v = VELOCITY if vel is None else float(vel)
-            ac = ACC if acc is None else float(acc)
-            ret = movel(posx(target), vel=v, acc=ac, radius=0.0, ra=DR_MV_RA_DUPLICATE)
+            ret = movel(posx(target), vel=velx, acc=accx, radius=0.0, ra=DR_MV_RA_DUPLICATE)
             if not self._motion_ok(ret, "movel(카테시안 이동)"):
                 return False
             wait(0.5)
@@ -341,15 +349,16 @@ class RobotControllerNode(Node):
                 abc = [0.0, 0.0, 0.0]
             target_pos_list_up = [x, y, z + 100.0, float(abc[0]), float(abc[1]), float(abc[2])]
             target_pos_list = [x, y, z, float(abc[0]), float(abc[1]), float(abc[2])]
+            velx, accx = self._cart_motion_profile()
             self.get_logger().info(f"적용 ABC={self._fmt_list3(abc)}")
 
             self.get_logger().info(f"{self._fmt_list3(target_pos_list_up)} / 픽-업 위치 이동합니다.")
-            ret = movel(posx(target_pos_list_up), vel=VELOCITY, acc=ACC, radius=20.0, ra=DR_MV_RA_DUPLICATE)
+            ret = movel(posx(target_pos_list_up), vel=velx, acc=accx, radius=20.0, ra=DR_MV_RA_DUPLICATE)
             if not self._motion_ok(ret, "movel(픽-업)"):
                 return False
 
             self.get_logger().info(f"{self._fmt_list3(target_pos_list)} / 픽 위치로 이동합니다.")
-            ret = movel(posx(target_pos_list), vel=VELOCITY, acc=ACC, radius=0, ra=DR_MV_RA_DUPLICATE)
+            ret = movel(posx(target_pos_list), vel=velx, acc=accx, radius=0, ra=DR_MV_RA_DUPLICATE)
             if not self._motion_ok(ret, "movel(픽-다운)"):
                 return False
             wait(0.5)
@@ -367,7 +376,7 @@ class RobotControllerNode(Node):
             self.get_logger().info("오브젝트를 잡았습니다.")
 
             self.get_logger().info(f"{self._fmt_list3(target_pos_list_up)} / 픽-업 위치로 이동합니다.")
-            ret = movel(posx(target_pos_list_up), vel=VELOCITY, acc=ACC, radius=5.0, ra=DR_MV_RA_DUPLICATE)
+            ret = movel(posx(target_pos_list_up), vel=velx, acc=accx, radius=5.0, ra=DR_MV_RA_DUPLICATE)
             if not self._motion_ok(ret, "movel(픽 리프트)"):
                 return False
             return True
@@ -383,15 +392,16 @@ class RobotControllerNode(Node):
                 abc = [0.0, 0.0, 0.0]
             target_pos_list_up = [x, y, z + 100.0, float(abc[0]), float(abc[1]), float(abc[2])]
             target_pos_list = [x, y, z, float(abc[0]), float(abc[1]), float(abc[2])]
+            velx, accx = self._cart_motion_profile()
             self.get_logger().info(f"적용 ABC={self._fmt_list3(abc)}")
 
             self.get_logger().info(f"{self._fmt_list3(target_pos_list_up)} / 플레이스-업 위치로 이동합니다. ")
-            ret = movel(posx(target_pos_list_up), vel=VELOCITY, acc=ACC, radius=20.0, ra=DR_MV_RA_DUPLICATE)
+            ret = movel(posx(target_pos_list_up), vel=velx, acc=accx, radius=20.0, ra=DR_MV_RA_DUPLICATE)
             if not self._motion_ok(ret, "movel(플레이스-업)"):
                 return False
 
             self.get_logger().info(f"{self._fmt_list3(target_pos_list)} / 플레이스-다운 위치로 이동합니다. ")
-            ret = movel(posx(target_pos_list), vel=VELOCITY, acc=ACC, radius=0, ra=DR_MV_RA_DUPLICATE)
+            ret = movel(posx(target_pos_list), vel=velx, acc=accx, radius=0, ra=DR_MV_RA_DUPLICATE)
             if not self._motion_ok(ret, "movel(플레이스-다운)"):
                 return False
             wait(0.5)
@@ -407,7 +417,7 @@ class RobotControllerNode(Node):
                 self.get_logger().info("VIRTUAL 모드: 그리퍼 릴리즈 동작 생략")
 
             self.get_logger().info(f"{self._fmt_list3(target_pos_list_up)} / 플레이스-업 위치로 이동합니다: ")
-            ret = movel(posx(target_pos_list_up), vel=VELOCITY, acc=ACC, radius=0.0, ra=DR_MV_RA_DUPLICATE)
+            ret = movel(posx(target_pos_list_up), vel=velx, acc=accx, radius=0.0, ra=DR_MV_RA_DUPLICATE)
             if not self._motion_ok(ret, "movel(플레이스 리프트)"):
                 return False
 
@@ -458,6 +468,8 @@ class RobotBackend:
         self._source_lock = threading.Lock()
         self._source_scan_interval_sec = 1.0
         self._last_source_scan_at = 0.0
+        self._state_watchdog_lock = threading.Lock()
+        self._last_state_watchdog_restart_at = 0.0
         self._last_mode_source_scan_at = 0.0
         self._mode_source_scan_interval_sec = 1.0
         self._set_robot_control_cli = None
@@ -468,6 +480,8 @@ class RobotBackend:
         self._get_current_tcp_cli = None
         self._tcp_service_lock = threading.Lock()
         self._get_robot_system_clients = {}
+        self._startup_tool_tcp_config_done = False
+        self._startup_gripper_init_enqueued = False
         self._connection_mode = "UNKNOWN"
         self._connection_mode_seen_at = None
         self._robot_mode_lock = threading.Lock()
@@ -633,12 +647,6 @@ class RobotBackend:
 
         self._report_progress(progress_callback, 45, "로봇 컨트롤러 생성 중...")
         self.robot_controller = RobotControllerNode(use_real_gripper=self.use_real_gripper)
-        ok_cfg, msg_cfg = self._apply_tool_tcp_config()
-        if self.robot_controller is not None:
-            if ok_cfg:
-                self.robot_controller._log_info(msg_cfg)
-            else:
-                self.robot_controller._log_error(msg_cfg)
 
         self._report_progress(progress_callback, 60, "ROS executor 시작 중...")
         self._executor = MultiThreadedExecutor(num_threads=3)
@@ -657,7 +665,6 @@ class RobotBackend:
 
         self._worker_thread = threading.Thread(target=self._command_loop, daemon=True)
         self._worker_thread.start()
-        self._enqueue_gripper_init_if_needed()
 
         self._ready_event.set()
         self._started = True
@@ -746,7 +753,7 @@ class RobotBackend:
             self._report_progress(progress_callback, 97, f"{self._connection_mode}: 그리퍼 생략")
             return
         self._gripper_ready_event.clear()
-        self._report_progress(progress_callback, 97, "그리퍼 초기화: 로봇 워커에서 실행")
+        self._report_progress(progress_callback, 97, "그리퍼 초기화: 로봇 연결 후 실행")
 
     def _enqueue_gripper_init_if_needed(self):
         if not self._is_real_gripper_required():
@@ -790,6 +797,47 @@ class RobotBackend:
             return False, f"그리퍼 초기화 실패: {self._gripper_init_error}"
         return False, "그리퍼 초기화 진행 중입니다. 잠시 후 다시 시도하세요."
 
+    def _is_robot_connection_ready_for_startup(self):
+        if str(self._connection_mode).upper() != "REAL":
+            return True
+        with self._robot_state_lock:
+            return self._robot_state_seen_at is not None
+
+    def _try_run_startup_robot_init(self):
+        if self.robot_controller is None:
+            return
+        if not self._is_robot_connection_ready_for_startup():
+            return
+
+        if not self._startup_tool_tcp_config_done:
+            ok_cfg, msg_cfg = self._apply_tool_tcp_config()
+            if ok_cfg:
+                self._startup_tool_tcp_config_done = True
+                self.robot_controller._log_info(msg_cfg)
+            else:
+                self.robot_controller._log_error(msg_cfg)
+                return
+
+        if self._startup_gripper_init_enqueued:
+            return
+        if not self._is_real_gripper_required():
+            self._startup_gripper_init_enqueued = True
+            return
+
+        if not self._robot_mode_initialized_once:
+            try:
+                self.sync_robot_mode_once(force=False, timeout_sec=0.6)
+            except Exception:
+                return
+            if not self._robot_mode_initialized_once:
+                return
+
+        ok_gripper, msg_gripper = self._enqueue_gripper_init_if_needed()
+        if ok_gripper:
+            self._startup_gripper_init_enqueued = True
+        elif self.robot_controller is not None:
+            self.robot_controller._log_error(msg_gripper)
+
     def _command_loop(self):
         next_mode_sync_try_at = 0.0
         while not self._stop_event.is_set():
@@ -797,22 +845,16 @@ class RobotBackend:
                 cmd, val = self._cmd_q.get(timeout=0.1)
             except queue.Empty:
                 now = time.monotonic()
+                self._try_upgrade_to_state_source()
+                self._try_upgrade_robot_mode_source()
+                self._try_run_startup_robot_init()
                 if (not self._robot_mode_initialized_once) and now >= next_mode_sync_try_at:
-                    # 초기 서비스(get_robot_mode)는 그리퍼 초기화 상태를 먼저 확인한 뒤 실행한다.
-                    # - REAL+그리퍼필수: 초기화 완료(set) 또는 실패(error) 상태가 확인된 후에만 실행
-                    # - 그 외: 즉시 실행
-                    gripper_ready_for_service = (
-                        (not self._is_real_gripper_required())
-                        or self._gripper_ready_event.is_set()
-                        or (self._gripper_init_error is not None)
-                    )
-                    if gripper_ready_for_service:
-                        try:
-                            if rclpy.ok() and (not self._stop_event.is_set()):
-                                self.sync_robot_mode_once(force=False, timeout_sec=0.6)
-                        except Exception:
-                            if self._stop_event.is_set() or (not rclpy.ok()):
-                                break
+                    try:
+                        if rclpy.ok() and (not self._stop_event.is_set()):
+                            self.sync_robot_mode_once(force=False, timeout_sec=0.6)
+                    except Exception:
+                        if self._stop_event.is_set() or (not rclpy.ok()):
+                            break
                     next_mode_sync_try_at = now + 1.0
                 continue
 
@@ -869,7 +911,11 @@ class RobotBackend:
 
                 self._busy_event.set()
                 try:
-                    ok_home = self.robot_controller.move_to_home_pose(home_posj=self.get_home_posj())
+                    vel = None
+                    acc = None
+                    if isinstance(val, (list, tuple)) and len(val) >= 2:
+                        vel, acc = val[:2]
+                    ok_home = self.robot_controller.move_to_home_pose(home_posj=self.get_home_posj(), vel=vel, acc=acc)
                     if not ok_home:
                         self.robot_controller._log_error("초기 자세 복귀 실패")
                 finally:
@@ -1012,6 +1058,11 @@ class RobotBackend:
         if not self._robot_stream_enabled:
             return
         self._update_robot_state(msg.robot_state, msg.robot_state_str)
+        if self._joint_state_sub is not None:
+            with self._source_lock:
+                if self._joint_state_sub is not None:
+                    self._destroy_sub_safe(self._joint_state_sub)
+                    self._joint_state_sub = None
         try:
             with self._robot_mode_lock:
                 # 제어모드는 RT값이 아닌 RobotState.actual_mode를 기준으로만 사용한다.
@@ -1042,7 +1093,25 @@ class RobotBackend:
             return
         if len(msg.position) < 6:
             return
-        raw_posj = list(msg.position[:6])
+        raw_posj = None
+        joint_names = [str(name).strip() for name in list(getattr(msg, "name", []) or [])]
+        if len(joint_names) >= 6:
+            name_to_pos = {}
+            for idx, name in enumerate(joint_names):
+                if idx >= len(msg.position):
+                    break
+                name_to_pos[name] = msg.position[idx]
+            ordered = []
+            for joint_idx in range(1, 7):
+                key = f"joint_{joint_idx}"
+                if key not in name_to_pos:
+                    ordered = []
+                    break
+                ordered.append(name_to_pos[key])
+            if len(ordered) == 6:
+                raw_posj = ordered
+        if raw_posj is None:
+            raw_posj = list(msg.position[:6])
         # sensor_msgs/JointState follows ROS convention (rad for revolute joints).
         # Convert to deg to match Doosan RobotState/current_posj display convention.
         if max(abs(v) for v in raw_posj) <= (2.0 * math.pi + 0.5):
@@ -1089,6 +1158,42 @@ class RobotBackend:
             self._control_mode_value = None
             self._control_mode_seen_at = None
             self._robot_mode_initialized_once = False
+
+    def _ensure_robot_state_watchdog(self):
+        if not self._ready_event.is_set():
+            return
+        if not self._robot_stream_enabled:
+            return
+        if self.robot_controller is None:
+            return
+        with self._robot_state_lock:
+            seen_at = self._robot_state_seen_at
+        # 시작 초반 미수신은 기존 초기 대기 로직에 맡기고,
+        # 한 번이라도 받은 뒤 stale 되는 경우만 watchdog이 복구를 시도한다.
+        if seen_at is None:
+            return
+        now = time.monotonic()
+        if (now - float(seen_at)) <= float(ROBOT_STATE_WATCHDOG_STALE_SEC):
+            return
+        with self._state_watchdog_lock:
+            if (now - self._last_state_watchdog_restart_at) < float(ROBOT_STATE_WATCHDOG_RESTART_INTERVAL_SEC):
+                return
+            self._last_state_watchdog_restart_at = now
+        try:
+            if self.robot_controller is not None:
+                self.robot_controller._log_info(
+                    f"RobotState stale 감지({now - float(seen_at):.2f}s): 상태 구독 재시작 시도"
+                )
+            self.stop_robot_state_subscriptions()
+            ok_restart, msg_restart = self.start_robot_state_subscriptions()
+            if self.robot_controller is not None:
+                if ok_restart:
+                    self.robot_controller._log_info(f"RobotState watchdog 재구독 성공: {msg_restart}")
+                else:
+                    self.robot_controller._log_error(f"RobotState watchdog 재구독 실패: {msg_restart}")
+        except Exception as e:
+            if self.robot_controller is not None:
+                self.robot_controller._log_error(f"RobotState watchdog 예외: {e}")
 
     def stop_robot_state_subscriptions(self):
         with self._source_lock:
@@ -1309,7 +1414,7 @@ class RobotBackend:
                 self._state_sub = self.robot_controller.create_subscription(
                     RobotState, state_topic, self._on_robot_state, 10
                 )
-                self.robot_controller._log_info(f"상태 토픽 자동 전환 완료: {state_topic} (연결타입={mode})")
+                self.robot_controller._log_info(f"상태 토픽 감지: {state_topic} (연결타입={mode}, 첫 수신 후 조인트 구독 정리)")
 
     def _try_upgrade_robot_mode_source(self):
         if RobotStateRt is None or self.robot_controller is None:
@@ -1337,6 +1442,7 @@ class RobotBackend:
             self.robot_controller._log_info(f"로봇모드 토픽 자동 전환 완료: {topic}")
 
     def get_robot_state_snapshot(self):
+        self._ensure_robot_state_watchdog()
         with self._robot_state_lock:
             return self._robot_state_code, self._robot_state_name, self._robot_state_seen_at
 
@@ -1797,7 +1903,7 @@ class RobotBackend:
         self._cmd_q.put(("pick_place", value))
         return True, "작업을 시작합니다."
 
-    def send_move_home(self):
+    def send_move_home(self, vel=None, acc=None):
         if not self._ready_event.is_set():
             return False, "백엔드 준비 중입니다."
 
@@ -1809,8 +1915,11 @@ class RobotBackend:
         if not state_ok:
             return False, state_msg
 
-        self._cmd_q.put(("move_home", None))
-        return True, "초기 위치 이동을 시작합니다."
+        tv = None if vel is None else float(vel)
+        ta2 = None if acc is None else float(acc)
+        self._cmd_q.put(("move_home", (tv, ta2)))
+        speed_text = f" 속도={tv:.0f}%" if tv is not None else ""
+        return True, f"초기 위치 이동을 시작합니다.{speed_text}"
 
     def send_move_vision_point(self, x_mm, y_mm, z_mm, dwell_sec=1.0):
         if not self._ready_event.is_set():
@@ -1850,9 +1959,10 @@ class RobotBackend:
         tv = None if vel is None else float(vel)
         ta2 = None if acc is None else float(acc)
         self._cmd_q.put(("move_cartesian", (tx, ty, tz, ta, tb, tc, tv, ta2)))
+        speed_text = f", 속도={tv:.0f}%" if tv is not None else ""
         return True, (
             f"카테시안 이동 시작: X={tx:.2f}, Y={ty:.2f}, Z={tz:.2f}, "
-            f"A={ta:.2f}, B={tb:.2f}, C={tc:.2f}"
+            f"A={ta:.2f}, B={tb:.2f}, C={tc:.2f}{speed_text}"
         )
 
     def send_move_joint(self, j1, j2, j3, j4, j5, j6, vel=None, acc=None):
@@ -1870,9 +1980,10 @@ class RobotBackend:
         tv = None if vel is None else float(vel)
         ta2 = None if acc is None else float(acc)
         self._cmd_q.put(("move_joint", (*vals, tv, ta2)))
+        speed_text = f", 속도={tv:.0f}%" if tv is not None else ""
         return True, (
             f"조인트 이동 시작: J1={vals[0]:.2f}, J2={vals[1]:.2f}, J3={vals[2]:.2f}, "
-            f"J4={vals[3]:.2f}, J5={vals[4]:.2f}, J6={vals[5]:.2f}"
+            f"J4={vals[3]:.2f}, J5={vals[4]:.2f}, J6={vals[5]:.2f}{speed_text}"
         )
 
     def send_gripper_move(self, opening_distance_mm):
@@ -1920,6 +2031,7 @@ class RobotBackend:
     def get_position_snapshot(self):
         if not self._ready_event.is_set():
             return None, None
+        self._ensure_robot_state_watchdog()
         self._try_upgrade_to_state_source()
         with self._position_lock:
             if self._last_positions is None:

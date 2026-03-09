@@ -7,7 +7,7 @@
 ## 최상위 구조
 
 ```text
-bartender-robot/
+<repo-root>/
   assets/
   config/
   docs/
@@ -28,8 +28,8 @@ bartender-robot/
 
 현재 포함:
 
-- [assets/frontend/developer_frontend.ui](/home/fc/ros2_ws/src/robot_bartender/assets/frontend/developer_frontend.ui)
-- [assets/models/best.pt](/home/fc/ros2_ws/src/robot_bartender/assets/models/best.pt)
+- [assets/frontend/developer_frontend.ui](../assets/frontend/developer_frontend.ui)
+- [assets/models/best.pt](../assets/models/best.pt)
 
 ### `config/`
 
@@ -40,8 +40,8 @@ bartender-robot/
 
 핵심 파일:
 
-- [config/parameter.csv](/home/fc/ros2_ws/src/robot_bartender/config/parameter.csv)
-- [config/calibration](/home/fc/ros2_ws/src/robot_bartender/config/calibration)
+- [config/parameter.csv](../config/parameter.csv)
+- [config/calibration](../config/calibration)
 
 ### `docs/`
 
@@ -56,10 +56,10 @@ bartender-robot/
 
 현재 유지하는 launch:
 
-- [launch/system_launch.py](/home/fc/ros2_ws/src/robot_bartender/launch/system_launch.py)
-- [launch/realsense_launch.py](/home/fc/ros2_ws/src/robot_bartender/launch/realsense_launch.py)
-- [launch/object_detection_launch.py](/home/fc/ros2_ws/src/robot_bartender/launch/object_detection_launch.py)
-- [launch/calibration_launch.py](/home/fc/ros2_ws/src/robot_bartender/launch/calibration_launch.py)
+- [launch/system_launch.py](../launch/system_launch.py)
+- [launch/realsense_launch.py](../launch/realsense_launch.py)
+- [launch/object_detection_launch.py](../launch/object_detection_launch.py)
+- [launch/calibration_launch.py](../launch/calibration_launch.py)
 
 ### `scripts/`
 
@@ -67,7 +67,7 @@ bartender-robot/
 
 현재 포함:
 
-- [scripts/apply_doosan_vendor_patches.sh](/home/fc/ros2_ws/src/robot_bartender/scripts/apply_doosan_vendor_patches.sh)
+- [scripts/apply_doosan_vendor_patches.sh](../scripts/apply_doosan_vendor_patches.sh)
 
 ### `src/`
 
@@ -75,11 +75,11 @@ bartender-robot/
 
 하위 구성:
 
-- [src/frontend](/home/fc/ros2_ws/src/robot_bartender/src/frontend)
+- [src/frontend](../src/frontend)
   - 화면, 사용자 입력, 비전 표시, lightweight overlay
-- [src/backend](/home/fc/ros2_ws/src/robot_bartender/src/backend)
+- [src/backend](../src/backend)
   - 로봇 상태, 서비스, 명령, gripper 제어
-- [src/vision](/home/fc/ros2_ws/src/robot_bartender/src/vision)
+- [src/vision](../src/vision)
   - 캘리브레이션 프로세스, 객체 인식 placeholder
 
 ### `vendor/`
@@ -88,35 +88,35 @@ bartender-robot/
 
 현재 포함:
 
-- [vendor/doosan-robot2/0001-dsr-controller2-state-topics.patch](/home/fc/ros2_ws/src/robot_bartender/vendor/doosan-robot2/0001-dsr-controller2-state-topics.patch)
-- [vendor/doosan-robot2/0002-gazebo-startup-and-update-rate.patch](/home/fc/ros2_ws/src/robot_bartender/vendor/doosan-robot2/0002-gazebo-startup-and-update-rate.patch)
+- [vendor/doosan-robot2/0001-dsr-controller2-state-topics.patch](../vendor/doosan-robot2/0001-dsr-controller2-state-topics.patch)
+- [vendor/doosan-robot2/0002-gazebo-startup-and-update-rate.patch](../vendor/doosan-robot2/0002-gazebo-startup-and-update-rate.patch)
 
 ## 파일별 진입점
 
 ### 사용자 실행
 
-- [run_bartender.py](/home/fc/ros2_ws/src/robot_bartender/run_bartender.py)
+- [run_bartender.py](../run_bartender.py)
 
 ### 프론트엔드
 
-- [src/frontend/developer_frontend.py](/home/fc/ros2_ws/src/robot_bartender/src/frontend/developer_frontend.py)
+- [src/frontend/developer_frontend.py](../src/frontend/developer_frontend.py)
 
 ### 백엔드
 
-- [src/backend/task_backend_node.py](/home/fc/ros2_ws/src/robot_bartender/src/backend/task_backend_node.py)
+- [src/backend/task_backend_node.py](../src/backend/task_backend_node.py)
 
 ### 캘리브레이션 프로세스
 
-- [src/vision/camera_eye_to_hand_robot_calibration.py](/home/fc/ros2_ws/src/robot_bartender/src/vision/camera_eye_to_hand_robot_calibration.py)
+- [src/vision/camera_eye_to_hand_robot_calibration.py](../src/vision/camera_eye_to_hand_robot_calibration.py)
 
 ### 객체 인식 placeholder
 
-- [src/vision/drink_detection.py](/home/fc/ros2_ws/src/robot_bartender/src/vision/drink_detection.py)
-- [src/vision/glass_fill_level.py](/home/fc/ros2_ws/src/robot_bartender/src/vision/glass_fill_level.py)
+- [src/vision/drink_detection.py](../src/vision/drink_detection.py)
+- [src/vision/glass_fill_level.py](../src/vision/glass_fill_level.py)
 
 ## 정리 원칙
 
-- 사용자 진입점은 [run_bartender.py](/home/fc/ros2_ws/src/robot_bartender/run_bartender.py) 하나로 유지
+- 사용자 진입점은 [run_bartender.py](../run_bartender.py) 하나로 유지
 - 내부 실행 조립은 `launch/`에만 둠
 - 실제 앱 코드는 `src/`에만 둠
 - 설정/결과는 `config/`에 둠

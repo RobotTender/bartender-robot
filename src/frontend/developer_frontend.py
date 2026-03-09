@@ -34,6 +34,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QLineEdit,
     QCheckBox,
+    QSlider,
     QFileDialog,
     QSizePolicy,
 )
@@ -105,16 +106,19 @@ UI_TABLE_FONT_SIZE = max(12, int(os.environ.get("UI_TABLE_FONT_SIZE", "12")))
 UI_TABLE_ROW_HEIGHT = max(26, int(os.environ.get("UI_TABLE_ROW_HEIGHT", "30")))
 UI_PANEL_TABLE_ROW_HEIGHT = max(22, int(UI_TABLE_ROW_HEIGHT * 0.875))
 STARTUP_USE_REAL_GRIPPER = os.environ.get("STARTUP_USE_REAL_GRIPPER", "1") == "1"
+MOTION_SPEED_MIN_PERCENT = 0
+MOTION_SPEED_MAX_PERCENT = 100
+DEFAULT_MOTION_SPEED_PERCENT = max(
+    MOTION_SPEED_MIN_PERCENT,
+    min(
+        MOTION_SPEED_MAX_PERCENT,
+        int(float(os.environ.get("UI_MOTION_SPEED_PERCENT", "50"))),
+    ),
+)
+CALIBRATION_FIXED_SPEED_PERCENT = 20.0
 
-YOLO_MODEL_PATH = os.environ.get("YOLO_MODEL_PATH", "")
-YOLO_CAMERA_INDEX = int(os.environ.get("YOLO_CAMERA_INDEX", "0"))
-YOLO_ENABLE_TRACK = os.environ.get("YOLO_ENABLE_TRACK", "0") == "1"
-YOLO_INFER_EVERY_N = max(1, int(os.environ.get("YOLO_INFER_EVERY_N", "2")))
 UI_ENABLE_VISION = os.environ.get("UI_ENABLE_VISION", "1") == "1"
 YOLO_EXTERNAL_NODE = os.environ.get("YOLO_EXTERNAL_NODE", "1") == "1"
-YOLO_ALLOW_INTERNAL_WEBCAM = os.environ.get("YOLO_ALLOW_INTERNAL_WEBCAM", "0") == "1"
-YOLO_EXTERNAL_TOPIC = os.environ.get("YOLO_EXTERNAL_TOPIC", "/yolo/annotated_image")
-YOLO_EXTERNAL_TOPIC_2 = os.environ.get("YOLO_EXTERNAL_TOPIC_2", "/yolo2/annotated_image")
 CALIB_VISION_TOPIC_PRIMARY = os.environ.get("CALIB_VISION_TOPIC", "/camera/camera/color/image_raw")
 CALIB_VISION_TOPIC_FALLBACK = os.environ.get("CALIB_VISION_TOPIC_FALLBACK", "/camera/color/image_raw")
 CALIB_CAMERA_INFO_TOPIC_PRIMARY = os.environ.get("CALIB_CAMERA_INFO_TOPIC", "/camera/camera/color/camera_info")
@@ -126,22 +130,25 @@ YOLO_AUTO_LAUNCH_ALWAYS = os.environ.get("YOLO_AUTO_LAUNCH_ALWAYS", "0") == "1"
 YOLO_AUTO_LAUNCH_CMD = os.environ.get("YOLO_AUTO_LAUNCH_CMD", "").strip()
 CALIB_HELPER_AUTO_LAUNCH = os.environ.get("CALIB_HELPER_AUTO_LAUNCH", "0") == "1"
 CALIB_HELPER_CMD = os.environ.get("CALIB_HELPER_CMD", "").strip()
-YOLO_EXTERNAL_DEPTH_TOPIC = os.environ.get(
-    "YOLO_EXTERNAL_DEPTH_TOPIC",
-    os.environ.get("YOLO_DEPTH_TOPIC", "/camera/camera/aligned_depth_to_color/image_raw"),
-)
 
 POSITION_STALE_SEC = float(os.environ.get("UI_POSITION_STALE_SEC", "2.0"))
 STATE_FLASH_SEC = float(os.environ.get("UI_STATE_FLASH_SEC", "1.2"))
 POSITION_FLASH_SEC = float(os.environ.get("UI_POSITION_FLASH_SEC", "0.9"))
+ROBOT_STARTUP_CONNECT_GRACE_SEC = float(os.environ.get("ROBOT_STARTUP_CONNECT_GRACE_SEC", "20.0"))
+POSITION_VALUE_COLOR = "#000000"
 STATE_COLOR_NORMAL = "#14863B"
 STATE_COLOR_WARNING = "#EF6C00"
 STATE_COLOR_ERROR = "#C62828"
 TOP_STATUS_BAR_HEIGHT = 40
 TOP_STATUS_GAP = 10
-VISION_MOVE_Z_MARGIN_MM = 200.0
+VISION_MOVE_DEFAULT_OFFSET_X_MM = 0.0
+VISION_MOVE_DEFAULT_OFFSET_Y_MM = 0.0
+VISION_MOVE_DEFAULT_OFFSET_Z_MM = 0.0
 CALIB_SEQUENCE_VELOCITY = float(os.environ.get("CALIB_SEQUENCE_VELOCITY", "20"))
 CALIB_SEQUENCE_ACC = float(os.environ.get("CALIB_SEQUENCE_ACC", "20"))
+CALIB_SEQUENCE_SETTLE_SEC = float(os.environ.get("CALIB_SEQUENCE_SETTLE_SEC", "3.0"))
+CALIB_SEQUENCE_NEXT_DELAY_SEC = float(os.environ.get("CALIB_SEQUENCE_NEXT_DELAY_SEC", "2.0"))
+CALIB_SEQUENCE_CAPTURE_TIMEOUT_SEC = float(os.environ.get("CALIB_SEQUENCE_CAPTURE_TIMEOUT_SEC", "8.0"))
 JOINT_INPUT_LIMITS_DEG = (
     (-360.0, 360.0),  # J1
     (-360.0, 360.0),  # J2
@@ -183,31 +190,10 @@ CALIB_SEQUENCE_ROW_DEFS = [
     ("p8", "데이터8"),
     ("p9", "데이터9"),
     ("p10", "데이터10"),
-    ("return_home", "복귀위치"),
+    ("return1", "복귀위치1"),
+    ("return2", "복귀위치2"),
     ("end_home", "홈위치"),
 ]
-
-# Vision(U,V,Zmm) -> Robot(X,Y,Zmm) calibration pairs
-VISION_CALIB_UVZ_MM = np.array(
-    [
-        [470.0, 283.0, 657.0],  # P1
-        [363.0, 286.0, 656.0],  # P2
-        [468.0, 137.0, 647.0],  # P3
-        [361.0, 139.0, 648.0],  # P4
-        [419.0, 209.0, 652.0],  # P5
-    ],
-    dtype=np.float64,
-)
-ROBOT_CALIB_XYZ_MM = np.array(
-    [
-        [603.11, 53.40, 175.51],    # P1
-        [601.41, -126.30, 175.56],  # P2
-        [355.93, 56.11, 173.28],    # P3
-        [354.56, -125.54, 172.57],  # P4
-        [474.10, -30.35, 173.89],   # P5
-    ],
-    dtype=np.float64,
-)
 
 ROBOT_STATE_KR_MAP = {
     "STATE_INITIALIZING": "초기화",
@@ -229,23 +215,26 @@ ROBOT_STATE_KR_MAP = {
     "STATE_LAST": "마지막 상태",
 }
 
+ROBOT_MODE_KR_MAP = {
+    0: "메뉴얼모드",
+    1: "오토모드",
+    2: "복구모드",
+    3: "백드라이브모드",
+    4: "측정모드",
+    5: "초기화모드",
+    6: "마지막모드",
+}
+
+CONTROL_MODE_KR_MAP = {
+    0: "위치제어",
+    1: "토크제어",
+    3: "위치제어",
+    4: "토크제어",
+}
+
 ROBOT_STATE_NORMAL_CODES = {1, 2}
 ROBOT_STATE_WARNING_CODES = {0, 4, 5, 8, 9, 10, 12, 13, 14}
 ROBOT_STATE_ERROR_CODES = {3, 6, 7, 11, 15, 16}
-
-
-def _default_model_path():
-    model_dir = os.path.join(PROJECT_ROOT, "assets", "models")
-    for name in ("bartender_yolo.pt", "snack_detector.pt", "best.pt"):
-        candidate = os.path.join(model_dir, name)
-        if os.path.isfile(candidate):
-            return candidate
-    return os.path.join(model_dir, "best.pt")
-
-
-if not YOLO_MODEL_PATH:
-    YOLO_MODEL_PATH = _default_model_path()
-
 
 def _project_relative_path(path_value):
     if not path_value:
@@ -385,12 +374,13 @@ class App(QMainWindow, form):
         self._pos_flash_until = {}
         self._current_tool_label = None
         self._current_tool_text_cache = ""
+        self._current_tool_sync_lock = threading.Lock()
+        self._current_tool_sync_inflight = False
+        self._current_tool_sync_next_try_at = 0.0
+        self._current_tool_sync_retry_deadline = 0.0
+        self._backend_ready_at = None
         self._last_robot_state_text = ""
         self._robot_state_flash_until = 0.0
-        self._source_scan_at = 0.0
-        self._source_scan_interval_sec = 1.0
-        self._realsense_connected = False
-        self._yolo_topic_connected = False
         self._top_status_widgets = {}
         self._top_status_toggles = {}
         self._top_status_enabled = {"vision": True, "vision2": True, "robot": True}
@@ -415,7 +405,15 @@ class App(QMainWindow, form):
 
         # Control-button wiring reads these states, so initialize before _setup_control_buttons().
         self._vision_click_dialog_enabled = False
-        self._vision_move_z_margin_mm = float(VISION_MOVE_Z_MARGIN_MM)
+        self._vision_move_offset_xyz_mm = (
+            float(VISION_MOVE_DEFAULT_OFFSET_X_MM),
+            float(VISION_MOVE_DEFAULT_OFFSET_Y_MM),
+            float(VISION_MOVE_DEFAULT_OFFSET_Z_MM),
+        )
+        self._motion_speed_percent = int(DEFAULT_MOTION_SPEED_PERCENT)
+        self._motion_speed_slider = None
+        self._motion_speed_title_label = None
+        self._motion_speed_value_label = None
         self._calibration_mode_enabled = False
         self._calibration_mode_enabled_1 = False
         self._calibration_mode_enabled_2 = False
@@ -427,12 +425,12 @@ class App(QMainWindow, form):
         self._calib_last_points_at = None
         self._calib_last_points_at_1 = None
         self._calib_last_points_at_2 = None
-        self._calib_last_detect_run_at_1 = 0.0
-        self._calib_last_detect_run_at_2 = 0.0
         self._calib_last_grid_pts_1 = None
         self._calib_last_grid_pts_2 = None
         self._calib_last_grid_status_1 = None
         self._calib_last_grid_status_2 = None
+        self._calib_grid_camera_xyz_1 = None
+        self._calib_grid_camera_xyz_2 = None
         self._calib_matrix_path = None
         self._calib_matrix_path_1 = None
         self._calib_matrix_path_2 = None
@@ -450,8 +448,6 @@ class App(QMainWindow, form):
         self._calib_proc_started_by_ui_1 = False
         self._calib_proc_started_by_ui_2 = False
         self._calib_status_blink_on = False
-        self._calib_grid_camera_xyz_1 = None
-        self._calib_grid_camera_xyz_2 = None
         self._calibration_sequence_running = False
 
         self._setup_control_buttons()
@@ -459,6 +455,8 @@ class App(QMainWindow, form):
 
         # logging state must exist before stdout/stderr redirection starts
         self._log_buffer = []
+        self._log_buffer_lock = threading.Lock()
+        self._log_line_open = False
         self._last_log_line = ""
         self._last_log_line_at = 0.0
         self._stdout = EmittingStream()
@@ -480,12 +478,17 @@ class App(QMainWindow, form):
         self.append_log("[시작] 메인창 실행 완료\n")
         self.append_log("[시작] 백엔드 초기화 대기 중...\n")
 
-        self._status_timer = QTimer(self)
-        self._status_timer.timeout.connect(self._refresh_robot_status)
-        self._status_timer.start(250)
-        self._vision_status_timer = QTimer(self)
-        self._vision_status_timer.timeout.connect(self._refresh_vision_status)
-        self._vision_status_timer.start(300)
+        self._robot_status_timer = QTimer(self)
+        self._robot_status_timer.timeout.connect(self._refresh_robot_status)
+        self._robot_status_timer.start(250)
+        self._vision_status_timer_1 = QTimer(self)
+        self._vision_status_timer_1.timeout.connect(lambda: self._refresh_vision_status_panel(1))
+        self._vision_status_timer_1.start(300)
+        self._vision_status_timer_2 = QTimer(self)
+        self._vision_status_timer_2.timeout.connect(lambda: self._refresh_vision_status_panel(2))
+        self._vision_status_timer_2.start(300)
+        self._status_timer = self._robot_status_timer
+        self._vision_status_timer = None
         self._top_status_anim_timer = QTimer(self)
         self._top_status_anim_timer.timeout.connect(self._tick_top_status_animation)
         self._top_status_anim_timer.start(30)
@@ -496,6 +499,9 @@ class App(QMainWindow, form):
         self._pos_timer = QTimer(self)
         self._pos_timer.timeout.connect(self._refresh_positions)
         self._pos_timer.start(200)
+        self._current_tool_timer = QTimer(self)
+        self._current_tool_timer.timeout.connect(self._tick_current_tool_sync)
+        self._current_tool_timer.start(700)
         self._vision_render_timer_1 = QTimer(self)
         self._vision_render_timer_1.timeout.connect(self._drain_pending_vision_frame_1)
         self._vision_render_timer_1.start(16)
@@ -639,11 +645,10 @@ class App(QMainWindow, form):
         self._vision_drop_frames_until_1 = 0.0
         self._vision_drop_frames_until_2 = 0.0
         self._last_robot_comm_connected = False
-        self._build_vision_to_robot_affine()
         self._try_load_calibration_matrix_on_startup()
         self._update_calibration_mode_ui()
         self._svc_retry_log_last_at = 0.0
-        self._vision_retry_notice_logged = False
+        self._vision_retry_notice_logged = {1: False, 2: False}
 
         self._vision_state_label = getattr(self, "vision_state_label", None)
         if self._vision_state_label is not None:
@@ -765,8 +770,27 @@ class App(QMainWindow, form):
             self._log_clear_button.clicked.connect(self._clear_log_terminal)
 
     def _clear_log_terminal(self):
-        self._log_buffer.clear()
+        with self._log_buffer_lock:
+            self._log_buffer.clear()
+            self._log_line_open = False
         self.terminal.clear()
+
+    def _prefix_log_timestamps_locked(self, text: str) -> str:
+        if not text:
+            return ""
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        parts = normalized.splitlines(keepends=True)
+        if not parts:
+            parts = [normalized]
+        stamped = []
+        for part in parts:
+            if (not self._log_line_open) and part not in ("", "\n"):
+                ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                stamped.append(f"[{ts}] {part}")
+            else:
+                stamped.append(part)
+            self._log_line_open = not part.endswith("\n")
+        return "".join(stamped)
 
     def append_log(self, text):
         try:
@@ -777,13 +801,17 @@ class App(QMainWindow, form):
             return
         if not hasattr(self, "_log_buffer") or self._log_buffer is None:
             return
-        self._log_buffer.append(msg.replace("\r\n", "\n").replace("\r", "\n"))
+        with self._log_buffer_lock:
+            self._log_buffer.append(self._prefix_log_timestamps_locked(msg))
 
     def _flush_log_buffer(self):
-        if not hasattr(self, "_log_buffer") or not self._log_buffer:
+        if not hasattr(self, "_log_buffer"):
             return
-        chunk = "".join(self._log_buffer)
-        self._log_buffer.clear()
+        with self._log_buffer_lock:
+            if not self._log_buffer:
+                return
+            chunk = "".join(self._log_buffer)
+            self._log_buffer.clear()
         term = getattr(self, "terminal", None)
         if term is None:
             return
@@ -919,8 +947,7 @@ class App(QMainWindow, form):
                         self._update_calibration_mode_ui()
                         self._save_vision_serial_settings()
                 self._vision_cycle_ms = None
-                if YOLO_EXTERNAL_NODE:
-                    self._teardown_external_vision_bridge_panel(1)
+                self._teardown_external_vision_bridge_panel(1)
                 self._stop_calibration_process(1)
                 self._clear_vision_view_data(panel_index=1)
                 if YOLO_EXTERNAL_NODE and (not bool(self._top_status_enabled.get("vision2", True))):
@@ -942,8 +969,7 @@ class App(QMainWindow, form):
                         self._update_calibration_mode_ui()
                         self._save_vision_serial_settings()
                 self._vision_cycle_ms_2 = None
-                if YOLO_EXTERNAL_NODE:
-                    self._teardown_external_vision_bridge_panel(2)
+                self._teardown_external_vision_bridge_panel(2)
                 self._stop_calibration_process(2)
                 self._clear_vision_view_data(panel_index=2)
                 if YOLO_EXTERNAL_NODE and (not bool(self._top_status_enabled.get("vision", True))):
@@ -990,22 +1016,19 @@ class App(QMainWindow, form):
         else:
             self._vision_state_text_2 = "시작 중"
             self._last_vision_frame_at_2 = now
-        self.append_log(f"[비전] {key} 활성화: 비전 연결 재초기화 시작\n")
+        panel = 1 if key == "vision" else 2
+        self._append_vision_log(f"{key} 활성화: 비전 연결 재초기화 시작", panel_index=panel)
         if self.backend is None:
             return
-        if YOLO_EXTERNAL_NODE:
-            try:
-                calib_on_any = bool(self._calibration_mode_enabled_1 or self._calibration_mode_enabled_2)
-                if YOLO_AUTO_LAUNCH_NODE and (not calib_on_any):
-                    self._ensure_external_vision_process()
-                self._sync_calibration_processes()
-                panel = 1 if key == "vision" else 2
-                self._setup_external_vision_bridge_panel(panel)
-            except Exception as e:
-                self.append_log(f"[비전] 재초기화 실패: {e}\n")
-        else:
-            # 내부 모드에서도 공용 카메라 재시작(양쪽 영향)은 하지 않는다.
-            pass
+        try:
+            calib_on_any = bool(self._calibration_mode_enabled_1 or self._calibration_mode_enabled_2)
+            if YOLO_EXTERNAL_NODE and YOLO_AUTO_LAUNCH_NODE and (not calib_on_any):
+                self._ensure_external_vision_process()
+            self._sync_calibration_processes()
+            panel = 1 if key == "vision" else 2
+            self._setup_external_vision_bridge_panel(panel)
+        except Exception as e:
+            self._append_vision_log(f"재초기화 실패: {e}", panel_index=panel)
 
     def _set_vision_panel_controls_enabled(self, panel_index: int, enabled: bool):
         panel = 2 if int(panel_index) == 2 else 1
@@ -1118,7 +1141,6 @@ class App(QMainWindow, form):
         if panel == 2:
             self._calib_last_points_uvz_mm_2 = None
             self._calib_last_points_at_2 = None
-            self._calib_last_detect_run_at_2 = 0.0
             self._calib_last_grid_pts_2 = None
             self._calib_last_grid_status_2 = None
             self._calib_grid_camera_xyz_2 = None
@@ -1128,7 +1150,6 @@ class App(QMainWindow, form):
         else:
             self._calib_last_points_uvz_mm_1 = None
             self._calib_last_points_at_1 = None
-            self._calib_last_detect_run_at_1 = 0.0
             self._calib_last_grid_pts_1 = None
             self._calib_last_grid_status_1 = None
             self._calib_grid_camera_xyz_1 = None
@@ -1152,12 +1173,9 @@ class App(QMainWindow, form):
         panel = 2 if int(panel_index) == 2 else 1
         if not enabled:
             return "비활성화"
-        depth_sub = getattr(self, "_vision_depth_sub_2", None) if panel == 2 else getattr(self, "_vision_depth_sub", None)
         last_camera_frame_at = (
             getattr(self, "_last_camera_frame_at_2", None) if panel == 2 else getattr(self, "_last_camera_frame_at_1", None)
         )
-        if depth_sub is None:
-            return "전환중" if now < float(getattr(self, "_mode_switch_grace_until", 0.0)) else "끊김"
         if last_camera_frame_at is None:
             return "확인중" if now < float(getattr(self, "_mode_switch_grace_until", 0.0)) else "끊김"
         if (now - float(last_camera_frame_at)) > POSITION_STALE_SEC:
@@ -1169,6 +1187,7 @@ class App(QMainWindow, form):
         for i in range(6):
             self._set_table_value(i, "-", "", flash=False)
         self._clear_position_views()
+        self._set_current_tool_text("-")
 
     def _clear_position_views(self):
         for table in (getattr(self, "_joint_table", None), getattr(self, "_cart_table", None)):
@@ -1180,14 +1199,13 @@ class App(QMainWindow, form):
                     item = QTableWidgetItem("-")
                     table.setItem(row, 1, item)
                 item.setText("-")
-                item.setForeground(QBrush(self.palette().text().color()))
+                item.setForeground(QBrush(QColor(POSITION_VALUE_COLOR)))
                 font = item.font()
                 font.setBold(False)
                 item.setFont(font)
         self._pos_value_cache.clear()
         self._pos_flash_until.clear()
         self._last_positions_seen_at = None
-        self._set_current_tool_text("-")
 
     def _reposition_top_status_row(self):
         if not self._top_status_widgets:
@@ -1336,31 +1354,6 @@ class App(QMainWindow, form):
             state_text, severity = payload
             self._set_top_status(key, state_text, severity)
 
-    def _scan_source_links(self):
-        now = time.monotonic()
-        if (now - self._source_scan_at) < self._source_scan_interval_sec:
-            return
-        self._source_scan_at = now
-        node = getattr(self.backend, "robot_controller", None) if self.backend is not None else None
-        if node is None:
-            self._realsense_connected = False
-            self._yolo_topic_connected = False
-            return
-        try:
-            topic_map = dict(node.get_topic_names_and_types())
-        except Exception:
-            return
-
-        rs_color = any(t in topic_map for t in ("/camera/camera/color/image_raw", "/camera/color/image_raw"))
-        rs_depth = any(
-            t in topic_map for t in ("/camera/camera/aligned_depth_to_color/image_raw", "/camera/aligned_depth_to_color/image_raw")
-        )
-        rs_info = any(t in topic_map for t in ("/camera/camera/color/camera_info", "/camera/color/camera_info"))
-        self._realsense_connected = rs_color and rs_depth and rs_info
-
-        types = topic_map.get(YOLO_EXTERNAL_TOPIC, [])
-        self._yolo_topic_connected = "sensor_msgs/msg/Image" in types
-
     def _set_robot_controls_enabled(self, enabled: bool):
         enabled = bool(enabled)
         calib_seq_running = bool(getattr(self, "_calibration_sequence_running", False))
@@ -1368,9 +1361,6 @@ class App(QMainWindow, form):
             getattr(self, "_calibration_mode_enabled_1", False)
             or getattr(self, "_calibration_mode_enabled_2", False)
         )
-        calib_ready_1 = bool(self._is_calibration_points_ready(panel_index=1))
-        calib_ready_2 = bool(self._is_calibration_points_ready(panel_index=2))
-        calib_ready = bool(calib_ready_1 or calib_ready_2)
         mode_value = None
         mode_seen_at = None
         if self.backend is not None and hasattr(self.backend, "get_robot_mode_snapshot"):
@@ -1384,7 +1374,7 @@ class App(QMainWindow, form):
                 mode_key = int(mode_value)
             except Exception:
                 mode_key = None
-        state_key = (enabled, calib_on, calib_ready, mode_key, calib_seq_running)
+        state_key = (enabled, calib_on, mode_key, calib_seq_running)
         if self._robot_controls_enabled_cache is not None and self._robot_controls_enabled_cache == state_key:
             return
         self._robot_controls_enabled_cache = state_key
@@ -1412,8 +1402,13 @@ class App(QMainWindow, form):
             self._gripper_stroke_input.setEnabled(gripper_enabled)
         if hasattr(self, "_vision_move_button") and self._vision_move_button is not None:
             self._vision_move_button.setEnabled(normal_enabled)
-        if hasattr(self, "_vision_z_margin_input") and self._vision_z_margin_input is not None:
-            self._vision_z_margin_input.setEnabled(normal_enabled)
+        for w in [
+            getattr(self, "_vision_x_margin_input", None),
+            getattr(self, "_vision_y_margin_input", None),
+            getattr(self, "_vision_z_margin_input", None),
+        ]:
+            if w is not None:
+                w.setEnabled(normal_enabled)
         if hasattr(self, "_vision_dialog_toggle_button") and self._vision_dialog_toggle_button is not None:
             self._vision_dialog_toggle_button.setEnabled(normal_enabled)
         if hasattr(self, "_vision_dialog_toggle_switch") and self._vision_dialog_toggle_switch is not None:
@@ -1425,16 +1420,16 @@ class App(QMainWindow, form):
             self._calibration_mode_switch_2.setEnabled(True)
         if hasattr(self, "_calibration_transform_button") and self._calibration_transform_button is not None:
             self._calibration_transform_button.setEnabled(
-                bool((not calib_seq_running) and self._calibration_mode_enabled_1 and calib_ready_1)
+                bool(normal_enabled and self._top_status_enabled.get("vision", True))
             )
         if hasattr(self, "_calibration_transform_button_2") and self._calibration_transform_button_2 is not None:
             self._calibration_transform_button_2.setEnabled(
-                bool((not calib_seq_running) and self._calibration_mode_enabled_2 and calib_ready_2)
+                bool(normal_enabled and self._top_status_enabled.get("vision2", True))
             )
         if hasattr(self, "_calibration_load_button") and self._calibration_load_button is not None:
-            self._calibration_load_button.setEnabled(bool(self._calibration_mode_enabled_1))
+            self._calibration_load_button.setEnabled(bool((not calib_seq_running) and self._calibration_mode_enabled_1))
         if hasattr(self, "_calibration_load_button_2") and self._calibration_load_button_2 is not None:
-            self._calibration_load_button_2.setEnabled(bool(self._calibration_mode_enabled_2))
+            self._calibration_load_button_2.setEnabled(bool((not calib_seq_running) and self._calibration_mode_enabled_2))
         self._set_vision_panel_controls_enabled(1, bool(self._top_status_enabled.get("vision", True)))
         self._set_vision_panel_controls_enabled(2, bool(self._top_status_enabled.get("vision2", True)))
 
@@ -1514,8 +1509,9 @@ class App(QMainWindow, form):
 
     def _on_backend_ready(self, backend):
         self.backend = backend
+        self._backend_ready_at = time.monotonic()
         self.append_log("[초기화] 백엔드 초기화 완료\n")
-        self._refresh_current_tool_label_once(log_fail=False)
+        self._request_current_tool_sync(retry_window_sec=20.0, immediate=True)
         if not bool(self._top_status_enabled.get("robot", True)):
             if hasattr(self.backend, "stop_robot_state_subscriptions"):
                 try:
@@ -1584,6 +1580,12 @@ class App(QMainWindow, form):
         state_seen_at = None
         if hasattr(self.backend, "get_robot_state_snapshot"):
             state_code, state_name, state_seen_at = self.backend.get_robot_state_snapshot()
+        position_seen_at = None
+        if hasattr(self.backend, "get_position_snapshot"):
+            try:
+                _pos_data, position_seen_at = self.backend.get_position_snapshot()
+            except Exception:
+                position_seen_at = None
 
         now = time.monotonic()
         if state_seen_at is not None:
@@ -1592,10 +1594,25 @@ class App(QMainWindow, form):
                 if dt > 0.0:
                     self._robot_cycle_ms = dt * 1000.0
             self._robot_prev_state_seen_at = state_seen_at
+        position_stream_alive = position_seen_at is not None and (now - position_seen_at) <= POSITION_STALE_SEC
         stale = state_seen_at is None or (now - state_seen_at) > POSITION_STALE_SEC
+        startup_connecting = (
+            self.backend.is_ready()
+            and state_seen_at is None
+            and (
+                position_stream_alive
+                or (
+                    self._backend_ready_at is not None
+                    and (now - float(self._backend_ready_at)) < ROBOT_STARTUP_CONNECT_GRACE_SEC
+                )
+            )
+        )
         # _last_error는 과거 예외 이력이 누적될 수 있으므로, UI 상태등급은 현재 상태코드 기준으로 판정한다.
         has_error = (state_code is not None) and (int(state_code) in ROBOT_STATE_ERROR_CODES)
         comm_connected = (not stale) and (state_code is not None)
+        if startup_connecting:
+            stale = False
+            comm_connected = False
         if now < float(getattr(self, "_mode_switch_grace_until", 0.0)):
             # 전환 직후 짧은 공백은 연결 끊김으로 보지 않는다.
             if self.backend.is_ready() and ((state_code is None) or stale):
@@ -1623,7 +1640,10 @@ class App(QMainWindow, form):
             else:
                 robot_severity = "warning"
         else:
-            if not self.backend.is_ready():
+            if startup_connecting:
+                state_text = "연결중"
+                robot_severity = "warning"
+            elif not self.backend.is_ready():
                 state_text = "초기화 중"
                 robot_severity = "warning"
             elif has_error:
@@ -1648,6 +1668,7 @@ class App(QMainWindow, form):
             state_code=state_code,
             state_name=state_name,
             stale=stale,
+            startup_connecting=startup_connecting,
             mode_text=mode_text,
             robot_mode_value=robot_mode_value,
             robot_mode_seen_at=robot_mode_seen_at,
@@ -1657,94 +1678,71 @@ class App(QMainWindow, form):
             app_busy=self.backend.is_busy(),
             has_error=has_error,
         )
-        robot_link_text = "정상 수신 중" if comm_connected else "끊김"
-        robot_link_sev = "normal" if comm_connected else "error"
+        if startup_connecting:
+            robot_link_text = "연결중"
+            robot_link_sev = "warning"
+        else:
+            robot_link_text = "정상 수신 중" if comm_connected else "끊김"
+            robot_link_sev = "normal" if comm_connected else "error"
         self._set_top_status("robot", robot_link_text, robot_link_sev)
         self._update_cycle_time_labels()
 
     def _refresh_vision_status(self):
+        self._refresh_vision_status_panel(1)
+        self._refresh_vision_status_panel(2)
+
+    def _refresh_vision_status_panel(self, panel_index: int):
+        panel = 2 if int(panel_index) == 2 else 1
+        key = "vision2" if panel == 2 else "vision"
         now = time.monotonic()
-        vision1_on = bool(self._top_status_enabled.get("vision", True))
-        vision2_on = bool(self._top_status_enabled.get("vision2", True))
+        vision_on = bool(self._top_status_enabled.get(key, True))
         retry_needed = False
-        if not vision1_on:
-            self._vision_cycle_ms = None
-        if not vision2_on:
-            self._vision_cycle_ms_2 = None
+        if panel == 2:
+            if not vision_on:
+                self._vision_cycle_ms_2 = None
+        else:
+            if not vision_on:
+                self._vision_cycle_ms = None
         if self.backend is None:
-            self._set_signal_state_label(self._vision_state_label, self._vision_state_text, "warning", False)
-            self._set_top_status("vision", "비활성화" if (not vision1_on) else "끊김", "warning" if (not vision1_on) else "error")
-            self._set_top_status("vision2", "비활성화" if (not vision2_on) else "끊김", "warning" if (not vision2_on) else "error")
-            if not vision1_on:
-                self._clear_vision_view_data(panel_index=1)
-            if not vision2_on:
-                self._clear_vision_view_data(panel_index=2)
+            if panel == 1:
+                self._set_signal_state_label(self._vision_state_label, self._vision_state_text, "warning", False)
+            self._set_top_status(key, "비활성화" if (not vision_on) else "끊김", "warning" if (not vision_on) else "error")
+            if not vision_on:
+                self._clear_vision_view_data(panel_index=panel)
+            self._update_cycle_time_labels()
             return
 
         if not UI_ENABLE_VISION:
             vision_text = "비활성화"
-            vision2_text = "비활성화"
         else:
-            if not vision1_on:
+            if not vision_on:
                 vision_text = "비활성화"
-                self._clear_vision_view_data(panel_index=1)
+                self._clear_vision_view_data(panel_index=panel)
             else:
-                vision_text = self._camera_status_for_panel(1, now, vision1_on)
+                vision_text = self._camera_status_for_panel(panel, now, vision_on)
 
-            if not vision2_on:
-                vision2_text = "비활성화"
-                self._clear_vision_view_data(panel_index=2)
-            else:
-                vision2_text = self._camera_status_for_panel(2, now, vision2_on)
+        if now < float(getattr(self, "_mode_switch_grace_until", 0.0)) and vision_text in ("지연", "끊김", "오류", "실패"):
+            vision_text = "전환중"
 
-        if now < float(getattr(self, "_mode_switch_grace_until", 0.0)):
-            if vision_text in ("지연", "끊김", "오류", "실패"):
-                vision_text = "전환중"
-            if vision2_text in ("지연", "끊김", "오류", "실패"):
-                vision2_text = "전환중"
-
-        # 외부 비전 프레임이 일정 시간 끊기면 자동 재기동/재연결을 시도한다.
-        calib_on_1 = bool(getattr(self, "_calibration_mode_enabled_1", False))
-        calib_on_2 = bool(getattr(self, "_calibration_mode_enabled_2", False))
-        calib_on_any = bool(calib_on_1 or calib_on_2)
-
-        if YOLO_EXTERNAL_NODE and YOLO_AUTO_LAUNCH_NODE and (not calib_on_any):
-            stale_vision = False
-            if vision1_on:
-                stale_vision = stale_vision or (
-                    (self._last_vision_frame_at is None) or ((now - self._last_vision_frame_at) > 3.0)
-                )
-            if vision2_on:
-                stale_vision = stale_vision or (
-                    (self._last_vision_frame_at_2 is None) or ((now - self._last_vision_frame_at_2) > 3.0)
-                )
-            if stale_vision:
-                retry_needed = True
+        calib_on_any = bool(getattr(self, "_calibration_mode_enabled_1", False) or getattr(self, "_calibration_mode_enabled_2", False))
+        last_camera_at = self._last_camera_frame_at_2 if panel == 2 else self._last_camera_frame_at_1
+        stale_vision = bool(vision_on) and (
+            (last_camera_at is None) or ((now - float(last_camera_at)) > 3.0)
+        )
+        if stale_vision and ((now - self._vision_rebind_last_try_at) > 8.0):
+            retry_needed = True
+            self._vision_rebind_last_try_at = now
+            if (not calib_on_any) and YOLO_EXTERNAL_NODE and YOLO_AUTO_LAUNCH_NODE:
                 self._ensure_external_vision_process()
-        if YOLO_EXTERNAL_NODE and calib_on_any:
-            stale_vision = False
-            if calib_on_1 and vision1_on:
-                stale_vision = stale_vision or (
-                    (self._last_vision_frame_at is None)
-                    or ((now - self._last_vision_frame_at) > 3.0)
-                )
-            if calib_on_2 and vision2_on:
-                stale_vision = stale_vision or (
-                    (self._last_vision_frame_at_2 is None)
-                    or ((now - self._last_vision_frame_at_2) > 3.0)
-                )
-            if stale_vision and ((now - self._vision_rebind_last_try_at) > 8.0):
-                retry_needed = True
-                self._vision_rebind_last_try_at = now
-                self._sync_calibration_processes()
-                self._rebind_external_vision_bridge_for_mode()
+            self._sync_calibration_processes()
+            self._rebind_external_vision_bridge_for_mode()
 
         if retry_needed:
-            if not bool(getattr(self, "_vision_retry_notice_logged", False)):
-                self.append_log("[비전] 연결 지연 판단: 재연결 시도를 계속 진행합니다.\n")
-                self._vision_retry_notice_logged = True
+            if not bool(getattr(self, "_vision_retry_notice_logged", {}).get(panel, False)):
+                self._append_vision_log("연결 지연 판단: 재연결 시도를 계속 진행합니다.", panel_index=panel)
+                self._vision_retry_notice_logged[panel] = True
         else:
-            self._vision_retry_notice_logged = False
+            self._vision_retry_notice_logged[panel] = False
 
         if vision_text == "정상 수신 중":
             vision_severity = "normal"
@@ -1752,26 +1750,21 @@ class App(QMainWindow, form):
             vision_severity = "error"
         else:
             vision_severity = "warning"
-        if vision2_text == "정상 수신 중":
-            vision2_severity = "normal"
-        elif vision2_text in ("오류", "실패", "끊김"):
-            vision2_severity = "error"
-        else:
-            vision2_severity = "warning"
 
-        if self._last_yolo_qimage is None and vision_text in ("오류", "실패", "끊김", "지연"):
-            if hasattr(self, "yolo_view") and self.yolo_view is not None:
-                self.yolo_view.setAlignment(Qt.AlignCenter)
-                self.yolo_view.setStyleSheet("background-color: #000000; color: #f3f3f3;")
-                self.yolo_view.setText("이미지 데이터 없음")
-        if self._last_yolo_qimage_2 is None and vision2_text in ("오류", "실패", "끊김", "지연"):
-            if hasattr(self, "yolo_view_2") and self.yolo_view_2 is not None:
-                self.yolo_view_2.setAlignment(Qt.AlignCenter)
-                self.yolo_view_2.setStyleSheet("background-color: #000000; color: #f3f3f3;")
-                self.yolo_view_2.setText("이미지 데이터 없음")
-        self._set_signal_state_label(self._vision_state_label, vision_text, vision_severity, False)
-        self._set_top_status("vision", vision_text, vision_severity)
-        self._set_top_status("vision2", vision2_text, vision2_severity)
+        if panel == 2:
+            if self._last_yolo_qimage_2 is None and vision_text in ("오류", "실패", "끊김", "지연"):
+                if hasattr(self, "yolo_view_2") and self.yolo_view_2 is not None:
+                    self.yolo_view_2.setAlignment(Qt.AlignCenter)
+                    self.yolo_view_2.setStyleSheet("background-color: #000000; color: #f3f3f3;")
+                    self.yolo_view_2.setText("이미지 데이터 없음")
+        else:
+            if self._last_yolo_qimage is None and vision_text in ("오류", "실패", "끊김", "지연"):
+                if hasattr(self, "yolo_view") and self.yolo_view is not None:
+                    self.yolo_view.setAlignment(Qt.AlignCenter)
+                    self.yolo_view.setStyleSheet("background-color: #000000; color: #f3f3f3;")
+                    self.yolo_view.setText("이미지 데이터 없음")
+            self._set_signal_state_label(self._vision_state_label, vision_text, vision_severity, False)
+        self._set_top_status(key, vision_text, vision_severity)
         self._update_cycle_time_labels()
 
     def _set_signal_state_label(self, label: QLabel, text: str, severity: str, is_bold: bool = False):
@@ -1818,11 +1811,23 @@ class App(QMainWindow, form):
         font.setBold(is_bold)
         item.setFont(font)
 
+    def _format_state_like_text(self, label: str, raw_value):
+        text = str(label or "").strip()
+        if raw_value is None:
+            return text or "-"
+        raw_text = str(raw_value).strip()
+        if not raw_text:
+            return text or "-"
+        if not text:
+            return f"({raw_text})"
+        return f"{text} ({raw_text})"
+
     def _update_robot_state_table(
         self,
         state_code,
         state_name,
         stale,
+        startup_connecting,
         mode_text,
         robot_mode_value,
         robot_mode_seen_at,
@@ -1839,15 +1844,22 @@ class App(QMainWindow, form):
         }.get(str(mode_text or "UNKNOWN").upper(), str(mode_text or "UNKNOWN"))
         connection_sev = "normal" if str(mode_text or "").upper() in ("REAL", "VIRTUAL") else "warning"
 
-        comm_text = "끊김" if stale else "정상 수신 중"
-        comm_sev = "error" if stale else "normal"
+        if startup_connecting:
+            comm_text = "연결중"
+            comm_sev = "warning"
+        else:
+            comm_text = "끊김" if stale else "정상 수신 중"
+            comm_sev = "error" if stale else "normal"
 
         if state_code is None:
             robot_state_text = "초기화" if not app_ready else "대기"
             robot_state_sev = "warning" if not app_ready else ("error" if has_error else "warning")
         else:
             normalized_name = str(state_name or f"STATE_{state_code}").strip()
-            robot_state_text = ROBOT_STATE_KR_MAP.get(normalized_name, normalized_name)
+            robot_state_text = self._format_state_like_text(
+                ROBOT_STATE_KR_MAP.get(normalized_name, normalized_name),
+                int(state_code),
+            )
             if int(state_code) in ROBOT_STATE_ERROR_CODES:
                 robot_state_sev = "error"
             elif int(state_code) in ROBOT_STATE_NORMAL_CODES:
@@ -1855,13 +1867,16 @@ class App(QMainWindow, form):
             else:
                 robot_state_sev = "warning"
 
-        robot_mode_map = {0: "메뉴얼모드", 1: "오토모드", 2: "측정모드"}
         if robot_mode_value is None or robot_mode_seen_at is None:
             robot_mode_text = "-"
             robot_mode_sev = "warning"
         else:
             try:
-                robot_mode_text = robot_mode_map.get(int(robot_mode_value), str(int(robot_mode_value)))
+                robot_mode_raw = int(robot_mode_value)
+                robot_mode_text = self._format_state_like_text(
+                    ROBOT_MODE_KR_MAP.get(robot_mode_raw, f"알수없음모드"),
+                    robot_mode_raw,
+                )
             except Exception:
                 robot_mode_text = str(robot_mode_value)
             robot_mode_sev = "normal"
@@ -1871,7 +1886,11 @@ class App(QMainWindow, form):
             control_mode_sev = "warning"
         else:
             try:
-                control_mode_text = str(int(control_mode_value))
+                control_mode_raw = int(control_mode_value)
+                control_mode_text = self._format_state_like_text(
+                    CONTROL_MODE_KR_MAP.get(control_mode_raw, "알수없음제어"),
+                    control_mode_raw,
+                )
             except Exception:
                 control_mode_text = str(control_mode_value)
             control_mode_sev = "normal"
@@ -1906,21 +1925,26 @@ class App(QMainWindow, form):
             self.append_log(f"{tag} 백엔드가 비전 좌표 이동 기능을 지원하지 않습니다.\n")
             return
 
-        rx, ry, rz = robot_xyz_mm
-        z_margin = self._get_vision_move_z_margin_mm()
-        target_z = float(rz) + float(z_margin)
-        ok, msg = self.backend.send_move_vision_point(rx, ry, target_z, dwell_sec=1.0)
+        rx, ry, rz = [float(v) for v in robot_xyz_mm]
+        offset_x, offset_y, offset_z = self._get_vision_move_offset_xyz_mm()
+        target_x = rx + float(offset_x)
+        target_y = ry + float(offset_y)
+        target_z = rz + float(offset_z)
+        self._last_clicked_robot_target_xyz_mm = (float(target_x), float(target_y), float(target_z))
+        ok, msg = self.backend.send_move_vision_point(target_x, target_y, target_z, dwell_sec=1.0)
         if vision_xyz_mm is not None:
             vx, vy, vz = vision_xyz_mm
             self.append_log(
                 f"{tag} 비전 XYZ(mm): X={vx:.1f}, Y={vy:.1f}, Z={vz:.1f} -> "
-                f"Robot XYZ(mm): X={rx:.2f}, Y={ry:.2f}, Z={target_z:.2f} [Z+{z_margin:.1f}]\n"
+                f"Robot XYZ(mm): X={rx:.2f}, Y={ry:.2f}, Z={rz:.2f} -> "
+                f"이동목표 XYZ(mm): X={target_x:.2f}, Y={target_y:.2f}, Z={target_z:.2f} "
+                f"[옵셋 X={offset_x:.1f}, Y={offset_y:.1f}, Z={offset_z:.1f}]\n"
             )
         self.append_log(f"{tag} {msg}\n")
 
     def on_move_to_last_vision_point(self):
         if self._last_clicked_robot_xyz_mm is None or self._last_clicked_vision_xyz_mm is None:
-            self.append_log("[비전이동] 마지막 클릭 좌표가 없습니다. 비전1/2 화면을 먼저 클릭하세요.\n")
+            self.append_log("[비전이동] 마지막 클릭 좌표가 없습니다. 비전 화면을 먼저 클릭하세요.\n")
             return
         self._run_vision_target_move(
             self._last_clicked_vision_xyz_mm,
@@ -2057,7 +2081,7 @@ class App(QMainWindow, form):
                     self._pos_flash_until[cache_key] = now + POSITION_FLASH_SEC
                 self._pos_value_cache[cache_key] = text_value
                 item.setText(text_value)
-                item.setForeground(QBrush(self.palette().text().color()))
+                item.setForeground(QBrush(QColor(POSITION_VALUE_COLOR)))
                 font = item.font()
                 font.setBold(now < self._pos_flash_until.get(cache_key, 0.0))
                 item.setFont(font)
@@ -2071,7 +2095,7 @@ class App(QMainWindow, form):
                 self._set_current_tool_text(tcp_name)
 
     def _setup_current_tool_label(self):
-        if self._cart_table is None:
+        if self._joint_table is None:
             return
         if self._current_tool_label is not None:
             return
@@ -2079,33 +2103,105 @@ class App(QMainWindow, form):
         ui_label = getattr(self, "current_tool_label", None)
         if isinstance(ui_label, QLabel):
             self._current_tool_label = ui_label
+            try:
+                parent = self._joint_table.parentWidget()
+                if parent is not None and self._current_tool_label.parentWidget() is not parent:
+                    self._current_tool_label.setParent(parent)
+                g_joint = self._joint_table.geometry()
+                g_cart = self._cart_table.geometry() if self._cart_table is not None else g_joint
+                left = g_joint.x() + 2
+                right = max(left + 110, g_cart.x() + g_cart.width() - 2)
+                self._current_tool_label.setGeometry(left, max(0, g_joint.y() - 22), right - left, 18)
+                self._current_tool_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            except Exception:
+                pass
             self._current_tool_label.show()
             self._current_tool_label.raise_()
             return
 
-        label = QLabel("현재툴(TCP): -", self._cart_table.parentWidget())
+        label = QLabel("현재툴(TCP): -", self._joint_table.parentWidget())
         label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         inserted = False
-        parent = self._cart_table.parentWidget()
+        parent = self._joint_table.parentWidget()
         if parent is not None and parent.layout() is not None:
             lay = parent.layout()
-            idx = lay.indexOf(self._cart_table)
+            idx = lay.indexOf(self._joint_table)
             if idx >= 0:
                 lay.insertWidget(idx, label)
                 inserted = True
 
         if not inserted:
             try:
-                g = self._cart_table.geometry()
-                h = 14
-                y = max(0, g.y() - h - 2)
-                label.setGeometry(g.x(), y, g.width(), h)
+                g_joint = self._joint_table.geometry()
+                g_cart = self._cart_table.geometry() if self._cart_table is not None else g_joint
+                h = 18
+                y = max(0, g_joint.y() - 22)
+                left = g_joint.x() + 2
+                right = max(left + 110, g_cart.x() + g_cart.width() - 2)
+                label.setGeometry(left, y, right - left, h)
             except Exception:
                 pass
 
         self._current_tool_label = label
         self._current_tool_label.show()
+        self._current_tool_label.raise_()
+
+    def _request_current_tool_sync(self, retry_window_sec: float = 8.0, immediate: bool = False):
+        now = time.monotonic()
+        self._current_tool_sync_retry_deadline = max(
+            float(self._current_tool_sync_retry_deadline),
+            now + max(0.0, float(retry_window_sec)),
+        )
+        if immediate:
+            self._current_tool_sync_next_try_at = 0.0
+            self._tick_current_tool_sync()
+            return
+        self._current_tool_sync_next_try_at = min(
+            float(self._current_tool_sync_next_try_at or now),
+            now,
+        )
+
+    def _sync_current_tool_in_background(self):
+        try:
+            backend = self.backend
+            if backend is None:
+                return
+            if not hasattr(backend, "sync_current_tcp_once"):
+                return
+            backend.sync_current_tcp_once(force=True, timeout_sec=1.0)
+        except Exception:
+            pass
+        finally:
+            with self._current_tool_sync_lock:
+                self._current_tool_sync_inflight = False
+
+    def _tick_current_tool_sync(self):
+        if getattr(self, "_closing", False):
+            return
+        backend = self.backend
+        if backend is None:
+            return
+        if not hasattr(backend, "get_current_tcp_snapshot"):
+            return
+        tcp_name, tcp_seen_at = backend.get_current_tcp_snapshot()
+        if tcp_seen_at is not None:
+            self._set_current_tool_text(tcp_name)
+            self._current_tool_sync_retry_deadline = 0.0
+            return
+
+        now = time.monotonic()
+        if now > float(self._current_tool_sync_retry_deadline):
+            return
+        if now < float(self._current_tool_sync_next_try_at):
+            return
+
+        with self._current_tool_sync_lock:
+            if self._current_tool_sync_inflight:
+                return
+            self._current_tool_sync_inflight = True
+        self._current_tool_sync_next_try_at = now + 1.2
+        threading.Thread(target=self._sync_current_tool_in_background, daemon=True).start()
 
     def _set_current_tool_text(self, tcp_name):
         tcp = str(tcp_name or "").strip()
@@ -2126,11 +2222,13 @@ class App(QMainWindow, form):
             return False
         ok_tcp, msg_tcp = self.backend.sync_current_tcp_once(force=True, timeout_sec=1.0)
         if not ok_tcp:
+            self._request_current_tool_sync(retry_window_sec=10.0, immediate=False)
             if log_fail:
                 self.append_log(f"[툴표시] 현재 TCP 조회 실패: {msg_tcp}\n")
             return False
         tcp_name, _tcp_seen_at = self.backend.get_current_tcp_snapshot()
         self._set_current_tool_text(tcp_name)
+        self._current_tool_sync_retry_deadline = 0.0
         return True
 
     def _setup_cycle_time_labels(self):
@@ -2238,34 +2336,6 @@ class App(QMainWindow, form):
                     w.hide()
         except Exception:
             return
-
-    def _build_vision_to_robot_affine(self):
-        try:
-            uvz = VISION_CALIB_UVZ_MM
-            xyz = ROBOT_CALIB_XYZ_MM
-            if uvz.shape != xyz.shape or uvz.shape[0] < 4 or uvz.shape[1] != 3:
-                self.append_log("[비전] 보정 데이터 형식 오류: 변환행렬 생성 실패\n")
-                return
-            result, err = self._compute_rigid_uvz_to_xyz(uvz, xyz, require_intrinsics=False)
-            if result is None:
-                self.append_log(f"[비전] 기본 회전행렬 생성 실패: {err}\n")
-                return
-            affine, _, _, rmse = result
-            self._vision_to_robot_affine = affine
-            self._vision_to_robot_rmse = rmse
-            self._vision_to_robot_affine_1 = np.asarray(affine, dtype=np.float64)
-            self._vision_to_robot_affine_2 = np.asarray(affine, dtype=np.float64)
-            self._vision_to_robot_rmse_1 = rmse
-            self._vision_to_robot_rmse_2 = rmse
-            self.append_log(f"[비전] 비전 XYZ->로봇 회전행렬(R,t) 적용 (보정 RMSE={rmse:.3f}mm)\n")
-        except Exception as e:
-            self._vision_to_robot_affine = None
-            self._vision_to_robot_rmse = None
-            self._vision_to_robot_affine_1 = None
-            self._vision_to_robot_affine_2 = None
-            self._vision_to_robot_rmse_1 = None
-            self._vision_to_robot_rmse_2 = None
-            self.append_log(f"[비전] 변환행렬 생성 실패: {e}\n")
 
     def _vision_uvz_to_robot_xyz_mm(self, u: float, v: float, z_mm: float, panel_index: int = 1):
         panel = 2 if int(panel_index) == 2 else 1
@@ -2440,7 +2510,7 @@ class App(QMainWindow, form):
         self._sync_calibration_processes()
         self._rebind_external_vision_bridge_for_mode()
         self.append_log(
-            f"[비전] 카메라 할당 변경: 비전1={self._vision_assigned_serial_1}, 비전2={self._vision_assigned_serial_2} (런타임 camera={self._runtime_camera_serial_1}, camera2={self._runtime_camera_serial_2})\n"
+            f"[{self._vision_log_tag()}] 카메라 할당 변경: 비전1={self._vision_assigned_serial_1}, 비전2={self._vision_assigned_serial_2} (런타임 camera={self._runtime_camera_serial_1}, camera2={self._runtime_camera_serial_2})\n"
         )
 
     def _setup_position_table_common(self, table: QTableWidget, keys):
@@ -2630,6 +2700,19 @@ class App(QMainWindow, form):
             ["vision_move_button", "vision_coord_move_button"],
             ["비전 좌표 이동", "비전 이동", "좌표 이동"],
         )
+        self._vision_x_axis_label = _pick_label(panel, ["vision_x_axis_label"], [])
+        self._vision_y_axis_label = _pick_label(panel, ["vision_y_axis_label"], [])
+        self._vision_z_axis_label = _pick_label(panel, ["vision_z_axis_label"], [])
+        self._vision_x_margin_input = _pick_line_edit(
+            panel,
+            ["vision_x_margin_input", "vision_x_offset_input"],
+            [],
+        )
+        self._vision_y_margin_input = _pick_line_edit(
+            panel,
+            ["vision_y_margin_input", "vision_y_offset_input"],
+            [],
+        )
         self._vision_z_margin_input = _pick_line_edit(
             panel,
             ["vision_z_margin_input", "z_margin_input", "vision_z_offset_input"],
@@ -2714,6 +2797,33 @@ class App(QMainWindow, form):
             except Exception:
                 pass
             self._tool_change_button.clicked.connect(self.on_change_tool_dialog)
+        if self._motion_group_box is not None:
+            if self._motion_speed_title_label is None:
+                self._motion_speed_title_label = QLabel(self._motion_group_box)
+                self._motion_speed_title_label.setObjectName("motion_speed_title_label")
+                self._motion_speed_title_label.setStyleSheet("color: #1f3b63; font-size: 8.5pt; font-weight: 600;")
+                self._motion_speed_title_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self._motion_speed_title_label.setGeometry(220, 8, 116, 18)
+            if self._motion_speed_slider is None:
+                self._motion_speed_slider = QSlider(Qt.Horizontal, self._motion_group_box)
+                self._motion_speed_slider.setObjectName("motion_speed_slider")
+                self._motion_speed_slider.setGeometry(342, 8, 116, 18)
+                self._motion_speed_slider.setRange(MOTION_SPEED_MIN_PERCENT, MOTION_SPEED_MAX_PERCENT)
+                self._motion_speed_slider.setSingleStep(1)
+                self._motion_speed_slider.setPageStep(10)
+                self._motion_speed_slider.setTickInterval(10)
+                self._motion_speed_slider.setTickPosition(QSlider.NoTicks)
+                self._motion_speed_slider.valueChanged.connect(self._on_motion_speed_changed)
+            if self._motion_speed_value_label is None:
+                self._motion_speed_value_label = QLabel(self._motion_group_box)
+                self._motion_speed_value_label.setObjectName("motion_speed_value_label")
+                self._motion_speed_value_label.setStyleSheet("color: #1f3b63; font-size: 9pt; font-weight: 700;")
+                self._motion_speed_value_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                self._motion_speed_value_label.setGeometry(464, 8, 37, 18)
+            self._motion_speed_slider.blockSignals(True)
+            self._motion_speed_slider.setValue(self._clamp_motion_speed_percent(self._motion_speed_percent))
+            self._motion_speed_slider.blockSignals(False)
+            self._sync_motion_speed_widgets()
         if self._gripper_stroke_input is not None:
             validator = QDoubleValidator(0.0, 109.0, 2, self._gripper_stroke_input)
             validator.setNotation(QDoubleValidator.StandardNotation)
@@ -2723,11 +2833,17 @@ class App(QMainWindow, form):
 
         if self._vision_move_button is not None:
             self._vision_move_button.clicked.connect(self.on_move_to_last_vision_point)
-        if self._vision_z_margin_input is not None:
-            self._vision_z_margin_input.setText(f"{VISION_MOVE_Z_MARGIN_MM:.1f}")
-            z_validator = QDoubleValidator(-1000.0, 3000.0, 1, self._vision_z_margin_input)
-            z_validator.setNotation(QDoubleValidator.StandardNotation)
-            self._vision_z_margin_input.setValidator(z_validator)
+        for edit, default_v in (
+            (self._vision_x_margin_input, VISION_MOVE_DEFAULT_OFFSET_X_MM),
+            (self._vision_y_margin_input, VISION_MOVE_DEFAULT_OFFSET_Y_MM),
+            (self._vision_z_margin_input, VISION_MOVE_DEFAULT_OFFSET_Z_MM),
+        ):
+            if edit is None:
+                continue
+            edit.setText(f"{float(default_v):.1f}")
+            validator = QDoubleValidator(-1000.0, 3000.0, 1, edit)
+            validator.setNotation(QDoubleValidator.StandardNotation)
+            edit.setValidator(validator)
         if self._vision_dialog_toggle_button is not None:
             self._vision_dialog_toggle_button.hide()
         if self._vision_dialog_toggle_switch is not None:
@@ -2740,8 +2856,16 @@ class App(QMainWindow, form):
             self._calibration_mode_switch_2.setChecked(bool(self._calibration_mode_enabled_2))
             self._calibration_mode_switch_2.toggled.connect(self._on_calibration_mode_toggled)
         if self._calibration_transform_button is not None:
+            try:
+                self._calibration_transform_button.clicked.disconnect()
+            except Exception:
+                pass
             self._calibration_transform_button.clicked.connect(self.on_calibration_transform)
         if self._calibration_transform_button_2 is not None:
+            try:
+                self._calibration_transform_button_2.clicked.disconnect()
+            except Exception:
+                pass
             self._calibration_transform_button_2.clicked.connect(self.on_calibration_transform)
         if self._calibration_load_button is not None:
             self._calibration_load_button.clicked.connect(self.on_calibration_load_matrix)
@@ -2760,6 +2884,9 @@ class App(QMainWindow, form):
             self._home_save_button,
             self._robot_mode_button,
             self._tool_change_button,
+            self._motion_speed_title_label,
+            self._motion_speed_slider,
+            self._motion_speed_value_label,
             self.pushButton,
             self._print_pos_button,
             self._reset_button,
@@ -2767,11 +2894,7 @@ class App(QMainWindow, form):
             self._gripper_range_value_label,
             self._gripper_stroke_input,
             self._gripper_move_button,
-            self._vision_dialog_toggle_switch,
-            self._vision_z_title_label,
-            self._vision_z_range_label,
-            self._vision_z_margin_input,
-            self._vision_move_button,
+            *self._iter_vision_move_widgets(),
             self._calibration_mode_switch,
             self._calibration_mode_switch_2,
             self._calibration_transform_button,
@@ -2817,15 +2940,14 @@ class App(QMainWindow, form):
             self._print_pos_button,
             self._reset_button,
             self._tool_change_button,
+            self._motion_speed_title_label,
+            self._motion_speed_slider,
+            self._motion_speed_value_label,
             self._gripper_range_title_label,
             self._gripper_range_value_label,
             self._gripper_stroke_input,
             self._gripper_move_button,
-            self._vision_dialog_toggle_switch,
-            self._vision_z_title_label,
-            self._vision_z_range_label,
-            self._vision_z_margin_input,
-            self._vision_move_button,
+            *self._iter_vision_move_widgets(),
             self._vision_dialog_toggle_button,
             self._calibration_mode_switch,
             self._calibration_mode_switch_2,
@@ -2841,24 +2963,102 @@ class App(QMainWindow, form):
             if w is not None:
                 w.raise_()
 
-    def _get_vision_move_z_margin_mm(self):
-        default_v = float(VISION_MOVE_Z_MARGIN_MM)
-        inp = getattr(self, "_vision_z_margin_input", None)
-        if inp is None:
-            self._vision_move_z_margin_mm = default_v
-            return self._vision_move_z_margin_mm
-        raw = inp.text().strip()
-        if not raw:
-            self._vision_move_z_margin_mm = default_v
-            inp.setText(f"{default_v:.1f}")
-            return self._vision_move_z_margin_mm
+    def _clamp_motion_speed_percent(self, value):
         try:
-            v = float(raw)
+            speed = int(round(float(value)))
         except Exception:
-            v = default_v
-        self._vision_move_z_margin_mm = v
-        inp.setText(f"{v:.1f}")
-        return self._vision_move_z_margin_mm
+            speed = int(DEFAULT_MOTION_SPEED_PERCENT)
+        return max(MOTION_SPEED_MIN_PERCENT, min(MOTION_SPEED_MAX_PERCENT, speed))
+
+    def _sync_motion_speed_widgets(self):
+        speed = self._clamp_motion_speed_percent(self._motion_speed_percent)
+        self._motion_speed_percent = speed
+        if self._motion_speed_title_label is not None:
+            self._motion_speed_title_label.setText("이동속도 (0~100%)")
+        if self._motion_speed_value_label is not None:
+            self._motion_speed_value_label.setText(f"{speed}%")
+
+    def _on_motion_speed_changed(self, value):
+        self._motion_speed_percent = self._clamp_motion_speed_percent(value)
+        self._sync_motion_speed_widgets()
+
+    def _motion_speed_for_command(self):
+        speed = self._clamp_motion_speed_percent(
+            self._motion_speed_slider.value() if self._motion_speed_slider is not None else self._motion_speed_percent
+        )
+        self._motion_speed_percent = speed
+        if speed <= 0:
+            self.append_log("[속도] 0%는 실행할 수 없어 1%로 적용합니다.\n")
+            return 1.0
+        return float(speed)
+
+    def _calibration_motion_speed_for_command(self):
+        return float(CALIBRATION_FIXED_SPEED_PERCENT)
+
+    def _wait_with_ui_pump(self, delay_sec: float, status_callback=None, message_prefix: str = ""):
+        remain = max(0.0, float(delay_sec))
+        if remain <= 0.0:
+            return
+        end_at = time.monotonic() + remain
+        while True:
+            left = end_at - time.monotonic()
+            if left <= 0.0:
+                break
+            if status_callback is not None and message_prefix:
+                try:
+                    status_callback(f"{message_prefix} ({left:.1f}초)")
+                except Exception:
+                    pass
+            QApplication.processEvents()
+            time.sleep(min(0.1, max(0.02, left)))
+
+    def _vision_log_tag(self, panel_index=None):
+        if panel_index is None:
+            return "비전"
+        return "비전2" if int(panel_index) == 2 else "비전1"
+
+    def _iter_vision_move_widgets(self):
+        return [
+            getattr(self, "_vision_dialog_toggle_switch", None),
+            getattr(self, "_vision_z_title_label", None),
+            getattr(self, "_vision_z_range_label", None),
+            getattr(self, "_vision_x_axis_label", None),
+            getattr(self, "_vision_y_axis_label", None),
+            getattr(self, "_vision_z_axis_label", None),
+            getattr(self, "_vision_x_margin_input", None),
+            getattr(self, "_vision_y_margin_input", None),
+            getattr(self, "_vision_z_margin_input", None),
+            getattr(self, "_vision_move_button", None),
+        ]
+
+    def _append_vision_log(self, message: str, panel_index=None):
+        self.append_log(f"[{self._vision_log_tag(panel_index)}] {message}\n")
+
+    def _read_vision_offset_input_mm(self, widget, default_v):
+        if widget is None:
+            return float(default_v)
+        raw = widget.text().strip()
+        if not raw:
+            value = float(default_v)
+        else:
+            try:
+                value = float(raw)
+            except Exception:
+                value = float(default_v)
+        widget.setText(f"{value:.1f}")
+        return float(value)
+
+    def _get_vision_move_offset_xyz_mm(self):
+        offsets = (
+            self._read_vision_offset_input_mm(getattr(self, "_vision_x_margin_input", None), VISION_MOVE_DEFAULT_OFFSET_X_MM),
+            self._read_vision_offset_input_mm(getattr(self, "_vision_y_margin_input", None), VISION_MOVE_DEFAULT_OFFSET_Y_MM),
+            self._read_vision_offset_input_mm(getattr(self, "_vision_z_margin_input", None), VISION_MOVE_DEFAULT_OFFSET_Z_MM),
+        )
+        self._vision_move_offset_xyz_mm = offsets
+        return self._vision_move_offset_xyz_mm
+
+    def _get_vision_move_z_margin_mm(self):
+        return float(self._get_vision_move_offset_xyz_mm()[2])
 
     def _toggle_vision_click_dialog(self):
         self._vision_click_dialog_enabled = not bool(self._vision_click_dialog_enabled)
@@ -2870,18 +3070,14 @@ class App(QMainWindow, form):
             self._vision_dialog_toggle_switch.blockSignals(True)
             self._vision_dialog_toggle_switch.setChecked(bool(self._vision_click_dialog_enabled))
             self._vision_dialog_toggle_switch.blockSignals(False)
-        self.append_log(
-            f"[비전] 클릭 이동 다이얼로그: {'ON' if self._vision_click_dialog_enabled else 'OFF'}\n"
-        )
-        if YOLO_EXTERNAL_NODE and self.backend is not None:
+        self._append_vision_log(f"클릭 이동 다이얼로그: {'ON' if self._vision_click_dialog_enabled else 'OFF'}")
+        if self.backend is not None:
             self._rebind_external_vision_bridge_for_mode()
 
     def _on_vision_click_dialog_toggled(self, checked):
         self._vision_click_dialog_enabled = bool(checked)
-        self.append_log(
-            f"[비전] 클릭 이동 다이얼로그: {'ON' if self._vision_click_dialog_enabled else 'OFF'}\n"
-        )
-        if YOLO_EXTERNAL_NODE and self.backend is not None:
+        self._append_vision_log(f"클릭 이동 다이얼로그: {'ON' if self._vision_click_dialog_enabled else 'OFF'}")
+        if self.backend is not None:
             self._rebind_external_vision_bridge_for_mode()
 
     def on_change_robot_mode_dialog(self):
@@ -3016,6 +3212,7 @@ class App(QMainWindow, form):
             wait.deleteLater()
             QApplication.processEvents()
         if ok:
+            self._request_current_tool_sync(retry_window_sec=12.0, immediate=True)
             self.append_log(f"[로봇모드] {target_name}({target})로 변경을 성공하였습니다. ({msg})\n")
             QMessageBox.information(
                 self,
@@ -3276,34 +3473,6 @@ class App(QMainWindow, form):
         if bool(getattr(self, "_calibration_mode_enabled_1", False) or getattr(self, "_calibration_mode_enabled_2", False)):
             self._update_calibration_mode_ui()
 
-    def _is_calibration_points_ready(self, panel_index=None):
-        if panel_index is None:
-            panel = 0
-        else:
-            try:
-                panel = int(panel_index)
-            except Exception:
-                panel = 0
-        if panel == 2:
-            data = getattr(self, "_calib_last_points_uvz_mm_2", None)
-        elif panel == 1:
-            data = getattr(self, "_calib_last_points_uvz_mm_1", None)
-        else:
-            data = getattr(self, "_calib_last_points_uvz_mm_1", None)
-            if not isinstance(data, dict):
-                data = getattr(self, "_calib_last_points_uvz_mm_2", None)
-        if self._is_calibration_full_data_ready(panel_index=panel if panel in (1, 2) else None):
-            return True
-        if not isinstance(data, dict):
-            return False
-        center = data.get("center")
-        if center is None or len(center) < 3:
-            return False
-        try:
-            return np.isfinite(float(center[2]))
-        except Exception:
-            return False
-
     def _is_calibration_board_detected(self, panel_index=None):
         try:
             panel = int(panel_index) if panel_index is not None else 1
@@ -3342,9 +3511,10 @@ class App(QMainWindow, form):
         calib_on_1 = bool(getattr(self, "_calibration_mode_enabled_1", False))
         calib_on_2 = bool(getattr(self, "_calibration_mode_enabled_2", False))
         calib_on = bool(calib_on_1 or calib_on_2)
+        calib_seq_running = bool(getattr(self, "_calibration_sequence_running", False))
         self._calibration_mode_enabled = calib_on
-        calib_ready_1 = bool(self._is_calibration_points_ready(panel_index=1))
-        calib_ready_2 = bool(self._is_calibration_points_ready(panel_index=2))
+        calib_board_detected_1 = bool(self._is_calibration_board_detected(panel_index=1))
+        calib_board_detected_2 = bool(self._is_calibration_board_detected(panel_index=2))
         calib_detected_1 = bool(self._is_calibration_full_data_ready(panel_index=1))
         calib_detected_2 = bool(self._is_calibration_full_data_ready(panel_index=2))
         if hasattr(self, "_calibration_mode_switch") and self._calibration_mode_switch is not None:
@@ -3361,16 +3531,20 @@ class App(QMainWindow, form):
             self._calibration_mode_switch_2.blockSignals(False)
         if hasattr(self, "_calibration_transform_button") and self._calibration_transform_button is not None:
             self._calibration_transform_button.setVisible(calib_on_1)
-            self._calibration_transform_button.setEnabled(calib_on_1 and bool(self._top_status_enabled.get("robot", True)))
+            self._calibration_transform_button.setEnabled(
+                bool(calib_on_1 and (not calib_seq_running) and self._top_status_enabled.get("vision", True))
+            )
         if hasattr(self, "_calibration_transform_button_2") and self._calibration_transform_button_2 is not None:
             self._calibration_transform_button_2.setVisible(calib_on_2)
-            self._calibration_transform_button_2.setEnabled(calib_on_2 and bool(self._top_status_enabled.get("robot", True)))
+            self._calibration_transform_button_2.setEnabled(
+                bool(calib_on_2 and (not calib_seq_running) and self._top_status_enabled.get("vision2", True))
+            )
         if hasattr(self, "_calibration_load_button") and self._calibration_load_button is not None:
             self._calibration_load_button.setVisible(calib_on_1)
-            self._calibration_load_button.setEnabled(calib_on_1)
+            self._calibration_load_button.setEnabled(bool(calib_on_1 and (not calib_seq_running)))
         if hasattr(self, "_calibration_load_button_2") and self._calibration_load_button_2 is not None:
             self._calibration_load_button_2.setVisible(calib_on_2)
-            self._calibration_load_button_2.setEnabled(calib_on_2)
+            self._calibration_load_button_2.setEnabled(bool(calib_on_2 and (not calib_seq_running)))
         if hasattr(self, "_calibration_matrix_file_label") and self._calibration_matrix_file_label is not None:
             base = os.path.basename(self._calib_matrix_path_1) if self._calib_matrix_path_1 else "(없음)"
             self._calibration_matrix_file_label.setText(f"현재 적용행렬 : {base}")
@@ -3383,12 +3557,21 @@ class App(QMainWindow, form):
             self._calibration_status_label.setVisible(calib_on_1)
             if calib_on_1:
                 status = "[실패] 켈리브레이션 보드 인식 실패"
+                reason = str(getattr(self, "_calib_full_reason_1", "") or getattr(self, "_calib_last_reason_1", "") or "").strip()
                 if calib_detected_1:
                     status = "[성공] 켈리브레이션 보드 인식 성공"
+                elif calib_board_detected_1:
+                    status = "[대기] 켈리브레이션 데이터 수집 중"
+                    if reason:
+                        status = f"{status} ({reason})"
                 self._calibration_status_label.setText(status)
                 if calib_detected_1:
                     self._calibration_status_label.setStyleSheet(
                         "color: #2e7d32; font-size: 10pt; font-weight: 800;"
+                    )
+                elif calib_board_detected_1:
+                    self._calibration_status_label.setStyleSheet(
+                        "color: #ef6c00; font-size: 10pt; font-weight: 800;"
                     )
                 else:
                     blink_on = bool(getattr(self, "_calib_status_blink_on", False))
@@ -3406,12 +3589,21 @@ class App(QMainWindow, form):
             self._calibration_status_label_2.setVisible(calib_on_2)
             if calib_on_2:
                 status = "[실패] 켈리브레이션 보드 인식 실패"
+                reason = str(getattr(self, "_calib_full_reason_2", "") or getattr(self, "_calib_last_reason_2", "") or "").strip()
                 if calib_detected_2:
                     status = "[성공] 켈리브레이션 보드 인식 성공"
+                elif calib_board_detected_2:
+                    status = "[대기] 켈리브레이션 데이터 수집 중"
+                    if reason:
+                        status = f"{status} ({reason})"
                 self._calibration_status_label_2.setText(status)
                 if calib_detected_2:
                     self._calibration_status_label_2.setStyleSheet(
                         "color: #2e7d32; font-size: 10pt; font-weight: 800;"
+                    )
+                elif calib_board_detected_2:
+                    self._calibration_status_label_2.setStyleSheet(
+                        "color: #ef6c00; font-size: 10pt; font-weight: 800;"
                     )
                 else:
                     blink_on = bool(getattr(self, "_calib_status_blink_on", False))
@@ -3430,13 +3622,7 @@ class App(QMainWindow, form):
         # (캘리브레이션 상태 갱신 타이머와 충돌해 깜박이는 현상 방지)
 
         # Normal vision move UI is hidden in calibration mode.
-        for w in [
-            getattr(self, "_vision_dialog_toggle_switch", None),
-            getattr(self, "_vision_z_title_label", None),
-            getattr(self, "_vision_z_range_label", None),
-            getattr(self, "_vision_z_margin_input", None),
-            getattr(self, "_vision_move_button", None),
-        ]:
+        for w in self._iter_vision_move_widgets():
             if w is not None:
                 w.setVisible(True)
         if hasattr(self, "_vision_dialog_toggle_button") and self._vision_dialog_toggle_button is not None:
@@ -3477,58 +3663,323 @@ class App(QMainWindow, form):
                 sections.setdefault(current, {})[key] = numbers
         return sections
 
-    def _points_dict_to_array(self, points_dict):
-        names = ["p1", "p2", "p3", "p4", "p5"]
-        arr = []
-        for n in names:
-            if n not in points_dict:
+    def _parse_bool_text(self, raw_value, default=True):
+        text = str(raw_value if raw_value is not None else "").strip().lower()
+        if text in ("1", "true", "on", "yes", "y"):
+            return True
+        if text in ("0", "false", "off", "no", "n"):
+            return False
+        return bool(default)
+
+    def _parse_float_values(self, raw_values, expected_len=None):
+        if raw_values is None:
+            return None
+        if not isinstance(raw_values, (list, tuple)):
+            raw_values = [raw_values]
+        try:
+            vals = [float(v) for v in list(raw_values)]
+        except Exception:
+            return None
+        if expected_len is not None:
+            if len(vals) < int(expected_len):
                 return None
-            arr.append(points_dict[n][:3])
-        return np.asarray(arr, dtype=np.float64)
+            vals = vals[: int(expected_len)]
+        return vals
 
-    def _compute_rigid_uvz_to_xyz(self, uvz_arr, xyz_arr, require_intrinsics=False, panel_index: int = 1):
-        if uvz_arr is None or xyz_arr is None:
-            return None, "P1~P5 데이터가 부족합니다."
-        if uvz_arr.shape != xyz_arr.shape or uvz_arr.shape[0] < 4:
-            return None, "비전/로봇 포인트 형식이 맞지 않습니다."
-        if not np.isfinite(uvz_arr).all():
-            return None, "비전 포인트에 유효하지 않은 깊이(Z)가 있습니다."
-        if not np.isfinite(xyz_arr).all():
-            return None, "로봇 포인트 파일에 유효하지 않은 값이 있습니다."
+    def _format_pose6_summary(self, pose6):
+        vals = self._parse_float_values(pose6, expected_len=6)
+        if vals is None:
+            return "-"
+        labels = ("X", "Y", "Z", "A", "B", "C")
+        return ", ".join(f"{labels[i]}={self._fmt_ui_float(vals[i], 2)}" for i in range(6))
 
-        src_uvz = np.asarray(uvz_arr, dtype=np.float64)
-        src_rows = []
-        for row in src_uvz:
-            cam_xyz = self._uvz_to_camera_xyz_mm(
-                row[0], row[1], row[2], require_intrinsics=require_intrinsics, panel_index=panel_index
+    def _format_joint_summary(self, joints):
+        vals = self._parse_float_values(joints, expected_len=6)
+        if vals is None:
+            return "-"
+        labels = ("J1", "J2", "J3", "J4", "J5", "J6")
+        return ", ".join(f"{labels[i]}={self._fmt_ui_float(vals[i], 2)}" for i in range(6))
+
+    def _format_xyz_summary(self, xyz):
+        vals = self._parse_float_values(xyz, expected_len=3)
+        if vals is None:
+            return "-"
+        return ", ".join(
+            (
+                f"X={self._fmt_ui_float(vals[0], 3)}",
+                f"Y={self._fmt_ui_float(vals[1], 3)}",
+                f"Z={self._fmt_ui_float(vals[2], 3)}",
             )
-            if cam_xyz is None:
-                return None, "camera_info 미수신: Eye-to-Hand 계산을 위해 카메라 내부파라미터가 필요합니다."
-            src_rows.append(cam_xyz)
-        src = np.asarray(src_rows, dtype=np.float64)
-        dst = np.asarray(xyz_arr, dtype=np.float64)
+        )
 
-        src_c = np.mean(src, axis=0)
-        dst_c = np.mean(dst, axis=0)
-        src0 = src - src_c
-        dst0 = dst - dst_c
+    def _format_xyz_compact(self, xyz):
+        vals = self._parse_float_values(xyz, expected_len=3)
+        if vals is None:
+            return "-"
+        return f"({self._fmt_ui_float(vals[0], 2)}, {self._fmt_ui_float(vals[1], 2)}, {self._fmt_ui_float(vals[2], 2)})"
 
-        # Kabsch (column-vector) -> row-vector 변환으로 저장
-        h = src0.T @ dst0
-        u, _, vt = np.linalg.svd(h)
-        r_col = vt.T @ u.T
-        if np.linalg.det(r_col) < 0:
-            vt[-1, :] *= -1.0
-            r_col = vt.T @ u.T
-        r_row = r_col.T
-        t_row = dst_c - (src_c @ r_row)
+    def _predict_robot_xyz_from_vision_xyz(self, vision_xyz, panel_index: int = 1):
+        vals = self._parse_float_values(vision_xyz, expected_len=3)
+        if vals is None:
+            return None
+        panel = 2 if int(panel_index) == 2 else 1
+        affine = self._vision_to_robot_affine_2 if panel == 2 else self._vision_to_robot_affine_1
+        if affine is None:
+            affine = self._vision_to_robot_affine
+        if affine is None:
+            return None
+        try:
+            vec = np.array([float(vals[0]), float(vals[1]), float(vals[2]), 1.0], dtype=np.float64)
+            out = vec @ np.asarray(affine, dtype=np.float64)
+            if out.shape[0] < 3 or (not np.isfinite(out[:3]).all()):
+                return None
+            return np.asarray(out[:3], dtype=np.float64)
+        except Exception:
+            return None
 
-        pred = (src @ r_row) + t_row
-        err = np.linalg.norm(pred - xyz_arr, axis=1)
-        rmse = float(np.sqrt(np.mean(err ** 2)))
+    def _format_calibration_measurement_summary(self, vision_xyz=None, robot_xyz=None, predicted_robot_xyz=None):
+        parts = []
+        if self._parse_float_values(vision_xyz, expected_len=3) is not None:
+            parts.append(f"V{self._format_xyz_compact(vision_xyz)}")
+        if self._parse_float_values(robot_xyz, expected_len=3) is not None:
+            parts.append(f"R{self._format_xyz_compact(robot_xyz)}")
+        if self._parse_float_values(predicted_robot_xyz, expected_len=3) is not None:
+            parts.append(f"C{self._format_xyz_compact(predicted_robot_xyz)}")
+        return " | ".join(parts) if parts else "-"
 
-        affine = np.vstack([r_row, t_row.reshape(1, 3)])
-        return (affine, r_row, t_row, rmse), None
+    def _load_calibration_sequence_rows(self, panel_index: int = 1):
+        rows = self._load_parameter_rows()
+        panel = 2 if int(panel_index) == 2 else 1
+        prefix = f"vision{panel}_calib_seq_"
+        home_posj = None
+        if self.backend is not None and hasattr(self.backend, "get_home_posj"):
+            try:
+                home_posj = self._parse_float_values(self.backend.get_home_posj(), expected_len=6)
+            except Exception:
+                home_posj = None
+        if home_posj is None:
+            home_posj = self._parse_float_values(HOME_POSJ, expected_len=6)
+
+        def _resolve_sequence_storage_key(row_key: str):
+            key_text = str(row_key or "").strip()
+            if key_text not in ("return1", "return2"):
+                return key_text
+            explicit_keys = (
+                f"{prefix}{key_text}_enabled",
+                f"{prefix}{key_text}_j",
+                f"{prefix}{key_text}_pose6",
+                f"{prefix}{key_text}_xyzabc",
+            )
+            if any(rows.get(name) for name in explicit_keys):
+                return key_text
+            legacy_keys = (
+                f"{prefix}return_home_enabled",
+                f"{prefix}return_home_j",
+                f"{prefix}return_home_pose6",
+                f"{prefix}return_home_xyzabc",
+            )
+            if any(rows.get(name) for name in legacy_keys):
+                return "return_home"
+            return key_text
+
+        items = []
+        for key, label in CALIB_SEQUENCE_ROW_DEFS:
+            storage_key = _resolve_sequence_storage_key(key)
+            entry = {
+                "key": str(key),
+                "label": str(label),
+                "enabled": True,
+                "capture": str(key).startswith("p"),
+                "move_kind": "pose6",
+                "target_pose6": None,
+                "target_joint": None,
+                "target_text": "-",
+            }
+            if key in ("home", "end_home"):
+                entry["enabled"] = self._parse_bool_text(((rows.get(f"{prefix}{storage_key}_enabled") or ["1"])[0]), default=True)
+                entry["move_kind"] = "home"
+                entry["target_joint"] = home_posj
+                entry["target_text"] = self._format_joint_summary(home_posj)
+                items.append(entry)
+                continue
+
+            entry["enabled"] = self._parse_bool_text(((rows.get(f"{prefix}{storage_key}_enabled") or ["1"])[0]), default=True)
+            pose6 = self._parse_float_values(rows.get(f"{prefix}{storage_key}_pose6"), expected_len=6)
+            if pose6 is None:
+                pose6 = self._parse_float_values(rows.get(f"{prefix}{storage_key}_xyzabc"), expected_len=6)
+            target_joint = self._parse_float_values(rows.get(f"{prefix}{storage_key}_j"), expected_len=6)
+            entry["target_pose6"] = pose6
+            entry["target_joint"] = target_joint
+            if pose6 is not None:
+                entry["move_kind"] = "pose6"
+                entry["target_text"] = self._format_pose6_summary(pose6)
+            elif target_joint is not None:
+                entry["move_kind"] = "joint"
+                entry["target_text"] = self._format_joint_summary(target_joint)
+            else:
+                entry["enabled"] = False
+                entry["target_text"] = "미설정"
+            items.append(entry)
+        return items
+
+    def _save_calibration_sequence_row_config(self, panel_index: int, row_key: str, enabled=None, joints=None, pose6=None):
+        panel = 2 if int(panel_index) == 2 else 1
+        key = str(row_key or "").strip()
+        if not key:
+            return False, "시퀀스 키가 없습니다."
+        rows = self._load_parameter_rows()
+        prefix = f"vision{panel}_calib_seq_{key}"
+        if enabled is not None:
+            rows[f"{prefix}_enabled"] = ["1" if bool(enabled) else "0"]
+
+        if key in ("home", "end_home"):
+            if joints is not None:
+                if self.backend is None or not hasattr(self.backend, "set_home_posj"):
+                    return False, "백엔드 홈 저장 기능을 지원하지 않습니다."
+                ok_home, msg_home = self.backend.set_home_posj(joints)
+                if not ok_home:
+                    return False, msg_home
+            self._save_parameter_rows(rows)
+            return True, "홈위치 설정 저장 완료"
+
+        if joints is not None:
+            joint_vals = self._parse_float_values(joints, expected_len=6)
+            if joint_vals is None:
+                return False, "조인트 값 형식이 올바르지 않습니다."
+            rows[f"{prefix}_j"] = [f"{v:.6f}" for v in joint_vals]
+        if pose6 is not None:
+            pose_vals = self._parse_float_values(pose6, expected_len=6)
+            if pose_vals is None:
+                return False, "좌표 값 형식이 올바르지 않습니다."
+            saved = [f"{v:.6f}" for v in pose_vals]
+            rows[f"{prefix}_pose6"] = list(saved)
+            rows[f"{prefix}_xyzabc"] = list(saved)
+        self._save_parameter_rows(rows)
+        return True, "시퀀스 설정 저장 완료"
+
+    def _capture_current_teach_pose(self):
+        if self.backend is None:
+            return None, None, "백엔드 초기화 중입니다."
+        posj = None
+        posx = None
+        seen_at = None
+        last_err = "현재 좌표를 얻지 못했습니다."
+        if hasattr(self.backend, "get_position_snapshot"):
+            try:
+                data, seen_at = self.backend.get_position_snapshot()
+            except Exception:
+                data, seen_at = (None, None)
+            if data and len(data) >= 2:
+                try:
+                    if data[0] is not None:
+                        posj = [float(v) for v in list(data[0])[:6]]
+                except Exception:
+                    posj = None
+                try:
+                    if data[1] is not None:
+                        posx = [float(v) for v in list(data[1])[:6]]
+                except Exception:
+                    posx = None
+        if posx is None and hasattr(self.backend, "get_current_posx_live"):
+            posx_live, _sol_live, err_live = self.backend.get_current_posx_live()
+            if posx_live is not None:
+                try:
+                    posx = [float(v) for v in list(posx_live)[:6]]
+                except Exception:
+                    posx = None
+            elif err_live:
+                last_err = str(err_live)
+        if posj is None or posx is None:
+            return None, None, last_err
+        if seen_at is not None and (time.monotonic() - float(seen_at)) > max(1.0, POSITION_STALE_SEC):
+            return None, None, "현재 좌표 수신이 지연되어 티칭할 수 없습니다."
+        return posj, posx, None
+
+    def _get_robot_mode_int(self):
+        if self.backend is None or not hasattr(self.backend, "sync_robot_mode_once") or not hasattr(self.backend, "get_robot_mode_snapshot"):
+            return None
+        try:
+            self.backend.sync_robot_mode_once(force=True, timeout_sec=1.2)
+        except Exception:
+            pass
+        try:
+            mode_value, mode_seen_at = self.backend.get_robot_mode_snapshot()
+            if mode_value is None or mode_seen_at is None:
+                return None
+            return int(mode_value)
+        except Exception:
+            return None
+
+    def _get_current_tcp_name(self, force_sync: bool = False):
+        if self.backend is None or not hasattr(self.backend, "get_current_tcp_snapshot"):
+            return "", None
+        if force_sync and hasattr(self.backend, "sync_current_tcp_once"):
+            try:
+                self.backend.sync_current_tcp_once(force=True, timeout_sec=1.0)
+            except Exception:
+                pass
+        try:
+            tcp_name, seen_at = self.backend.get_current_tcp_snapshot()
+        except Exception:
+            return "", None
+        return str(tcp_name or "").strip(), seen_at
+
+    def _is_checkerboard_tcp_ready(self, force_sync: bool = False):
+        tcp_name, seen_at = self._get_current_tcp_name(force_sync=force_sync)
+        display = "flange" if not tcp_name else tcp_name
+        return bool(tcp_name == "tool_checkerboard"), display, seen_at
+
+    def _prepare_calibration_motion_ready(self, parent=None, status_callback=None):
+        original_mode = self._get_robot_mode_int()
+        if status_callback is not None:
+            status_callback("체커보드 TCP 확인중...")
+        tcp_ready, tcp_display, _tcp_seen_at = self._is_checkerboard_tcp_ready(force_sync=True)
+        if tcp_ready:
+            return True, f"현재 TCP가 {tcp_display} 상태라 추가 모드/TCP 변경 없이 진행합니다.", None
+        if status_callback is not None:
+            status_callback("체커보드 TCP 적용 준비중...")
+        ok_setup, msg_setup = self._set_manual_mode_and_checkerboard_tcp(parent=parent)
+        if not ok_setup:
+            return False, msg_setup, original_mode
+        if self.backend is None or not hasattr(self.backend, "set_robot_mode"):
+            return False, "백엔드가 로봇모드 변경 기능을 지원하지 않습니다.", original_mode
+        if status_callback is not None:
+            status_callback("오토모드 전환중...")
+        ok_auto, msg_auto = self.backend.set_robot_mode(1, timeout_sec=8.0)
+        if not ok_auto:
+            return False, f"오토모드 전환 실패: {msg_auto}", original_mode
+        return True, f"{msg_setup}; {msg_auto}", original_mode
+
+    def _restore_robot_mode(self, mode_value):
+        if self.backend is None or not hasattr(self.backend, "set_robot_mode"):
+            return False, "백엔드가 로봇모드 변경 기능을 지원하지 않습니다."
+        try:
+            target_mode = int(mode_value)
+        except Exception:
+            return False, "복원할 로봇모드가 없습니다."
+        ok, msg = self.backend.set_robot_mode(target_mode, timeout_sec=8.0)
+        if ok and target_mode == 0:
+            self._request_current_tool_sync(retry_window_sec=6.0, immediate=True)
+        return bool(ok), str(msg)
+
+    def _prepare_calibration_gripper_closed(self, status_callback=None):
+        if self.backend is None:
+            return False, "백엔드 초기화 중입니다."
+        if not hasattr(self.backend, "send_gripper_move"):
+            return True, "그리퍼 제어 미지원: 생략"
+        if not bool(getattr(self.backend, "use_real_gripper", False)):
+            return True, "그리퍼 비활성화: 생략"
+        if status_callback is not None:
+            status_callback("그리퍼 0mm 닫는 중...")
+        ok_move, msg_move = self.backend.send_gripper_move(0.0)
+        if not ok_move:
+            if "그리퍼 비활성화" in str(msg_move):
+                return True, str(msg_move)
+            return False, f"그리퍼 0mm 닫기 실패: {msg_move}"
+        ok_wait, wait_err = self._wait_for_backend_motion_done(timeout_sec=20.0)
+        if not ok_wait:
+            return False, f"그리퍼 0mm 닫기 대기 실패: {wait_err}"
+        return True, str(msg_move)
 
     def _compute_rigid_xyz_to_xyz(self, src_xyz_arr, dst_xyz_arr):
         if src_xyz_arr is None or dst_xyz_arr is None:
@@ -3570,6 +4021,7 @@ class App(QMainWindow, form):
                     return arr, None
             except Exception:
                 pass
+
         pts_grid = self._calib_last_grid_pts_2 if panel == 2 else self._calib_last_grid_pts_1
         if pts_grid is None:
             return None, "체커보드 그리드 데이터가 없습니다."
@@ -3595,17 +4047,17 @@ class App(QMainWindow, form):
             if cxyz is None:
                 bad.append(f"g{idx + 1}")
                 continue
-            cxyz = np.asarray(cxyz, dtype=np.float64).reshape(3,)
-            if not np.isfinite(cxyz).all():
+            cxyz_arr = np.asarray(cxyz, dtype=np.float64).reshape(3,)
+            if not np.isfinite(cxyz_arr).all():
                 bad.append(f"g{idx + 1}")
                 continue
-            cam_rows.append(cxyz)
+            cam_rows.append(cxyz_arr)
         total = int(flat.shape[0])
         if len(cam_rows) != total:
             sample = ", ".join(bad[:8])
             if len(bad) > 8:
                 sample += ", ..."
-            return None, f"체커보드 전체 XYZ 취득 실패: {len(bad)}/{total}개 깊이 미수신 또는 변환 실패({sample})"
+            return None, f"체커보드 전체 XYZ 취득 실패: {len(bad)}/{total}개({sample})"
         return np.asarray(cam_rows, dtype=np.float64), None
 
     def _robust_center_from_grid_xyz(self, grid_xyz):
@@ -3614,7 +4066,6 @@ class App(QMainWindow, form):
             return None, 0
         if not np.isfinite(pts).all():
             return None, 0
-        # 전체 코너를 최대한 활용하되, depth 튐(outlier) 영향은 줄인다.
         med = np.median(pts, axis=0)
         dist = np.linalg.norm(pts - med.reshape(1, 3), axis=1)
         mad = np.median(np.abs(dist - np.median(dist)))
@@ -3630,44 +4081,138 @@ class App(QMainWindow, form):
             return None, int(inlier.shape[0])
         return center.astype(np.float64), int(inlier.shape[0])
 
-    def _save_calibration_file(self, out_path, vision_uvz_arr, robot_xyz_arr, affine, rmse, r_row=None, t_row=None, panel_index: int = 1):
+    def _capture_current_robot_xyz_mm(self):
+        if self.backend is None:
+            return None, "백엔드 초기화 중입니다."
+        last_err = "현재 TCP 좌표를 얻지 못했습니다."
+        if hasattr(self.backend, "get_current_posx_live"):
+            posx_live, _sol_live, err_live = self.backend.get_current_posx_live()
+            if posx_live is not None:
+                try:
+                    arr = np.asarray(list(posx_live)[:3], dtype=np.float64)
+                    if arr.shape == (3,) and np.isfinite(arr).all():
+                        return arr, None
+                except Exception:
+                    pass
+            if err_live:
+                last_err = err_live
+
+        if hasattr(self.backend, "get_position_snapshot"):
+            data, seen_at = self.backend.get_position_snapshot()
+            if data and len(data) >= 2 and data[1] is not None:
+                if seen_at is None or (time.monotonic() - float(seen_at)) <= max(0.5, POSITION_STALE_SEC):
+                    try:
+                        arr = np.asarray(list(data[1])[:3], dtype=np.float64)
+                        if arr.shape == (3,) and np.isfinite(arr).all():
+                            return arr, None
+                    except Exception:
+                        pass
+        return None, last_err
+
+    def _wait_for_backend_motion_done(self, timeout_sec: float = 90.0):
+        if self.backend is None:
+            return False, "백엔드 초기화 중입니다."
+        end_at = time.monotonic() + max(1.0, float(timeout_sec))
+        started_busy = False
+        idle_since = None
+        while time.monotonic() < end_at:
+            QApplication.processEvents()
+            try:
+                busy = bool(self.backend.is_busy())
+            except Exception:
+                busy = False
+            if busy:
+                started_busy = True
+                idle_since = None
+            else:
+                if (not started_busy) and ((time.monotonic() + 0.35) < end_at):
+                    time.sleep(0.05)
+                    continue
+                if idle_since is None:
+                    idle_since = time.monotonic()
+                elif (time.monotonic() - idle_since) >= 0.35:
+                    return True, None
+            time.sleep(0.05)
+        return False, "이동 완료 대기 시간 초과"
+
+    def _wait_for_calibration_center_mm(self, panel_index: int = 1, timeout_sec: float = 6.0, min_seen_at=None):
+        panel = 2 if int(panel_index) == 2 else 1
+        end_at = time.monotonic() + max(0.5, float(timeout_sec))
+        last_center = None
+        stable_count = 0
+        last_err = "체커보드 전체 데이터 대기중"
+        while time.monotonic() < end_at:
+            QApplication.processEvents()
+            seen_at = self._calib_last_points_at_2 if panel == 2 else self._calib_last_points_at_1
+            if min_seen_at is not None:
+                if seen_at is None or float(seen_at) < float(min_seen_at):
+                    last_err = "새 체커보드 데이터 대기중"
+                    time.sleep(0.15)
+                    continue
+            grid_xyz, err = self._extract_calib_grid_camera_xyz(panel)
+            if grid_xyz is not None:
+                center, inlier_count = self._robust_center_from_grid_xyz(grid_xyz)
+                if center is not None:
+                    if last_center is not None and np.linalg.norm(center - last_center) <= 2.5:
+                        stable_count += 1
+                    else:
+                        stable_count = 1
+                    last_center = center
+                    if stable_count >= 2:
+                        return center, int(grid_xyz.shape[0]), int(inlier_count), None
+            last_err = err or (
+                self._calib_full_reason_2 if panel == 2 else self._calib_full_reason_1
+            ) or last_err
+            time.sleep(0.15)
+        return None, 0, 0, last_err
+
+    def _save_calibration_xyz_file(self, out_path, samples, affine, rmse, panel_index: int = 1):
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        names = ["p1", "p2", "p3", "p4", "p5"]
         aff = np.asarray(affine, dtype=np.float64)
-        if r_row is None and aff.shape == (4, 3):
-            r_row = aff[:3, :]
-        if t_row is None and aff.shape == (4, 3):
-            t_row = aff[3, :]
+        if aff.shape != (4, 3):
+            raise ValueError("vision affine must be 4x3")
+        r_row = aff[:3, :]
+        t_row = aff[3, :].reshape(3,)
         with open(out_path, "w", encoding="utf-8") as f:
-            f.write("#VisionUVZ (u,v,z_mm)\n")
-            for i, n in enumerate(names):
-                u, v, z = vision_uvz_arr[i]
-                f.write(f"{n}={u:.3f},{v:.3f},{z:.3f}\n")
-            f.write("\n#Vision (x,y,z_mm)\n")
-            for i, n in enumerate(names):
-                u, v, z = vision_uvz_arr[i]
-                cxyz = self._uvz_to_camera_xyz_mm(u, v, z, require_intrinsics=False, panel_index=panel_index)
-                if cxyz is None:
-                    f.write(f"{n}=nan,nan,nan\n")
-                else:
-                    x, y, zz = cxyz
-                    f.write(f"{n}={x:.3f},{y:.3f},{zz:.3f}\n")
+            f.write("#VisionXYZ (x,y,z_mm)\n")
+            for idx, sample in enumerate(samples, start=1):
+                sx, sy, sz = np.asarray(sample["vision_xyz"], dtype=np.float64).reshape(3,)
+                f.write(f"s{idx:02d}={sx:.6f},{sy:.6f},{sz:.6f}\n")
             f.write("\n#Robot (x,y,z_mm)\n")
-            for i, n in enumerate(names):
-                x, y, z = robot_xyz_arr[i]
-                f.write(f"{n}={x:.3f},{y:.3f},{z:.3f}\n")
+            for idx, sample in enumerate(samples, start=1):
+                rx, ry, rz = np.asarray(sample["robot_xyz"], dtype=np.float64).reshape(3,)
+                f.write(f"s{idx:02d}={rx:.6f},{ry:.6f},{rz:.6f}\n")
+            f.write("\n#Sequence (panel,row,label)\n")
+            for idx, sample in enumerate(samples, start=1):
+                row_key = str(sample.get("row_key", ""))
+                label = str(sample.get("label", "")).replace(",", " ")
+                f.write(f"s{idx:02d}=panel{int(panel_index)},{row_key},{label}\n")
+            f.write("\n#SampleLog (manual check only)\n")
+            f.write("#format=sXX,vision_xyz(mm),robot_xyz(mm),pred_robot_xyz(mm),residual(mm)\n")
+            for idx, sample in enumerate(samples, start=1):
+                src = np.asarray(sample["vision_xyz"], dtype=np.float64).reshape(1, 3)
+                dst = np.asarray(sample["robot_xyz"], dtype=np.float64).reshape(1, 3)
+                pred = (src @ r_row) + t_row.reshape(1, 3)
+                err = float(np.linalg.norm(pred.reshape(3,) - dst.reshape(3,)))
+                sv = src.reshape(3,)
+                dv = dst.reshape(3,)
+                pv = pred.reshape(3,)
+                f.write(
+                    (
+                        f"s{idx:02d},"
+                        f"V=({sv[0]:.3f},{sv[1]:.3f},{sv[2]:.3f}),"
+                        f"R=({dv[0]:.3f},{dv[1]:.3f},{dv[2]:.3f}),"
+                        f"P=({pv[0]:.3f},{pv[1]:.3f},{pv[2]:.3f}),"
+                        f"E={err:.3f}\n"
+                    )
+                )
             f.write("\n#RotationMat (rigid: R(3x3), t(1x3), row-vector form)\n")
-            if r_row is not None:
-                r = np.asarray(r_row, dtype=np.float64).reshape(3, 3)
-                for i in range(3):
-                    f.write(f"r{i}={r[i,0]:.12g},{r[i,1]:.12g},{r[i,2]:.12g}\n")
-            if t_row is not None:
-                t = np.asarray(t_row, dtype=np.float64).reshape(3,)
-                f.write(f"t={t[0]:.12g},{t[1]:.12g},{t[2]:.12g}\n")
-            # backward compatibility
+            for i in range(3):
+                f.write(f"r{i}={r_row[i,0]:.12g},{r_row[i,1]:.12g},{r_row[i,2]:.12g}\n")
+            f.write(f"t={t_row[0]:.12g},{t_row[1]:.12g},{t_row[2]:.12g}\n")
             for r in range(4):
                 f.write(f"m{r}={aff[r,0]:.12g},{aff[r,1]:.12g},{aff[r,2]:.12g}\n")
-            f.write(f"rmse={rmse:.6f}\n")
+            f.write(f"rmse={float(rmse):.6f}\n")
 
     def _load_affine_from_file(self, file_path):
         sections = self._parse_point_file_sections(file_path)
@@ -3762,42 +4307,684 @@ class App(QMainWindow, form):
     def on_calibration_transform(self):
         sender = self.sender()
         panel = 2 if sender is getattr(self, "_calibration_transform_button_2", None) else 1
-        points = self._calib_last_points_uvz_mm_2 if panel == 2 else self._calib_last_points_uvz_mm_1
-        vision_uvz_arr = self._points_dict_to_array(points)
-        if vision_uvz_arr is None:
-            self.append_log(f"[캘리브레이션{panel}] P1~P5 데이터가 없어 좌표변환을 수행할 수 없습니다.\n")
-            QMessageBox.warning(self, "좌표변환", "P1~P5 데이터가 준비되지 않았습니다.")
+        if self.backend is None:
+            self.append_log(f"[캘리브레이션{panel}] 백엔드 초기화 중입니다.\n")
             return
-        result, err = self._compute_rigid_uvz_to_xyz(
-            vision_uvz_arr,
-            np.asarray(ROBOT_CALIB_XYZ_MM, dtype=np.float64),
-            require_intrinsics=True,
-            panel_index=panel,
+        if not hasattr(self.backend, "send_move_cartesian") or not hasattr(self.backend, "send_move_home"):
+            self.append_log(f"[캘리브레이션{panel}] 백엔드가 캘리브레이션 이동 기능을 지원하지 않습니다.\n")
+            QMessageBox.warning(self, "캘리브레이션", "백엔드가 캘리브레이션 이동 기능을 지원하지 않습니다.")
+            return
+        vision_enabled = bool(self._top_status_enabled.get("vision2" if panel == 2 else "vision", True))
+        if not vision_enabled:
+            self.append_log(f"[캘리브레이션{panel}] 비전 패널이 비활성화되어 실행할 수 없습니다.\n")
+            QMessageBox.warning(self, "캘리브레이션", f"비전{panel} 패널이 비활성화 상태입니다.")
+            return
+
+        seq_rows = self._load_calibration_sequence_rows(panel_index=panel)
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"캘리브레이션 실행 (비전{panel})")
+        dialog.setModal(True)
+        dialog.setWindowFlags(Qt.Window | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowCloseButtonHint)
+        dialog.resize(1160, 660)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 16, 16, 14)
+        layout.setSpacing(10)
+
+        intro = QLabel(
+            (
+                f"비전{panel} 캘리브레이션 준비 화면입니다.\n"
+                "여기서 각 위치의 사용 여부를 고르고, 개별 이동/티칭을 수행한 뒤, 아래 시작 버튼을 눌러야만 실제 시퀀스가 실행됩니다.\n"
+                "목표 위치 칸을 누르면 값을 직접 수정할 수 있습니다.\n"
+                "현재 TCP가 tool_checkerboard가 아니면 필요할 때만 메뉴얼모드에서 TCP를 적용한 뒤 진행합니다."
+            ),
+            dialog,
         )
-        if result is None:
-            self.append_log(f"[캘리브레이션{panel}] 좌표변환 실패: {err}\n")
-            QMessageBox.warning(self, "좌표변환", str(err))
-            return
-        aff, r_row, t_row, rmse = result
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_path = os.path.join(CALIB_ROTMAT_DIR, f"calib_matrix_panel{panel}_{timestamp}.txt")
-        try:
-            self._save_calibration_file(
-                out_path,
-                vision_uvz_arr,
-                np.asarray(ROBOT_CALIB_XYZ_MM, dtype=np.float64),
-                aff,
-                rmse,
-                r_row=r_row,
-                t_row=t_row,
-                panel_index=panel,
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        status_label = QLabel("대기중: 행별 사용 여부, 목표위치, 티칭 상태를 확인한 뒤 시작을 누르세요.", dialog)
+        status_label.setStyleSheet("font-weight: 700; color: #1f1f1f;")
+        status_label.setWordWrap(True)
+        layout.addWidget(status_label)
+
+        tcp_status_label = QLabel("현재 TCP 확인중...", dialog)
+        tcp_status_label.setStyleSheet("font-size: 9pt; color: #666666;")
+        layout.addWidget(tcp_status_label)
+
+        progress_bar = QProgressBar(dialog)
+        progress_bar.setRange(0, max(1, len(seq_rows)))
+        progress_bar.setValue(0)
+        layout.addWidget(progress_bar)
+
+        table = QTableWidget(len(seq_rows), 6, dialog)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setSelectionMode(QTableWidget.NoSelection)
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(max(24, int(UI_PANEL_TABLE_ROW_HEIGHT)))
+        table.setHorizontalHeaderLabels(["단계", "사용", "목표 위치", "작업", "수집 좌표(V/R/C)", "상태"])
+        header = table.horizontalHeader()
+        if header is not None:
+            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(2, QHeaderView.Stretch)
+            header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(4, QHeaderView.Stretch)
+            header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        dialog_rows = []
+        layout.addWidget(table, 1)
+
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+        start_button = QPushButton("시작", dialog)
+        start_button.setMinimumWidth(110)
+        close_button = QPushButton("닫기", dialog)
+        close_button.setMinimumWidth(90)
+        close_button.clicked.connect(dialog.accept)
+        action_row.addStretch(1)
+        action_row.addWidget(start_button)
+        action_row.addWidget(close_button)
+        layout.addLayout(action_row)
+
+        run_state = {"running": False}
+
+        def _set_status(text: str):
+            status_label.setText(str(text))
+            QApplication.processEvents()
+
+        def _set_row_state(row_state, status_text: str, vision_xyz=None, robot_xyz=None, predicted_robot_xyz=None):
+            if row_state["vision_item"] is not None and any(v is not None for v in (vision_xyz, robot_xyz, predicted_robot_xyz)):
+                row_state["vision_item"].setText(
+                    self._format_calibration_measurement_summary(
+                        vision_xyz=vision_xyz,
+                        robot_xyz=robot_xyz,
+                        predicted_robot_xyz=predicted_robot_xyz,
+                    )
+                )
+            if row_state["status_item"] is not None:
+                row_state["status_item"].setText(str(status_text))
+            QApplication.processEvents()
+
+        def _active_rows():
+            return [row_state for row_state in dialog_rows if row_state["check_box"].isChecked()]
+
+        def _active_capture_rows():
+            return [row_state for row_state in _active_rows() if bool(row_state["data"].get("capture"))]
+
+        def _refresh_tcp_status(force_sync: bool = False):
+            tcp_ready, tcp_display, _tcp_seen_at = self._is_checkerboard_tcp_ready(force_sync=force_sync)
+            if tcp_ready:
+                tcp_status_label.setText(f"시작 조건 TCP: {tcp_display} (OK)")
+                tcp_status_label.setStyleSheet("font-size: 9pt; color: #2e7d32; font-weight: 700;")
+            else:
+                tcp_status_label.setText(
+                    f"시작 조건 TCP: {tcp_display} (tool_checkerboard 필요, 툴 변경에서 먼저 적용)"
+                )
+                tcp_status_label.setStyleSheet("font-size: 9pt; color: #c62828; font-weight: 700;")
+            return tcp_ready
+
+        def _refresh_start_button():
+            active_capture_count = len(_active_capture_rows())
+            tcp_ready = _refresh_tcp_status(force_sync=False)
+            start_button.setEnabled((not run_state["running"]) and active_capture_count >= 4 and tcp_ready)
+
+        def _refresh_row_controls(row_state):
+            seq_row = row_state["data"]
+            has_target = bool(
+                seq_row.get("move_kind") == "home"
+                or seq_row.get("target_pose6") is not None
+                or seq_row.get("target_joint") is not None
             )
-        except Exception as e:
-            self.append_log(f"[캘리브레이션{panel}] 행렬 저장 실패: {e}\n")
-            QMessageBox.warning(self, "좌표변환", f"행렬 저장 실패: {e}")
-            return
-        self._apply_vision_to_robot_affine(aff, rmse=rmse, path=out_path, panel_index=panel)
-        self.append_log(f"[캘리브레이션{panel}] 좌표변환 완료 (RMSE={rmse:.3f}mm): {out_path}\n")
+            row_state["check_box"].setEnabled(not run_state["running"])
+            row_state["teach_button"].setEnabled(not run_state["running"])
+            row_state["move_button"].setEnabled((not run_state["running"]) and has_target)
+
+        def _refresh_all_row_controls():
+            for row_state in dialog_rows:
+                _refresh_row_controls(row_state)
+            _refresh_start_button()
+
+        def _confirm_real_motion(title: str, row_label: str, target_text: str):
+            msg = QMessageBox(self)
+            msg.setWindowTitle(title)
+            msg.setIcon(QMessageBox.Warning)
+            msg.setText(
+                (
+                    f"{row_label} 위치로 실제 이동합니다.\n\n"
+                    f"목표 위치: {target_text}\n\n"
+                    "현재 TCP가 tool_checkerboard가 아니면 필요 시 메뉴얼모드에서 TCP를 적용한 뒤 진행합니다.\n"
+                    "계속할까요?"
+                )
+            )
+            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg.setDefaultButton(QMessageBox.No)
+            return msg.exec_() == QMessageBox.Yes
+
+        def _confirm_manual_row_motion_second(row_label: str):
+            answer = QMessageBox.question(
+                dialog,
+                "캘리브레이션 위치 이동 재확인",
+                f"{row_label} 위치로 실제 이동합니다.\n한 번 더 확인합니다. 계속할까요?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            return answer == QMessageBox.Yes
+
+        def _values_changed(old_values, new_values, tol: float = 1e-6):
+            old_vals = self._parse_float_values(old_values, expected_len=6)
+            new_vals = self._parse_float_values(new_values, expected_len=6)
+            if old_vals is None or new_vals is None:
+                return True
+            return any(abs(float(a) - float(b)) > float(tol) for a, b in zip(old_vals[:6], new_vals[:6]))
+
+        def _save_row_enabled(row_state, checked: bool):
+            ok_save, msg_save = self._save_calibration_sequence_row_config(
+                panel,
+                row_state["data"]["key"],
+                enabled=checked,
+            )
+            if not ok_save:
+                row_state["check_box"].blockSignals(True)
+                row_state["check_box"].setChecked(not bool(checked))
+                row_state["check_box"].blockSignals(False)
+                QMessageBox.warning(dialog, "캘리브레이션", msg_save, QMessageBox.Ok)
+                return
+            row_state["data"]["enabled"] = bool(checked)
+            _set_row_state(row_state, "대기" if checked else "미사용")
+            self.append_log(
+                f"[캘리브레이션{panel}] {row_state['data']['label']} 사용여부 저장: {'ON' if checked else 'OFF'}\n"
+            )
+            _refresh_start_button()
+
+        def _move_row(row_state):
+            seq_row = row_state["data"]
+            row_label = str(seq_row.get("label", seq_row.get("key", "-")))
+            target_text = str(seq_row.get("target_text", "-"))
+            if run_state["running"]:
+                return
+            tcp_ready, tcp_display, _tcp_seen_at = self._is_checkerboard_tcp_ready(force_sync=True)
+            if not tcp_ready:
+                QMessageBox.warning(
+                    dialog,
+                    "캘리브레이션",
+                    f"현재 TCP가 tool_checkerboard가 아닙니다.\n현재: {tcp_display}",
+                    QMessageBox.Ok,
+                )
+                _refresh_start_button()
+                return
+            if not _confirm_real_motion("캘리브레이션 위치 이동", row_label, target_text):
+                return
+            if not _confirm_manual_row_motion_second(row_label):
+                return
+            run_state["running"] = True
+            close_button.setEnabled(False)
+            _refresh_all_row_controls()
+            previous_mode = None
+            restore_enabled = bool(self.backend is not None and self.backend.is_ready())
+            self._calibration_sequence_running = True
+            self._set_robot_controls_enabled(restore_enabled)
+            try:
+                ok_ready, msg_ready, previous_mode = self._prepare_calibration_motion_ready(
+                    parent=dialog,
+                    status_callback=_set_status,
+                )
+                if not ok_ready:
+                    raise RuntimeError(msg_ready)
+                _set_status(f"{row_label} 이동중...")
+                _set_row_state(row_state, "이동중")
+                move_speed = self._calibration_motion_speed_for_command()
+                if seq_row.get("move_kind") == "home":
+                    ok_move, move_msg = self.backend.send_move_home(vel=move_speed, acc=move_speed)
+                elif seq_row.get("move_kind") == "joint":
+                    target_joint = seq_row.get("target_joint")
+                    if target_joint is None:
+                        raise RuntimeError(f"{row_label} 조인트 위치가 없습니다.")
+                    ok_move, move_msg = self.backend.send_move_joint(*target_joint, vel=move_speed, acc=move_speed)
+                else:
+                    target_pose6 = seq_row.get("target_pose6")
+                    if target_pose6 is None:
+                        raise RuntimeError(f"{row_label} 좌표 위치가 없습니다.")
+                    ok_move, move_msg = self.backend.send_move_cartesian(*target_pose6, vel=move_speed, acc=move_speed)
+                if not ok_move:
+                    raise RuntimeError(move_msg)
+                ok_wait, wait_err = self._wait_for_backend_motion_done(timeout_sec=90.0)
+                if not ok_wait:
+                    raise RuntimeError(wait_err)
+                if float(CALIB_SEQUENCE_SETTLE_SEC) > 0.0:
+                    _set_row_state(row_state, "정지 안정화")
+                    self._wait_with_ui_pump(
+                        float(CALIB_SEQUENCE_SETTLE_SEC),
+                        status_callback=_set_status,
+                        message_prefix=f"{row_label} 정지 안정화 중",
+                    )
+                if bool(seq_row.get("capture")):
+                    _set_row_state(row_state, "비전 데이터 수집중")
+                    if row_state["vision_item"] is not None:
+                        row_state["vision_item"].setText("수집중...")
+                    fresh_after = time.monotonic()
+                    center_xyz, corner_count, inlier_count, center_err = self._wait_for_calibration_center_mm(
+                        panel_index=panel,
+                        timeout_sec=float(CALIB_SEQUENCE_CAPTURE_TIMEOUT_SEC),
+                        min_seen_at=fresh_after,
+                    )
+                    if center_xyz is None:
+                        raise RuntimeError(f"비전 데이터 수집 실패: {center_err}")
+                    predicted_xyz = self._predict_robot_xyz_from_vision_xyz(center_xyz, panel_index=panel)
+                    _set_row_state(
+                        row_state,
+                        f"이동완료 ({int(corner_count)}pt/{int(inlier_count)}in)",
+                        vision_xyz=center_xyz,
+                        predicted_robot_xyz=predicted_xyz,
+                    )
+                else:
+                    _set_row_state(row_state, "이동완료")
+                _set_status(f"{row_label} 이동 완료")
+                self.append_log(f"[캘리브레이션{panel}] {row_label} 개별 이동 완료\n")
+            except Exception as e:
+                _set_row_state(row_state, f"실패: {e}")
+                _set_status(f"실패: {e}")
+                self.append_log(f"[캘리브레이션{panel}] {row_label} 개별 이동 실패: {e}\n")
+                QMessageBox.warning(dialog, "캘리브레이션", str(e), QMessageBox.Ok)
+            finally:
+                if previous_mode is not None and int(previous_mode) != 1:
+                    ok_restore, msg_restore = self._restore_robot_mode(previous_mode)
+                    self.append_log(
+                        f"[캘리브레이션{panel}] 개별 이동 후 모드 복원({'성공' if ok_restore else '실패'}): {msg_restore}\n"
+                    )
+                self._calibration_sequence_running = False
+                self._set_robot_controls_enabled(restore_enabled)
+                run_state["running"] = False
+                close_button.setEnabled(True)
+                _refresh_all_row_controls()
+
+        def _teach_row(row_state):
+            if run_state["running"]:
+                return
+            row_label = str(row_state["data"].get("label", row_state["data"].get("key", "-")))
+            posj, posx, err = self._capture_current_teach_pose()
+            if err is not None:
+                QMessageBox.warning(dialog, "캘리브레이션", err, QMessageBox.Ok)
+                return
+            ok_save, msg_save = self._save_calibration_sequence_row_config(
+                panel,
+                row_state["data"]["key"],
+                enabled=row_state["check_box"].isChecked(),
+                joints=posj,
+                pose6=posx,
+            )
+            if not ok_save:
+                QMessageBox.warning(dialog, "캘리브레이션", msg_save, QMessageBox.Ok)
+                return
+            if row_state["data"]["key"] in ("home", "end_home"):
+                row_state["data"]["move_kind"] = "home"
+                row_state["data"]["target_joint"] = list(posj)
+                row_state["data"]["target_pose6"] = None
+                row_state["data"]["target_text"] = self._format_joint_summary(posj)
+            else:
+                row_state["data"]["move_kind"] = "pose6"
+                row_state["data"]["target_joint"] = list(posj)
+                row_state["data"]["target_pose6"] = list(posx)
+                row_state["data"]["target_text"] = self._format_pose6_summary(posx)
+            row_state["target_item"].setText(str(row_state["data"]["target_text"]))
+            _set_row_state(row_state, "티칭 저장")
+            self.append_log(f"[캘리브레이션{panel}] {row_label} 티칭 저장: {msg_save}\n")
+            _refresh_row_controls(row_state)
+            _refresh_start_button()
+
+        def _edit_row_target(row_state):
+            if run_state["running"]:
+                return
+            seq_row = row_state["data"]
+            row_label = str(seq_row.get("label", seq_row.get("key", "-")))
+            move_kind = str(seq_row.get("move_kind", "pose6") or "pose6").strip().lower()
+            current_posj, current_posx = self._get_current_pose_defaults()
+            if move_kind in ("home", "joint"):
+                defaults = self._parse_float_values(seq_row.get("target_joint"), expected_len=6)
+                if defaults is None:
+                    defaults = current_posj
+                vals = self._ask_six_values_form(
+                    f"{row_label} 목표 위치 수정",
+                    ["J1", "J2", "J3", "J4", "J5", "J6"],
+                    defaults,
+                    limits=JOINT_INPUT_LIMITS_DEG,
+                    guide_text="안내: 이 값은 캘리브레이션 시퀀스 목표 위치로 저장됩니다.",
+                )
+                if vals is None:
+                    return
+                if isinstance(vals, str):
+                    QMessageBox.warning(dialog, "캘리브레이션", vals, QMessageBox.Ok)
+                    return
+                if not _values_changed(seq_row.get("target_joint"), vals):
+                    _set_row_state(row_state, "변경 없음")
+                    self.append_log(f"[캘리브레이션{panel}] {row_label} 목표 위치 변경 없음\n")
+                    return
+                ok_save, msg_save = self._save_calibration_sequence_row_config(
+                    panel,
+                    seq_row["key"],
+                    enabled=row_state["check_box"].isChecked(),
+                    joints=vals,
+                )
+                if not ok_save:
+                    QMessageBox.warning(dialog, "캘리브레이션", msg_save, QMessageBox.Ok)
+                    return
+                if seq_row["key"] in ("home", "end_home"):
+                    seq_row["move_kind"] = "home"
+                    seq_row["target_pose6"] = None
+                else:
+                    seq_row["move_kind"] = "joint"
+                seq_row["target_joint"] = list(vals)
+                seq_row["target_text"] = self._format_joint_summary(vals)
+            else:
+                defaults = self._parse_float_values(seq_row.get("target_pose6"), expected_len=6)
+                if defaults is None:
+                    defaults = current_posx
+                vals = self._ask_six_values_form(
+                    f"{row_label} 목표 위치 수정",
+                    ["X", "Y", "Z", "A", "B", "C"],
+                    defaults,
+                    guide_text="안내: 이 값은 캘리브레이션 시퀀스 목표 위치로 저장됩니다.",
+                )
+                if vals is None:
+                    return
+                if isinstance(vals, str):
+                    QMessageBox.warning(dialog, "캘리브레이션", vals, QMessageBox.Ok)
+                    return
+                if not _values_changed(seq_row.get("target_pose6"), vals):
+                    _set_row_state(row_state, "변경 없음")
+                    self.append_log(f"[캘리브레이션{panel}] {row_label} 목표 위치 변경 없음\n")
+                    return
+                ok_save, msg_save = self._save_calibration_sequence_row_config(
+                    panel,
+                    seq_row["key"],
+                    enabled=row_state["check_box"].isChecked(),
+                    pose6=vals,
+                )
+                if not ok_save:
+                    QMessageBox.warning(dialog, "캘리브레이션", msg_save, QMessageBox.Ok)
+                    return
+                seq_row["move_kind"] = "pose6"
+                seq_row["target_pose6"] = list(vals)
+                seq_row["target_text"] = self._format_pose6_summary(vals)
+
+            row_state["target_item"].setText(str(seq_row["target_text"]))
+            _set_row_state(row_state, "목표값 저장")
+            self.append_log(f"[캘리브레이션{panel}] {row_label} 목표 위치 직접 수정: {msg_save}\n")
+            _refresh_row_controls(row_state)
+            _refresh_start_button()
+
+        for row_index, seq_row in enumerate(seq_rows):
+            label_item = QTableWidgetItem(str(seq_row.get("label", "-")))
+            target_item = QTableWidgetItem(str(seq_row.get("target_text", "-")))
+            target_item.setToolTip("클릭하여 목표 위치 값을 직접 수정")
+            vision_item = QTableWidgetItem("-")
+            status_item = QTableWidgetItem("대기" if bool(seq_row.get("enabled")) else "미사용")
+            table.setItem(row_index, 0, label_item)
+            table.setItem(row_index, 2, target_item)
+            table.setItem(row_index, 4, vision_item)
+            table.setItem(row_index, 5, status_item)
+
+            check_wrap = QFrame(table)
+            check_layout = QHBoxLayout(check_wrap)
+            check_layout.setContentsMargins(0, 0, 0, 0)
+            check_layout.setAlignment(Qt.AlignCenter)
+            check_box = QCheckBox(check_wrap)
+            check_box.setChecked(bool(seq_row.get("enabled")))
+            check_layout.addWidget(check_box)
+            table.setCellWidget(row_index, 1, check_wrap)
+
+            button_wrap = QFrame(table)
+            button_layout = QHBoxLayout(button_wrap)
+            button_layout.setContentsMargins(4, 0, 4, 0)
+            button_layout.setSpacing(6)
+            move_button = QPushButton("이동", button_wrap)
+            move_button.setMinimumWidth(54)
+            teach_button = QPushButton("티칭", button_wrap)
+            teach_button.setMinimumWidth(60)
+            button_layout.addWidget(move_button)
+            button_layout.addWidget(teach_button)
+            table.setCellWidget(row_index, 3, button_wrap)
+
+            row_state = {
+                "row_index": row_index,
+                "data": seq_row,
+                "check_box": check_box,
+                "move_button": move_button,
+                "teach_button": teach_button,
+                "target_item": target_item,
+                "vision_item": vision_item,
+                "status_item": status_item,
+            }
+            check_box.toggled.connect(lambda checked, state=row_state: _save_row_enabled(state, checked))
+            move_button.clicked.connect(lambda _checked=False, state=row_state: _move_row(state))
+            teach_button.clicked.connect(lambda _checked=False, state=row_state: _teach_row(state))
+            dialog_rows.append(row_state)
+            _refresh_row_controls(row_state)
+
+        def _on_table_cell_clicked(row_index, column_index):
+            if int(column_index) != 2:
+                return
+            if row_index < 0 or row_index >= len(dialog_rows):
+                return
+            _edit_row_target(dialog_rows[row_index])
+
+        table.cellClicked.connect(_on_table_cell_clicked)
+
+        def _run_sequence():
+            if run_state["running"]:
+                return
+            active_rows = _active_rows()
+            active_capture_rows = [row_state for row_state in active_rows if bool(row_state["data"].get("capture"))]
+            if len(active_capture_rows) < 4:
+                QMessageBox.warning(dialog, "캘리브레이션", "사용 체크된 데이터 포인트가 4개 이상 필요합니다.", QMessageBox.Ok)
+                return
+            tcp_ready, tcp_display, _tcp_seen_at = self._is_checkerboard_tcp_ready(force_sync=True)
+            if not tcp_ready:
+                _refresh_start_button()
+                QMessageBox.warning(
+                    dialog,
+                    "캘리브레이션 시작",
+                    f"시작 조건 미충족: 현재 TCP가 tool_checkerboard가 아닙니다.\n현재: {tcp_display}",
+                    QMessageBox.Ok,
+                )
+                return
+            answer = QMessageBox.question(
+                dialog,
+                "캘리브레이션 시작",
+                (
+                    f"선택된 {len(active_rows)}개 단계를 실제로 실행합니다.\n"
+                    f"이 중 데이터 수집 포인트는 {len(active_capture_rows)}개입니다.\n\n"
+                    "현재 TCP가 tool_checkerboard가 아니면 필요 시 메뉴얼모드에서 TCP를 적용한 뒤 진행합니다.\n"
+                    "시작할까요?"
+                ),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+
+            run_state["running"] = True
+            close_button.setEnabled(False)
+            _refresh_all_row_controls()
+
+            restore_enabled = bool(self.backend is not None and self.backend.is_ready())
+            self._calibration_sequence_running = True
+            self._set_robot_controls_enabled(restore_enabled)
+
+            previous_mode = None
+            try:
+                progress_bar.setRange(0, max(1, len(active_rows)))
+                progress_bar.setValue(0)
+                _set_status("캘리브레이션 모드 준비중...")
+                enabled_attr = "_calibration_mode_enabled_2" if panel == 2 else "_calibration_mode_enabled_1"
+                if not bool(getattr(self, enabled_attr, False)):
+                    switch = self._calibration_mode_switch_2 if panel == 2 else self._calibration_mode_switch
+                    if switch is None:
+                        raise RuntimeError("캘리브레이션 모드 스위치를 찾지 못했습니다.")
+                    switch.setChecked(True)
+                    deadline = time.monotonic() + 2.0
+                    while time.monotonic() < deadline:
+                        QApplication.processEvents()
+                        if bool(getattr(self, enabled_attr, False)):
+                            break
+                        time.sleep(0.05)
+                    if not bool(getattr(self, enabled_attr, False)):
+                        raise RuntimeError("캘리브레이션 모드를 활성화하지 못했습니다.")
+                self._ensure_calibration_process(panel)
+
+                ok_ready, msg_ready, previous_mode = self._prepare_calibration_motion_ready(
+                    parent=dialog,
+                    status_callback=_set_status,
+                )
+                if not ok_ready:
+                    raise RuntimeError(msg_ready)
+                self.append_log(f"[캘리브레이션{panel}] 준비 완료: {msg_ready}\n")
+                ok_gripper, msg_gripper = self._prepare_calibration_gripper_closed(status_callback=_set_status)
+                if not ok_gripper:
+                    raise RuntimeError(msg_gripper)
+                self.append_log(f"[캘리브레이션{panel}] 시작 전 그리퍼 준비: {msg_gripper}\n")
+
+                samples = []
+                completed_steps = 0
+                move_speed = self._calibration_motion_speed_for_command()
+                for active_index, row_state in enumerate(active_rows, start=1):
+                    seq_row = row_state["data"]
+                    row_label = str(seq_row.get("label", seq_row.get("key", "-")))
+                    _set_status(f"{row_label} 이동중...")
+                    _set_row_state(row_state, "이동중")
+
+                    if seq_row.get("move_kind") == "home":
+                        ok_move, move_msg = self.backend.send_move_home(vel=move_speed, acc=move_speed)
+                    elif seq_row.get("move_kind") == "joint":
+                        target_joint = seq_row.get("target_joint")
+                        if target_joint is None:
+                            raise RuntimeError(f"{row_label} 조인트 위치가 없습니다.")
+                        ok_move, move_msg = self.backend.send_move_joint(*target_joint, vel=move_speed, acc=move_speed)
+                    else:
+                        target_pose6 = seq_row.get("target_pose6")
+                        if target_pose6 is None:
+                            raise RuntimeError(f"{row_label} 좌표 위치가 없습니다.")
+                        ok_move, move_msg = self.backend.send_move_cartesian(*target_pose6, vel=move_speed, acc=move_speed)
+                    if not ok_move:
+                        raise RuntimeError(f"{row_label} 이동 실패: {move_msg}")
+                    ok_wait, wait_err = self._wait_for_backend_motion_done(timeout_sec=90.0)
+                    if not ok_wait:
+                        raise RuntimeError(f"{row_label} {wait_err}")
+
+                    completed_steps += 1
+                    progress_bar.setValue(completed_steps)
+                    QApplication.processEvents()
+
+                    if float(CALIB_SEQUENCE_SETTLE_SEC) > 0.0:
+                        _set_row_state(row_state, "정지 안정화")
+                        self._wait_with_ui_pump(
+                            float(CALIB_SEQUENCE_SETTLE_SEC),
+                            status_callback=_set_status,
+                            message_prefix=f"{row_label} 정지 안정화 중",
+                        )
+
+                    if not bool(seq_row.get("capture")):
+                        _set_row_state(row_state, "완료")
+                    else:
+                        _set_status(f"{row_label} 데이터 수집중...")
+                        _set_row_state(row_state, "비전 데이터 수집중")
+                        if row_state["vision_item"] is not None:
+                            row_state["vision_item"].setText("수집중...")
+                        fresh_after = time.monotonic()
+                        center_xyz, corner_count, inlier_count, center_err = self._wait_for_calibration_center_mm(
+                            panel_index=panel,
+                            timeout_sec=float(CALIB_SEQUENCE_CAPTURE_TIMEOUT_SEC),
+                            min_seen_at=fresh_after,
+                        )
+                        if center_xyz is None:
+                            raise RuntimeError(f"{row_label} 비전 데이터 수집 실패: {center_err}")
+                        robot_xyz, robot_err = self._capture_current_robot_xyz_mm()
+                        if robot_xyz is None:
+                            raise RuntimeError(f"{row_label} 로봇 TCP 수집 실패: {robot_err}")
+                        predicted_xyz = self._predict_robot_xyz_from_vision_xyz(center_xyz, panel_index=panel)
+
+                        samples.append(
+                            {
+                                "row_key": str(seq_row.get("key", "")),
+                                "label": row_label,
+                                "vision_xyz": np.asarray(center_xyz, dtype=np.float64).reshape(3,),
+                                "robot_xyz": np.asarray(robot_xyz, dtype=np.float64).reshape(3,),
+                            }
+                        )
+                        _set_row_state(
+                            row_state,
+                            f"수집완료 ({int(corner_count)}pt/{int(inlier_count)}in)",
+                            vision_xyz=center_xyz,
+                            robot_xyz=robot_xyz,
+                            predicted_robot_xyz=predicted_xyz,
+                        )
+                        self.append_log(
+                            (
+                                f"[캘리브레이션{panel}] {row_label} 수집: "
+                                f"vision={self._format_xyz_summary(center_xyz)}, "
+                                f"robot={self._format_xyz_summary(robot_xyz)}\n"
+                            )
+                        )
+
+                    if active_index < len(active_rows) and float(CALIB_SEQUENCE_NEXT_DELAY_SEC) > 0.0:
+                        self._wait_with_ui_pump(
+                            float(CALIB_SEQUENCE_NEXT_DELAY_SEC),
+                            status_callback=_set_status,
+                            message_prefix=f"{row_label} 완료, 다음 이동 대기",
+                        )
+
+                if len(samples) < 4:
+                    raise RuntimeError("유효 샘플이 4개 미만입니다.")
+
+                src_xyz = np.asarray([sample["vision_xyz"] for sample in samples], dtype=np.float64)
+                dst_xyz = np.asarray([sample["robot_xyz"] for sample in samples], dtype=np.float64)
+                result, err = self._compute_rigid_xyz_to_xyz(src_xyz, dst_xyz)
+                if result is None:
+                    raise RuntimeError(str(err))
+                affine, _r_row, _t_row, rmse = result
+
+                timestamp = time.strftime("%y%m%d_%H%M%S", time.localtime())
+                out_path = os.path.join(CALIB_ROTMAT_DIR, f"calib_matrix_{timestamp}.txt")
+                if os.path.exists(out_path):
+                    out_path = os.path.join(CALIB_ROTMAT_DIR, f"calib_matrix_{timestamp}_panel{panel}.txt")
+                self._save_calibration_xyz_file(out_path, samples, affine, rmse, panel_index=panel)
+                self._apply_vision_to_robot_affine(affine, rmse=rmse, path=out_path, panel_index=panel)
+                self.append_log(f"[캘리브레이션{panel}] 행렬 계산 완료 (RMSE={rmse:.3f}mm): {out_path}\n")
+                _set_status(f"완료: RMSE={rmse:.3f}mm, 저장={os.path.basename(out_path)}")
+                QMessageBox.information(
+                    dialog,
+                    "캘리브레이션",
+                    (
+                        f"비전{panel} 캘리브레이션이 완료되었습니다.\n\n"
+                        f"샘플 수: {len(samples)}\n"
+                        f"RMSE: {rmse:.3f} mm\n"
+                        f"저장 파일: {out_path}"
+                    ),
+                    QMessageBox.Ok,
+                )
+            except Exception as e:
+                self.append_log(f"[캘리브레이션{panel}] 실행 실패: {e}\n")
+                _set_status(f"실패: {e}")
+                QMessageBox.warning(dialog, "캘리브레이션", str(e), QMessageBox.Ok)
+            finally:
+                if previous_mode is not None and int(previous_mode) != 1:
+                    ok_restore, msg_restore = self._restore_robot_mode(previous_mode)
+                    self.append_log(
+                        f"[캘리브레이션{panel}] 시퀀스 종료 후 모드 복원({'성공' if ok_restore else '실패'}): {msg_restore}\n"
+                    )
+                self._calibration_sequence_running = False
+                self._set_robot_controls_enabled(restore_enabled)
+                run_state["running"] = False
+                close_button.setEnabled(True)
+                _refresh_all_row_controls()
+
+        start_button.clicked.connect(_run_sequence)
+        self._request_current_tool_sync(retry_window_sec=6.0, immediate=True)
+        tcp_timer = QTimer(dialog)
+        tcp_timer.timeout.connect(_refresh_start_button)
+        tcp_timer.start(700)
+        _refresh_all_row_controls()
+        dialog.exec_()
 
     def _load_parameter_rows(self):
         rows = {}
@@ -4066,38 +5253,41 @@ class App(QMainWindow, form):
 
     def _assigned_topic_for_serial(self, serial):
         slot = self._runtime_camera_slot_for_serial(serial)
-        return YOLO_EXTERNAL_TOPIC_2 if slot == 2 else YOLO_EXTERNAL_TOPIC
+        return "/camera2/camera/color/image_raw" if slot == 2 else CALIB_VISION_TOPIC_PRIMARY
 
     def _assigned_depth_topic_for_serial(self, serial):
         slot = self._runtime_camera_slot_for_serial(serial)
-        return "/camera2/camera/aligned_depth_to_color/image_raw" if slot == 2 else YOLO_EXTERNAL_DEPTH_TOPIC
+        return "/camera2/camera/aligned_depth_to_color/image_raw" if slot == 2 else "/camera/camera/aligned_depth_to_color/image_raw"
 
-    def _assigned_info_topic_for_serial(self, serial, node):
-        slot = self._runtime_camera_slot_for_serial(serial)
-        if slot == 2:
-            for t in ("/camera2/camera/color/camera_info", "/camera2/color/camera_info"):
-                if self._is_image_topic_alive(node, t.replace("/camera_info", "/image_raw")):
-                    return t
-            return "/camera2/camera/color/camera_info"
-        if self._is_image_topic_alive(node, CALIB_VISION_TOPIC_PRIMARY):
-            return CALIB_CAMERA_INFO_TOPIC_PRIMARY
-        return CALIB_CAMERA_INFO_TOPIC_FALLBACK
-
-    def _assigned_calib_topic_for_serial(self, serial, node):
+    def _assigned_raw_topic_for_serial(self, serial, node):
         slot = self._runtime_camera_slot_for_serial(serial)
         if slot == 2:
             topic_primary = "/camera2/camera/color/image_raw"
             topic_fallback = "/camera2/color/image_raw"
             for t in (topic_primary, topic_fallback):
-                if self._is_image_topic_alive(node, t):
+                if node is not None and self._is_image_topic_alive(node, t):
                     return t
-            return YOLO_EXTERNAL_TOPIC_2 if self._is_image_topic_alive(node, YOLO_EXTERNAL_TOPIC_2) else topic_primary
+            return topic_primary
         return self._resolve_calib_vision_topic(node)
 
+    def _assigned_info_topic_for_serial(self, serial, node):
+        slot = self._runtime_camera_slot_for_serial(serial)
+        if slot == 2:
+            for t in ("/camera2/camera/color/camera_info", "/camera2/color/camera_info"):
+                if self._is_topic_alive(node, t):
+                    return t
+            return "/camera2/camera/color/camera_info"
+        if self._is_topic_alive(node, CALIB_CAMERA_INFO_TOPIC_PRIMARY):
+            return CALIB_CAMERA_INFO_TOPIC_PRIMARY
+        if self._is_topic_alive(node, CALIB_CAMERA_INFO_TOPIC_FALLBACK):
+            return CALIB_CAMERA_INFO_TOPIC_FALLBACK
+        return CALIB_CAMERA_INFO_TOPIC_PRIMARY
+
     def _vision_panel_needs_depth(self, panel_index: int = 1):
-        panel = 2 if int(panel_index) == 2 else 1
-        calib_on = bool(self._calibration_mode_enabled_2) if panel == 2 else bool(self._calibration_mode_enabled_1)
-        return bool(calib_on or self._vision_click_dialog_enabled)
+        # 비전 클릭 좌표 출력/이동은 평상시에도 즉시 가능해야 하므로
+        # 활성 비전 패널은 캘리브레이션 여부와 무관하게 depth를 계속 유지한다.
+        _ = panel_index
+        return True
 
     def _vision_panel_needs_camera_info(self, panel_index: int = 1):
         # camera_info는 저부하이며 축/좌표 정확도에 직접 필요하므로 active panel에서는 유지한다.
@@ -4175,19 +5365,9 @@ class App(QMainWindow, form):
             if not active_path_2:
                 active_path_2 = active_path_1
 
-            last_matrix = None
-            if os.path.isdir(CALIB_ROTMAT_DIR):
-                matrix_files = sorted(
-                    glob.glob(os.path.join(CALIB_ROTMAT_DIR, "calib_matrix_*.txt")),
-                    key=lambda p: os.path.getmtime(p),
-                    reverse=True,
-                )
-                if matrix_files:
-                    last_matrix = matrix_files[0]
-
             path_for_panel = {
-                1: active_path_1 if active_path_1 else (candidates[0] if candidates else last_matrix),
-                2: active_path_2 if active_path_2 else (active_path_1 if active_path_1 else last_matrix),
+                1: active_path_1 if active_path_1 else (candidates[0] if candidates else ""),
+                2: active_path_2 if active_path_2 else active_path_1,
             }
             loaded_any = False
             for panel, raw_path in path_for_panel.items():
@@ -4222,7 +5402,7 @@ class App(QMainWindow, form):
             )
         return qos_profile_sensor_data if qos_profile_sensor_data is not None else 1
 
-    def _is_image_topic_alive(self, node, topic_name):
+    def _is_topic_alive(self, node, topic_name):
         if node is None or not topic_name:
             return False
         try:
@@ -4238,6 +5418,9 @@ class App(QMainWindow, form):
             pass
         return False
 
+    def _is_image_topic_alive(self, node, topic_name):
+        return self._is_topic_alive(node, topic_name)
+
     def _resolve_calib_vision_topic(self, node):
         for topic_name in (CALIB_VISION_TOPIC_PRIMARY, CALIB_VISION_TOPIC_FALLBACK):
             if self._is_image_topic_alive(node, topic_name):
@@ -4247,20 +5430,83 @@ class App(QMainWindow, form):
     def _calibration_output_meta_topic(self, panel_index: int = 1):
         return CALIB_OUTPUT_META_TOPIC_2 if int(panel_index) == 2 else CALIB_OUTPUT_META_TOPIC_1
 
+    def _stop_foreign_calibration_helpers(self, panel_index: int, keep_pid=None):
+        panel = 2 if int(panel_index) == 2 else 1
+        meta_topic = self._calibration_output_meta_topic(panel)
+        keep = set()
+        try:
+            if keep_pid is not None:
+                keep.add(int(keep_pid))
+        except Exception:
+            pass
+        keep.add(int(os.getpid()))
+        try:
+            output = subprocess.check_output(
+                ["pgrep", "-af", "camera_eye_to_hand_robot_calibration.py"],
+                text=True,
+            )
+        except Exception:
+            return
+        for raw in str(output).splitlines():
+            line = str(raw).strip()
+            if not line:
+                continue
+            parts = line.split(None, 1)
+            if not parts:
+                continue
+            try:
+                pid = int(parts[0])
+            except Exception:
+                continue
+            if pid in keep:
+                continue
+            cmdline = parts[1] if len(parts) > 1 else ""
+            if meta_topic not in cmdline:
+                continue
+            try:
+                os.kill(pid, signal.SIGINT)
+            except Exception:
+                continue
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    pid = None
+                    break
+                QApplication.processEvents()
+                time.sleep(0.05)
+            if pid is not None:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except Exception:
+                    pass
+                deadline = time.monotonic() + 1.0
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(pid, 0)
+                    except OSError:
+                        pid = None
+                        break
+                    QApplication.processEvents()
+                    time.sleep(0.05)
+            if pid is not None:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except Exception:
+                    pass
+            self.append_log(f"[캘리브레이션{panel}] 기존 헬퍼 프로세스 정리: PID {parts[0]}\n")
+
     def _current_vision_image_topic(self):
-        if bool(getattr(self, "_calibration_mode_enabled_1", False)):
-            node = getattr(self.backend, "robot_controller", None) if self.backend is not None else None
-            if node is not None:
-                return self._assigned_calib_topic_for_serial(self._vision_assigned_serial_1, node)
-            return CALIB_VISION_TOPIC_PRIMARY
+        node = getattr(self.backend, "robot_controller", None) if self.backend is not None else None
+        if node is not None:
+            return self._assigned_raw_topic_for_serial(self._vision_assigned_serial_1, node)
         return self._assigned_topic_for_serial(self._vision_assigned_serial_1)
 
     def _current_vision_image_topic_2(self):
-        if bool(getattr(self, "_calibration_mode_enabled_2", False)):
-            node = getattr(self.backend, "robot_controller", None) if self.backend is not None else None
-            if node is not None:
-                return self._assigned_calib_topic_for_serial(self._vision_assigned_serial_2, node)
-            return "/camera2/camera/color/image_raw"
+        node = getattr(self.backend, "robot_controller", None) if self.backend is not None else None
+        if node is not None:
+            return self._assigned_raw_topic_for_serial(self._vision_assigned_serial_2, node)
         return self._assigned_topic_for_serial(self._vision_assigned_serial_2)
 
     def _teardown_external_vision_bridge_panel(self, panel_index: int):
@@ -4318,7 +5564,7 @@ class App(QMainWindow, form):
             sys.executable,
             os.path.join(PROJECT_ROOT, "src", "vision", "camera_eye_to_hand_robot_calibration.py"),
             "--image-topic",
-            self._assigned_calib_topic_for_serial(serial, node),
+            self._assigned_raw_topic_for_serial(serial, node),
             "--depth-topic",
             self._assigned_depth_topic_for_serial(serial),
             "--camera-info-topic",
@@ -4344,14 +5590,13 @@ class App(QMainWindow, form):
         node = getattr(self.backend, "robot_controller", None) if self.backend is not None else None
         if node is None:
             return False
-        meta_topic = self._calibration_output_meta_topic(panel)
-        if self._is_image_topic_alive(node, meta_topic):
-            return True
         cmd = self._build_calibration_process_cmd(panel)
         if not cmd:
             return False
         proc = self._calib_proc_2 if panel == 2 else self._calib_proc_1
         prev_cmd = self._calib_proc_cmd_2 if panel == 2 else self._calib_proc_cmd_1
+        keep_pid = proc.pid if (proc is not None and proc.poll() is None) else None
+        self._stop_foreign_calibration_helpers(panel, keep_pid=keep_pid)
         if proc is not None and proc.poll() is None and prev_cmd == cmd:
             return True
         self._stop_calibration_process(panel)
@@ -4507,7 +5752,7 @@ class App(QMainWindow, form):
         try:
             cmd = shlex.split(YOLO_AUTO_LAUNCH_CMD)
         except Exception as e:
-            self.append_log(f"[비전] 자동실행 명령 파싱 실패: {e}\n")
+            self._append_vision_log(f"자동실행 명령 파싱 실패: {e}")
             return False
         if not cmd:
             return False
@@ -4520,13 +5765,13 @@ class App(QMainWindow, form):
             )
             self._external_vision_cmd = cmd
             self._external_vision_started_by_ui = True
-            self.append_log(f"[비전] 외부 비전 프로세스 시작: {' '.join(cmd)}\n")
+            self._append_vision_log(f"외부 비전 프로세스 시작: {' '.join(cmd)}")
             return True
         except Exception as e:
             self._external_vision_proc = None
             self._external_vision_cmd = None
             self._external_vision_started_by_ui = False
-            self.append_log(f"[비전] 외부 비전 프로세스 시작 실패: {e}\n")
+            self._append_vision_log(f"외부 비전 프로세스 시작 실패: {e}")
             return False
 
     def _stop_external_vision_process(self):
@@ -4552,18 +5797,14 @@ class App(QMainWindow, form):
     def _start_yolo_camera(self):
         if not UI_ENABLE_VISION or self.backend is None:
             return
-        if YOLO_EXTERNAL_NODE:
-            try:
-                if YOLO_AUTO_LAUNCH_NODE and (YOLO_AUTO_LAUNCH_ALWAYS or (not self._calibration_mode_enabled)):
-                    self._ensure_external_vision_process()
-                self._setup_external_vision_bridge()
-            except Exception as e:
-                self.append_log(f"[비전] 시작 실패: {e}\n")
+        try:
+            if YOLO_EXTERNAL_NODE and YOLO_AUTO_LAUNCH_NODE and (YOLO_AUTO_LAUNCH_ALWAYS or (not self._calibration_mode_enabled)):
+                self._ensure_external_vision_process()
+            self._setup_external_vision_bridge()
             return
-        if YOLO_ALLOW_INTERNAL_WEBCAM:
-            self.append_log("[비전] 내부 웹캠 모드는 현재 비활성화 상태입니다.\n")
-        else:
-            self.append_log("[비전] 외부 비전 노드 미사용 상태입니다.\n")
+        except Exception as e:
+            self._append_vision_log(f"시작 실패: {e}")
+        self._append_vision_log("객체인식 메타 프로세스 미사용 상태입니다.")
 
     def _setup_external_vision_bridge_panel(self, panel_index: int):
         if RosImageMsg is None or self.backend is None:
@@ -4612,7 +5853,7 @@ class App(QMainWindow, form):
                 )
                 self.append_log(f"[비전2] 카메라정보 구독 시작: {info_topic_2}\n")
             self._vision_state_text_2 = "끊김"
-            self.append_log(f"[비전2] 외부 비전 구독 시작({'CALIB' if self._calibration_mode_enabled_2 else 'YOLO'}): {image_topic}\n")
+            self.append_log(f"[비전2] 비전 원본 구독 시작({'CALIB' if self._calibration_mode_enabled_2 else 'RAW'}): {image_topic}\n")
             if bool(self._calibration_mode_enabled_2) and self._calib_meta_topic_in_use_2:
                 self.append_log(f"[캘리브레이션2] 메타 구독 시작: {self._calib_meta_topic_in_use_2}\n")
             if depth_topic_2:
@@ -4654,18 +5895,19 @@ class App(QMainWindow, form):
                     image_qos,
                     **sub_kwargs,
                 )
-                self.append_log(f"[비전] 카메라정보 구독 시작: {info_topic}\n")
+                self._append_vision_log(f"카메라정보 구독 시작: {info_topic}", panel_index=1)
             self._vision_state_text = "끊김"
-            self.append_log(f"[비전] 외부 비전 구독 시작({'CALIB' if self._calibration_mode_enabled_1 else 'YOLO'}): {image_topic}\n")
+            self._append_vision_log(
+                f"비전 원본 구독 시작({'CALIB' if self._calibration_mode_enabled_1 else 'RAW'}): {image_topic}",
+                panel_index=1,
+            )
             if bool(self._calibration_mode_enabled_1) and self._calib_meta_topic_in_use_1:
                 self.append_log(f"[캘리브레이션1] 메타 구독 시작: {self._calib_meta_topic_in_use_1}\n")
             if depth_topic:
-                self.append_log(f"[비전] 뎁스 구독 시작: {depth_topic}\n")
+                self._append_vision_log(f"뎁스 구독 시작: {depth_topic}", panel_index=1)
         return True
 
     def _rebind_external_vision_bridge_for_mode(self):
-        if not YOLO_EXTERNAL_NODE:
-            return
         if self.backend is None:
             return
         node = getattr(self.backend, "robot_controller", None)
@@ -4681,14 +5923,14 @@ class App(QMainWindow, form):
 
     def _setup_external_vision_bridge(self):
         if RosImageMsg is None:
-            self.append_log("[비전] sensor_msgs/Image import 실패\n")
+            self._append_vision_log("sensor_msgs/Image import 실패")
             self._vision_state_text = "오류"
             self._vision_state_text_2 = "오류"
             return False
 
         node = getattr(self.backend, "robot_controller", None)
         if node is None:
-            self.append_log("[비전] ROS 노드 없음: 외부 비전 구독 실패\n")
+            self._append_vision_log("ROS 노드 없음: 비전 원본 구독 실패")
             self._vision_state_text = "오류"
             self._vision_state_text_2 = "오류"
             return False
@@ -4709,114 +5951,15 @@ class App(QMainWindow, form):
             msg = str(e)
             if (msg != self._vision_bridge_fail_last_msg) or ((now - self._vision_bridge_fail_last_at) > 5.0):
                 if self._calibration_mode_enabled_1 or self._calibration_mode_enabled_2:
-                    self.append_log(f"[비전] 캘리브레이션 비전 대기: {e}\n")
+                    self._append_vision_log(f"캘리브레이션 비전 대기: {e}")
                 else:
-                    self.append_log(f"[비전] 외부 비전 구독 실패: {e}\n")
+                    self._append_vision_log(f"비전 원본 구독 실패: {e}")
                 self._vision_bridge_fail_last_msg = msg
                 self._vision_bridge_fail_last_at = now
             self._vision_state_text = "대기" if self._calibration_mode_enabled_1 else "오류"
             self._vision_state_text_2 = "대기" if self._calibration_mode_enabled_2 else "오류"
             return False
 
-
-    def _detect_calib_checkerboard(self, gray):
-        try:
-            import cv2
-        except Exception:
-            return None
-        cols = int(self._calib_pattern_cols)
-        rows = int(self._calib_pattern_rows)
-        # 현장에서는 "7x9"를 칸 수로 표현하는 경우가 많아
-        # 내부 코너 수(6x8)도 함께 시도한다.
-        candidate_sizes = []
-        for c, r in (
-            (cols, rows),
-            (max(3, cols - 1), max(3, rows - 1)),
-            (rows, cols),
-            (max(3, rows - 1), max(3, cols - 1)),
-        ):
-            if (c, r) not in candidate_sizes:
-                candidate_sizes.append((c, r))
-        # 탐색 경우수를 줄이되, 실제 현장 조명/대비 편차를 고려해 최소한의 변형은 함께 시도한다.
-        variants = [gray, cv2.equalizeHist(gray)]
-        try:
-            variants.append(cv2.GaussianBlur(gray, (5, 5), 0))
-        except Exception:
-            pass
-        variants.append(255 - gray)
-        for g in variants:
-            for cand_cols, cand_rows in candidate_sizes:
-                pattern_size = (cand_cols, cand_rows)
-                if hasattr(cv2, "findChessboardCornersSB"):
-                    flags = cv2.CALIB_CB_NORMALIZE_IMAGE
-                    if hasattr(cv2, "CALIB_CB_EXHAUSTIVE"):
-                        flags |= cv2.CALIB_CB_EXHAUSTIVE
-                    if hasattr(cv2, "CALIB_CB_ACCURACY"):
-                        flags |= cv2.CALIB_CB_ACCURACY
-                    found, corners = cv2.findChessboardCornersSB(g, pattern_size, flags=flags)
-                    if found and corners is not None:
-                        return corners.reshape(cand_rows, cand_cols, 2)
-                # SB가 있더라도 실패할 수 있어 classic 탐색을 항상 후순위로 시도한다.
-                flags = cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
-                found, corners = cv2.findChessboardCorners(g, pattern_size, flags=flags)
-                if found and corners is not None:
-                    term = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 0.001)
-                    corners = cv2.cornerSubPix(g, corners, (11, 11), (-1, -1), term)
-                    return corners.reshape(cand_rows, cand_cols, 2)
-        return None
-
-    def _calib_outer_from_inner(self, pts_grid):
-        rows, cols = pts_grid.shape[:2]
-        p_tl = pts_grid[0, 0]
-        p_tr = pts_grid[0, cols - 1]
-        p_bl = pts_grid[rows - 1, 0]
-        p_br = pts_grid[rows - 1, cols - 1]
-        ux_top = (p_tr - p_tl) / max(1, cols - 1)
-        ux_bot = (p_br - p_bl) / max(1, cols - 1)
-        uy_left = (p_bl - p_tl) / max(1, rows - 1)
-        uy_right = (p_br - p_tr) / max(1, rows - 1)
-        ux = 0.5 * (ux_top + ux_bot)
-        uy = 0.5 * (uy_left + uy_right)
-        # 내부 코너 -> 보드 실제 가장자리로 확장할 때는 1칸이 아니라 반칸(0.5 step)이다.
-        o_tl = p_tl - 0.5 * ux - 0.5 * uy
-        o_tr = p_tr + 0.5 * ux - 0.5 * uy
-        o_bl = p_bl - 0.5 * ux + 0.5 * uy
-        o_br = p_br + 0.5 * ux + 0.5 * uy
-        return [o_tl, o_tr, o_bl, o_br]
-
-    def _calib_order_outer_screen(self, pts4):
-        pts = [np.array(p, dtype=np.float32) for p in pts4]
-        pts_sorted = sorted(pts, key=lambda p: (float(p[1]), float(p[0])))
-        top2 = sorted(pts_sorted[:2], key=lambda p: float(p[0]))
-        bot2 = sorted(pts_sorted[2:], key=lambda p: float(p[0]))
-        tl, tr = top2[0], top2[1]
-        bl, br = bot2[0], bot2[1]
-        return tl, tr, bl, br
-
-    def _calib_line_intersection(self, a1, a2, b1, b2):
-        x1, y1 = float(a1[0]), float(a1[1])
-        x2, y2 = float(a2[0]), float(a2[1])
-        x3, y3 = float(b1[0]), float(b1[1])
-        x4, y4 = float(b2[0]), float(b2[1])
-        den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
-        if abs(den) < 1e-9:
-            return None
-        px = ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / den
-        py = ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / den
-        return np.array([px, py], dtype=np.float32)
-
-    def _calib_pick_p5_upper_right(self, pts_grid, center):
-        pts = pts_grid.reshape(-1, 2)
-        cx, cy = float(center[0]), float(center[1])
-        cands = [p for p in pts if float(p[0]) >= cx and float(p[1]) <= cy]
-        if not cands:
-            cands = [p for p in pts if float(p[0]) >= cx]
-        if not cands:
-            cands = [p for p in pts if float(p[1]) <= cy]
-        if not cands:
-            cands = list(pts)
-        best = min(cands, key=lambda p: (float(p[0] - cx) ** 2 + float(p[1] - cy) ** 2))
-        return np.array(best, dtype=np.float32)
 
     def _draw_vision_axes_overlay(self, bgr, panel_index: int = 1):
         try:
@@ -5173,166 +6316,6 @@ class App(QMainWindow, form):
         )
         return bgr
 
-    def _calib_overlay_and_points(self, bgr, panel_index: int = 1, draw_overlay: bool = True):
-        try:
-            import cv2
-        except Exception:
-            return bgr
-        now = time.monotonic()
-        panel = 2 if int(panel_index) == 2 else 1
-        if panel == 2:
-            last_points = self._calib_last_points_uvz_mm_2
-            last_points_at = self._calib_last_points_at_2
-            last_detect_run_at = float(getattr(self, "_calib_last_detect_run_at_2", 0.0) or 0.0)
-        else:
-            last_points = self._calib_last_points_uvz_mm_1
-            last_points_at = self._calib_last_points_at_1
-            last_detect_run_at = float(getattr(self, "_calib_last_detect_run_at_1", 0.0) or 0.0)
-        detect_interval_sec = max(0.0, float(CALIB_DETECT_INTERVAL_SEC))
-        if detect_interval_sec > 0.0 and (now - last_detect_run_at) < detect_interval_sec:
-            if draw_overlay:
-                if last_points is not None:
-                    bgr = self._draw_calib_points_only(bgr, last_points, panel_index=panel)
-                bgr = self._draw_calib_info_overlay(bgr, last_points)
-            return bgr
-        if panel == 2:
-            self._calib_last_detect_run_at_2 = now
-        else:
-            self._calib_last_detect_run_at_1 = now
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-        # 큰 해상도 프레임은 축소 탐색 후 좌표를 복원해 처리한다.
-        h, w = gray.shape[:2]
-        scale = 1.0
-        max_side = max(h, w)
-        if max_side > 960:
-            scale = 960.0 / float(max_side)
-            small = cv2.resize(gray, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-        else:
-            small = gray
-        pts_grid = self._detect_calib_checkerboard(small)
-        if pts_grid is not None and scale != 1.0:
-            pts_grid = pts_grid / float(scale)
-        if pts_grid is None:
-            # 한두 프레임 미검출로 상태가 깜박이지 않도록 짧게 유지한다.
-            if (
-                last_points is not None
-                and last_points_at is not None
-                and (now - float(last_points_at)) <= CALIB_DETECTION_HOLD_SEC
-            ):
-                if panel == 2:
-                    self._calib_last_reason_2 = "체커보드 추적중"
-                else:
-                    self._calib_last_reason_1 = "체커보드 추적중"
-                self._calib_last_reason = "체커보드 추적중"
-                bgr = self._draw_calib_points_only(bgr, last_points, panel_index=panel)
-                bgr = self._draw_calib_info_overlay(bgr, last_points)
-                return bgr
-            if panel == 2:
-                self._calib_last_points_uvz_mm_2 = None
-                self._calib_last_points_at_2 = None
-                self._calib_last_grid_pts_2 = None
-                self._calib_last_grid_status_2 = None
-                self._calib_last_reason_2 = "체커보드 미검출"
-                self._calib_full_ready_2 = False
-                self._calib_full_reason_2 = "체커보드 미검출"
-            else:
-                self._calib_last_points_uvz_mm_1 = None
-                self._calib_last_points_at_1 = None
-                self._calib_last_grid_pts_1 = None
-                self._calib_last_grid_status_1 = None
-                self._calib_last_reason_1 = "체커보드 미검출"
-                self._calib_full_ready_1 = False
-                self._calib_full_reason_1 = "체커보드 미검출"
-            self._calib_last_reason = "체커보드 미검출"
-            self._calib_last_points_uvz_mm = self._calib_last_points_uvz_mm_1
-            self._calib_last_points_at = self._calib_last_points_at_1
-            self.calibration_ui_refresh_requested.emit()
-            if draw_overlay:
-                bgr = self._draw_calib_info_overlay(bgr, None)
-            return bgr
-
-        o_tl, o_tr, o_bl, o_br = self._calib_order_outer_screen(self._calib_outer_from_inner(pts_grid))
-        center = self._calib_line_intersection(o_tl, o_br, o_tr, o_bl)
-        if center is None:
-            center = 0.25 * (o_tl + o_tr + o_bl + o_br)
-        p5 = self._calib_pick_p5_upper_right(pts_grid, center)
-
-        names = [("p1", o_br), ("p2", o_bl), ("p3", o_tr), ("p4", o_tl), ("p5", p5)]
-        data = {}
-        invalid_depth_count = 0
-        for name, p in names:
-            u_f = float(p[0])
-            v_f = float(p[1])
-            u = int(round(u_f))
-            v = int(round(v_f))
-            z_m = self._depth_m_from_image_coord(u, v, panel_index=panel)
-            if z_m is None:
-                z_mm = float("nan")
-                invalid_depth_count += 1
-            else:
-                z_mm = float(z_m * 1000.0)
-            data[name] = [u_f, v_f, float(z_mm)]
-        center_u = float(center[0])
-        center_v = float(center[1])
-        center_z_m = self._depth_m_from_image_coord(int(round(center_u)), int(round(center_v)), panel_index=panel)
-        if center_z_m is None:
-            center_z_mm = float("nan")
-        else:
-            center_z_mm = float(center_z_m * 1000.0)
-        data["center"] = [center_u, center_v, center_z_mm]
-        reason_txt = "깊이 미수신" if invalid_depth_count > 0 else "P1~P5 + 깊이 수신 완료"
-
-        # 켈 시퀀스에서 실제 사용하는 전체 그리드 코너 데이터의 취득 상태(정상/비정상) 산출
-        grid_status = []
-        grid_bad_count = 0
-        try:
-            flat = np.asarray(pts_grid, dtype=np.float64).reshape(-1, 2)
-        except Exception:
-            flat = np.empty((0, 2), dtype=np.float64)
-        for pt in flat:
-            u_f = float(pt[0])
-            v_f = float(pt[1])
-            z_m = self._depth_m_from_image_coord(int(round(u_f)), int(round(v_f)), panel_index=panel)
-            ok_pt = False
-            if z_m is not None and np.isfinite(z_m) and float(z_m) > 0.0:
-                z_mm = float(z_m) * 1000.0
-                cxyz = self._uvz_to_camera_xyz_mm(u_f, v_f, z_mm, require_intrinsics=True, panel_index=panel)
-                ok_pt = cxyz is not None and np.isfinite(np.asarray(cxyz, dtype=np.float64)).all()
-            if not ok_pt:
-                grid_bad_count += 1
-            grid_status.append((u_f, v_f, bool(ok_pt)))
-
-        if panel == 2:
-            self._calib_last_points_uvz_mm_2 = data
-            self._calib_last_points_at_2 = now
-            self._calib_last_grid_pts_2 = np.array(pts_grid, copy=True)
-            self._calib_last_grid_status_2 = list(grid_status)
-            self._calib_last_reason_2 = reason_txt
-        else:
-            self._calib_last_points_uvz_mm_1 = data
-            self._calib_last_points_at_1 = now
-            self._calib_last_grid_pts_1 = np.array(pts_grid, copy=True)
-            self._calib_last_grid_status_1 = list(grid_status)
-            self._calib_last_reason_1 = reason_txt
-        # UI 인식 성공 기준은 "켈 시퀀스에서 실제 필요한 전체 비전 데이터 준비" 여부로 판정한다.
-        full_ready = len(grid_status) > 0 and grid_bad_count == 0
-        full_err = None if full_ready else f"전체 코너 데이터 미수집({grid_bad_count}/{len(grid_status)})"
-        if panel == 2:
-            self._calib_full_ready_2 = bool(full_ready)
-            self._calib_full_reason_2 = "전체 데이터 준비 완료" if full_ready else str(full_err or "전체 데이터 미준비")
-        else:
-            self._calib_full_ready_1 = bool(full_ready)
-            self._calib_full_reason_1 = "전체 데이터 준비 완료" if full_ready else str(full_err or "전체 데이터 미준비")
-        self._calib_last_points_uvz_mm = self._calib_last_points_uvz_mm_1
-        self._calib_last_points_at = self._calib_last_points_at_1
-        self._calib_last_reason = reason_txt
-        self.calibration_ui_refresh_requested.emit()
-
-        if draw_overlay:
-            bgr = self._draw_calib_points_only(bgr, data, panel_index=panel)
-            bgr = self._draw_calib_info_overlay(bgr, data)
-        return bgr
-
     def _on_vision_image_msg(self, msg, stream_token=None):
         if not bool(self._top_status_enabled.get("vision", True)):
             return
@@ -5341,6 +6324,7 @@ class App(QMainWindow, form):
             if stream_token is not None and int(stream_token) != int(getattr(self, "_vision_stream_token_1", 0)):
                 return
             now = time.monotonic()
+            self._last_camera_frame_at_1 = now
             if now < float(getattr(self, "_vision_drop_frames_until_1", 0.0)):
                 return
 
@@ -5402,6 +6386,7 @@ class App(QMainWindow, form):
             if stream_token is not None and int(stream_token) != int(getattr(self, "_vision_stream_token_2", 0)):
                 return
             now = time.monotonic()
+            self._last_camera_frame_at_2 = now
             if now < float(getattr(self, "_vision_drop_frames_until_2", 0.0)):
                 return
             h = int(msg.height)
@@ -6072,13 +7057,7 @@ class App(QMainWindow, form):
                         self._last_mouse_xy_2 = (x, y)
                     z_m = self._depth_m_from_image_coord(x, y, panel_index=panel_index)
                     if z_m is None:
-                        if not self._vision_panel_needs_depth(panel_index):
-                            self.append_log(
-                                f"{log_tag} 클릭 좌표: 깊이 구독 비활성화 상태입니다. "
-                                "캘리브레이션 또는 비전클릭이동 ON에서 사용하세요.\n"
-                            )
-                        else:
-                            self.append_log(f"{log_tag} 클릭 좌표: 깊이 미수신(Z 없음)으로 mm 환산 불가\n")
+                        self.append_log(f"{log_tag} 클릭 좌표: 깊이 미수신(Z 없음)으로 mm 환산 불가\n")
                         if panel_index == 2 and self._vision_coord_label_2 is not None:
                             self._vision_coord_label_2.hide()
                     else:
@@ -6099,15 +7078,19 @@ class App(QMainWindow, form):
                                 )
                             else:
                                 rx, ry, rz = robot_xyz
-                                z_margin = self._get_vision_move_z_margin_mm()
-                                rz_target = float(rz) + float(z_margin)
+                                offset_x, offset_y, offset_z = self._get_vision_move_offset_xyz_mm()
+                                rx_target = float(rx) + float(offset_x)
+                                ry_target = float(ry) + float(offset_y)
+                                rz_target = float(rz) + float(offset_z)
                                 self._last_clicked_vision_xyz_mm = (float(vx), float(vy), float(vz))
                                 self._last_clicked_robot_xyz_mm = (float(rx), float(ry), float(rz))
-                                self._last_clicked_robot_target_xyz_mm = (float(rx), float(ry), float(rz_target))
+                                self._last_clicked_robot_target_xyz_mm = (float(rx_target), float(ry_target), float(rz_target))
                                 self._last_clicked_source_vision = panel_index
                                 self.append_log(
                                     f"{log_tag} 클릭 비전 XYZ(mm): X={vx:.1f}, Y={vy:.1f}, Z={vz:.1f} -> "
-                                    f"로봇 XYZ(mm): X={rx:.2f}, Y={ry:.2f}, Z={rz:.2f}\n"
+                                    f"로봇 XYZ(mm): X={rx:.2f}, Y={ry:.2f}, Z={rz:.2f} -> "
+                                    f"이동목표 XYZ(mm): X={rx_target:.2f}, Y={ry_target:.2f}, Z={rz_target:.2f} "
+                                    f"[옵셋 X={offset_x:.1f}, Y={offset_y:.1f}, Z={offset_z:.1f}]\n"
                                 )
                                 if panel_index == 2 and self._vision_coord_label_2 is not None:
                                     self._vision_coord_label_2.hide()
@@ -6116,8 +7099,8 @@ class App(QMainWindow, form):
                                         f"비전 클릭 좌표\n"
                                         f"- 비전 XYZ(mm): X={vx:.1f}, Y={vy:.1f}, Z={vz:.1f}\n"
                                         f"- Robot XYZ(mm): X={rx:.2f}, Y={ry:.2f}, Z={rz:.2f}\n"
-                                        f"- Z 마진: +{z_margin:.1f}mm\n"
-                                        f"- 이동 목표 XYZ(mm): X={rx:.2f}, Y={ry:.2f}, Z={rz_target:.2f}\n\n"
+                                        f"- 이동 옵셋 XYZ(mm): X={offset_x:.1f}, Y={offset_y:.1f}, Z={offset_z:.1f}\n"
+                                        f"- 이동 목표 XYZ(mm): X={rx_target:.2f}, Y={ry_target:.2f}, Z={rz_target:.2f}\n\n"
                                         f"로봇을 이동하시겠습니까?"
                                     )
                                     answer = QMessageBox.question(
@@ -6368,7 +7351,8 @@ class App(QMainWindow, form):
             "좌표계 무브",
         ):
             return
-        ok, msg = self.backend.send_move_cartesian(x, y, z, a, b, c)
+        speed = self._motion_speed_for_command()
+        ok, msg = self.backend.send_move_cartesian(x, y, z, a, b, c, vel=speed, acc=speed)
         self.append_log(f"[좌표계 무브] {msg}\n")
 
     def on_move_joint_dialog(self):
@@ -6400,7 +7384,8 @@ class App(QMainWindow, form):
             "조인트 무브",
         ):
             return
-        ok, msg = self.backend.send_move_joint(j1, j2, j3, j4, j5, j6)
+        speed = self._motion_speed_for_command()
+        ok, msg = self.backend.send_move_joint(j1, j2, j3, j4, j5, j6, vel=speed, acc=speed)
         self.append_log(f"[조인트 무브] {msg}\n")
 
     def on_print_positions(self):
@@ -6459,7 +7444,8 @@ class App(QMainWindow, form):
             "홈",
         ):
             return
-        ok, msg = self.backend.send_move_home()
+        speed = self._motion_speed_for_command()
+        ok, msg = self.backend.send_move_home(vel=speed, acc=speed)
         self.append_log(f"[홈] {msg}\n")
 
     def on_save_home_position_dialog(self):
@@ -6522,10 +7508,18 @@ class App(QMainWindow, form):
                 self._log_timer.stop()
             if hasattr(self, "_status_timer") and self._status_timer is not None:
                 self._status_timer.stop()
+            if hasattr(self, "_robot_status_timer") and self._robot_status_timer is not None:
+                self._robot_status_timer.stop()
+            if hasattr(self, "_vision_status_timer_1") and self._vision_status_timer_1 is not None:
+                self._vision_status_timer_1.stop()
+            if hasattr(self, "_vision_status_timer_2") and self._vision_status_timer_2 is not None:
+                self._vision_status_timer_2.stop()
             if hasattr(self, "_top_status_anim_timer") and self._top_status_anim_timer is not None:
                 self._top_status_anim_timer.stop()
             if hasattr(self, "_pos_timer") and self._pos_timer is not None:
                 self._pos_timer.stop()
+            if hasattr(self, "_current_tool_timer") and self._current_tool_timer is not None:
+                self._current_tool_timer.stop()
 
             if self._reset_thread is not None:
                 self._reset_thread.quit()

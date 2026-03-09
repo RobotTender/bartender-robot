@@ -13,7 +13,7 @@
 워크스페이스 예시:
 
 ```text
-~/ros2_ws/src/
+<ros2_ws>/src/
   doosan-robot2/
   bartender-robot/
 ```
@@ -29,22 +29,22 @@
 
 문서:
 
-- [docs/VENDOR_PATCHES.md](/home/fc/ros2_ws/src/robot_bartender/docs/VENDOR_PATCHES.md)
+- [docs/VENDOR_PATCHES.md](VENDOR_PATCHES.md)
 
 적용:
 
 ```bash
-cd ~/ros2_ws/src/bartender-robot
+cd <repo-root>
 ./scripts/apply_doosan_vendor_patches.sh
 ```
 
 ## 3. 빌드
 
 ```bash
-cd ~/ros2_ws
+cd <ros2_ws>
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install
-source ~/ros2_ws/install/setup.bash
+source <ros2_ws>/install/setup.bash
 ```
 
 ## 4. 런타임 설정 확인
@@ -53,7 +53,7 @@ source ~/ros2_ws/install/setup.bash
 
 ### 카메라 시리얼
 
-- [config/parameter.csv](/home/fc/ros2_ws/src/robot_bartender/config/parameter.csv)
+- [config/parameter.csv](../config/parameter.csv)
 
 확인 항목:
 
@@ -62,7 +62,7 @@ source ~/ros2_ws/install/setup.bash
 
 ### 캘리브레이션 파일
 
-- [config/calibration](/home/fc/ros2_ws/src/robot_bartender/config/calibration)
+- [config/calibration](../config/calibration)
 
 확인 항목:
 
@@ -71,18 +71,18 @@ source ~/ros2_ws/install/setup.bash
 
 ### 모델 파일
 
-- [assets/models](/home/fc/ros2_ws/src/robot_bartender/assets/models)
+- [assets/models](../assets/models)
 
 현재는:
 
-- [assets/models/best.pt](/home/fc/ros2_ws/src/robot_bartender/assets/models/best.pt)
+- [assets/models/best.pt](../assets/models/best.pt)
 
 ## 5. 실행 방법
 
 ### 기본 실행
 
 ```bash
-cd ~/ros2_ws/src/bartender-robot
+cd <repo-root>
 python3 run_bartender.py
 ```
 
