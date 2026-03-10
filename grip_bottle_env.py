@@ -173,7 +173,7 @@ class GripBottleEnvCfg(DirectRLEnvCfg):
             usd_path=_SOJU_USD_PATH,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=False, disable_gravity=False),
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.002, rest_offset=0.0),
-            mass_props=sim_utils.MassPropertiesCfg(mass=0.28),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.6585),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.50, 0.0, object_spawn_z), rot=(1.0, 0.0, 0.0, 0.0)),
     )
@@ -183,7 +183,7 @@ class GripBottleEnvCfg(DirectRLEnvCfg):
             usd_path=_ORANGE_USD_PATH,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=False, disable_gravity=False),
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.002, rest_offset=0.0),
-            mass_props=sim_utils.MassPropertiesCfg(mass=0.30),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.3933),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.50, 0.0, object_spawn_z), rot=(1.0, 0.0, 0.0, 0.0)),
     )
@@ -193,7 +193,7 @@ class GripBottleEnvCfg(DirectRLEnvCfg):
             usd_path=_BEER_USD_PATH,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=False, disable_gravity=False),
             collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.002, rest_offset=0.0),
-            mass_props=sim_utils.MassPropertiesCfg(mass=0.33),
+            mass_props=sim_utils.MassPropertiesCfg(mass=0.5177),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.50, 0.0, object_spawn_z), rot=(1.0, 0.0, 0.0, 0.0)),
     )
