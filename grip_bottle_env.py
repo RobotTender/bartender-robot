@@ -33,8 +33,8 @@ def _first_existing_usd(*file_names: str) -> str:
     return str(_ASSET_ROOT / file_names[-1])
 
 
-_TABLE_PRIMARY_USD_PATH = _first_existing_usd("tables_3.usd", "table_0309.usd", "table_e0509.usd")
-_TABLE_SECONDARY_USD_PATH = _first_existing_usd("table_hole.usd", "table_e0509.usd")
+_TABLE_PRIMARY_USD_PATH = str(_ASSET_ROOT / "tables_3.usd")
+_TABLE_SECONDARY_USD_PATH = str(_ASSET_ROOT / "table_hole.usd")
 _SOJU_USD_PATH = _first_existing_usd("soju.usd")
 _ORANGE_USD_PATH = _first_existing_usd("orange.usd")
 _BEER_USD_PATH = _first_existing_usd("beer.usd")
