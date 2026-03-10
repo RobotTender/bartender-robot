@@ -36,6 +36,8 @@ def _parse_cli_overrides(argv):
             key = 'run_frontend'
         if key == 'rt_host':
             key = 'robot_rt_host'
+        if key in ('run_web', 'run_webui'):
+            key = 'run_user_frontend'
         overrides[key] = value
     run_robot = str(overrides.get('run_robot', 'true')).strip().lower()
     if run_robot != 'true' and 'robot_mode' not in overrides:
@@ -181,6 +183,10 @@ def generate_launch_description(overrides=None):
         DeclareLaunchArgument('robot_gz', default_value='false'),
         DeclareLaunchArgument('run_sensors', default_value='true'),
         DeclareLaunchArgument('run_frontend', default_value='true'),
+        # Canonical flag for end-user web frontend execution.
+        DeclareLaunchArgument('run_user_frontend', default_value='true'),
+        DeclareLaunchArgument('webui_host', default_value='0.0.0.0'),
+        DeclareLaunchArgument('webui_port', default_value='8000'),
     ]
 
     robot_launch = IncludeLaunchDescription(
@@ -210,8 +216,24 @@ def generate_launch_description(overrides=None):
             'BARTENDER_ROBOT_MODE_HINT': LaunchConfiguration('robot_mode'),
             'BARTENDER_ROBOT_MODEL_HINT': LaunchConfiguration('robot_model'),
             'BARTENDER_ROBOT_HOST_HINT': LaunchConfiguration('robot_host'),
+            'VOICE_ORDER_WEBUI_HOST': LaunchConfiguration('webui_host'),
+            'VOICE_ORDER_WEBUI_PORT': LaunchConfiguration('webui_port'),
         },
         condition=IfCondition(LaunchConfiguration('run_frontend')),
+    )
+
+    user_frontend_proc = ExecuteProcess(
+        cmd=[
+            sys.executable,
+            os.path.join(project_root, 'src', 'frontend', 'user_frontend.py'),
+            '--host',
+            LaunchConfiguration('webui_host'),
+            '--port',
+            LaunchConfiguration('webui_port'),
+        ],
+        output='screen',
+        emulate_tty=True,
+        condition=IfCondition(LaunchConfiguration('run_user_frontend')),
     )
 
     shutdown_on_frontend_exit = RegisterEventHandler(
@@ -224,7 +246,9 @@ def generate_launch_description(overrides=None):
     override_actions = [SetLaunchConfiguration(name, value) for name, value in (overrides or {}).items()]
 
     return LaunchDescription(
-        args + override_actions + [robot_launch, sensor_launch, frontend_proc, shutdown_on_frontend_exit]
+        args
+        + override_actions
+        + [robot_launch, sensor_launch, user_frontend_proc, frontend_proc, shutdown_on_frontend_exit]
     )
 
 

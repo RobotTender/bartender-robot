@@ -12,8 +12,18 @@ import traceback
 import warnings
 from datetime import datetime
 
-from PyQt5.QtCore import QTimer, QObject, pyqtSignal, Qt, QThread, QEvent
-from PyQt5.QtGui import QFont, QImage, QPixmap, QBrush, QColor, QDoubleValidator, QPalette, QTransform
+from PyQt5.QtCore import QTimer, QObject, pyqtSignal, pyqtSlot, Qt, QThread, QEvent, QUrl
+from PyQt5.QtGui import (
+    QFont,
+    QImage,
+    QPixmap,
+    QBrush,
+    QColor,
+    QDoubleValidator,
+    QPalette,
+    QTransform,
+    QDesktopServices,
+)
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -37,6 +47,7 @@ from PyQt5.QtWidgets import (
     QSlider,
     QFileDialog,
     QSizePolicy,
+    QPlainTextEdit,
 )
 from PyQt5 import uic
 
@@ -105,7 +116,7 @@ from task_backend_node import RobotBackend, ROBOT_ID, HOME_POSJ
 form = uic.loadUiType(os.path.join(PROJECT_ROOT, "assets", "frontend", "developer_frontend.ui"))[0]
 UI_FONT_FAMILY = "Noto Sans CJK KR"
 UI_FONT_SIZE = 9
-UI_TERMINAL_FONT_SIZE = max(6, int(os.environ.get("UI_TERMINAL_FONT_SIZE", "10")))
+UI_TERMINAL_FONT_SIZE = max(6, int(os.environ.get("UI_TERMINAL_FONT_SIZE", "9")))
 UI_TABLE_FONT_SIZE = max(12, int(os.environ.get("UI_TABLE_FONT_SIZE", "12")))
 UI_TABLE_ROW_HEIGHT = max(26, int(os.environ.get("UI_TABLE_ROW_HEIGHT", "30")))
 UI_PANEL_TABLE_ROW_HEIGHT = max(22, int(UI_TABLE_ROW_HEIGHT * 0.875))
@@ -164,8 +175,22 @@ JOINT_INPUT_LIMITS_DEG = (
     (-360.0, 360.0),  # J6
 )
 LOG_AREA_SHIFT_Y = 4
-UI_USE_DESIGN_GEOMETRY = True
+UI_USE_DESIGN_GEOMETRY = os.environ.get("UI_USE_DESIGN_GEOMETRY", "0") == "1"
 MODE_SWITCH_GRACE_SEC = float(os.environ.get("MODE_SWITCH_GRACE_SEC", "4.0"))
+VOICE_ORDER_PANEL_GAP = 10
+DASHBOARD_MARGIN = 12
+DASHBOARD_COL_GAP = 10
+DASHBOARD_ROW_GAP = 10
+DASHBOARD_BOTTOM_MIN_HEIGHT = 220
+DASHBOARD_BOTTOM_EXTRA_MARGIN = 0
+DASHBOARD_COL_WIDTHS = (531, 531, 840)
+DASHBOARD_TOP_PANEL_HEIGHT = 600
+DASHBOARD_BOTTOM_PANEL_HEIGHT = 600
+VOICE_ORDER_CYCLE_INTERVAL_MS = max(
+    1, int(float(os.environ.get("VOICE_ORDER_CYCLE_INTERVAL_MS", "100")))
+)
+VOICE_ORDER_WEBUI_HOST = str(os.environ.get("VOICE_ORDER_WEBUI_HOST", "127.0.0.1") or "").strip() or "127.0.0.1"
+VOICE_ORDER_WEBUI_PORT = str(os.environ.get("VOICE_ORDER_WEBUI_PORT", "8000") or "").strip() or "8000"
 PARAM_DIR = os.path.join(PROJECT_ROOT, "config")
 PARAM_FILE = os.path.join(PARAM_DIR, "parameter.csv")
 CALIB_DIR = os.path.join(PARAM_DIR, "calibration")
@@ -361,11 +386,41 @@ class BackendResetWorker(QObject):
             self.failed.emit(str(e), traceback.format_exc())
 
 
+class VoiceOrderCycleWorker(QObject):
+    tick = pyqtSignal(float)
+    finished = pyqtSignal()
+
+    def __init__(self, interval_ms: int):
+        super().__init__()
+        self._interval_sec = max(0.001, float(interval_ms) / 1000.0)
+        self._stop_event = threading.Event()
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            next_ts = time.monotonic()
+            while not self._stop_event.is_set():
+                now = time.monotonic()
+                self.tick.emit(float(now))
+                next_ts += self._interval_sec
+                sleep_sec = max(0.0, next_ts - time.monotonic())
+                if sleep_sec > 0.0:
+                    # Keep short waits so stop requests are observed quickly.
+                    self._stop_event.wait(timeout=min(sleep_sec, 0.05))
+        finally:
+            self.finished.emit()
+
+    @pyqtSlot()
+    def stop(self):
+        self._stop_event.set()
+
+
 class App(QMainWindow, form):
     ros_log_received = pyqtSignal(str)
     ros_image_received = pyqtSignal(QImage)
     calibration_ui_refresh_requested = pyqtSignal()
     vision_runtime_ui_refresh_requested = pyqtSignal(int)
+    voice_order_event_received = pyqtSignal(object)
 
     def __init__(self, backend=None, auto_start_backend=True):
         super().__init__()
@@ -402,7 +457,43 @@ class App(QMainWindow, form):
         self._top_status_mid_line = None
         self._top_status_state_cache = {}
         self._robot_controls_enabled_cache = None
+        self._dashboard_resize_guard = False
+        self._voice_panel_shift_applied = False
+        self._voice_panel_shift_dx = 0
+        self._voice_panel_layout_rect = None
+        self._voice_order_panel = None
+        self._voice_order_title_label = None
+        self._voice_order_connection_dot = None
+        self._voice_order_connection_label = None
+        self._voice_order_connection_toggle = None
+        self._voice_order_cycle_label = None
+        self._voice_order_status_label = None
+        self._voice_order_input_label = None
+        self._voice_order_input_edit = None
+        self._voice_order_last_input_text = ""
+        self._voice_order_start_button = None
+        self._voice_order_log_label = None
+        self._voice_order_log_view = None
+        self._voice_order_result_label = None
+        self._voice_order_recipe_view = None
+        self._voice_order_mic_button = None
+        self._voice_order_webui_button = None
+        self._voice_order_html_badge = None
+        self._voice_order_cycle_ms = None
+        self._voice_prev_update_at = None
+        self._voice_backend_last_seen_at = None
+        self._voice_order_status_text = "비활성화"
+        self._voice_order_status_severity = "warn"
+        self._voice_cycle_thread = None
+        self._voice_cycle_worker = None
+        self._voice_cycle_worker_token = 0
+        self._voice_worker_thread = None
+        self._voice_worker_proc = None
+        self._voice_worker_token = 0
+        self._voice_worker_done = False
+        self._voice_last_result = None
 
+        self._setup_voice_order_panel()
         self._reserve_top_status_space()
         self._setup_top_status_row()
 
@@ -491,6 +582,7 @@ class App(QMainWindow, form):
         self.ros_image_received.connect(self._update_yolo_view)
         self.calibration_ui_refresh_requested.connect(self._update_calibration_mode_ui)
         self.vision_runtime_ui_refresh_requested.connect(self._update_vision_runtime_panel_ui)
+        self.voice_order_event_received.connect(self._on_voice_order_worker_event)
         sys.stdout = self._stdout
         sys.stderr = self._stderr
         sys.excepthook = self._handle_exception
@@ -549,7 +641,6 @@ class App(QMainWindow, form):
             lambda: self._safe_ui_tick("vision_render_2", self._drain_pending_vision_frame_2)
         )
         self._vision_render_timer_2.start(VISION_RENDER_INTERVAL_MS)
-
         self._yolo_thread = None
         self._yolo_worker = None
         self._rosout_sub = None
@@ -776,6 +867,591 @@ class App(QMainWindow, form):
         if self._auto_start_backend:
             self._start_backend_async()
 
+    def _shift_main_frames_for_voice_panel(self):
+        # Voice-order panel is part of the main grid layout.
+        self._voice_panel_shift_dx = 0
+        self._voice_panel_shift_applied = True
+
+    def _setup_voice_order_panel(self):
+        self._shift_main_frames_for_voice_panel()
+        panel = getattr(self, "voice_order_panel", None)
+        if panel is None:
+            return
+        self._voice_order_panel = panel
+        self._voice_order_title_label = getattr(self, "voice_order_title_label", None)
+        self._voice_order_connection_dot = getattr(self, "voice_order_connection_dot", None)
+        self._voice_order_connection_label = getattr(self, "voice_order_connection_label", None)
+        self._voice_order_connection_toggle = getattr(self, "voice_order_connection_toggle", None)
+        self._voice_order_cycle_label = getattr(self, "voice_order_cycle_label", None)
+        self._voice_order_status_label = getattr(self, "voice_order_status_label", None)
+        self._voice_order_input_label = getattr(self, "voice_order_input_label", None)
+        self._voice_order_input_edit = getattr(self, "voice_order_input_edit", None)
+        self._voice_order_mic_button = getattr(self, "voice_order_mic_button", None)
+        self._voice_order_start_button = getattr(self, "voice_order_start_button", None)
+        self._voice_order_log_label = getattr(self, "voice_order_log_label", None)
+        self._voice_order_log_view = getattr(self, "voice_order_log_view", None)
+        self._voice_order_result_label = getattr(self, "voice_order_result_label", None)
+        self._voice_order_recipe_view = getattr(self, "voice_order_recipe_view", None)
+        self._voice_order_webui_button = getattr(self, "voice_order_webui_button", None)
+        self._voice_order_html_badge = getattr(self, "voice_order_html_badge", None)
+
+        if self._voice_order_connection_toggle is not None:
+            try:
+                self._voice_order_connection_toggle.toggled.disconnect()
+            except Exception:
+                pass
+            self._voice_order_connection_toggle.toggled.connect(self._on_voice_order_connection_toggled)
+        if self._voice_order_mic_button is not None:
+            try:
+                self._voice_order_mic_button.clicked.disconnect()
+            except Exception:
+                pass
+            self._voice_order_mic_button.clicked.connect(self._capture_voice_input_once)
+        if self._voice_order_webui_button is not None:
+            try:
+                self._voice_order_webui_button.clicked.disconnect()
+            except Exception:
+                pass
+            self._voice_order_webui_button.clicked.connect(self._open_voice_order_webui)
+        if self._voice_order_input_edit is not None:
+            self._voice_order_input_edit.setReadOnly(True)
+            self._voice_order_input_edit.setFocusPolicy(Qt.NoFocus)
+        if self._voice_order_log_view is not None:
+            self._voice_order_log_view.setReadOnly(True)
+            self._voice_order_log_view.document().setMaximumBlockCount(700)
+        if self._voice_order_recipe_view is not None:
+            self._voice_order_recipe_view.setReadOnly(True)
+
+        self._layout_voice_order_panel()
+        self._refresh_voice_order_webui_badge()
+        self._set_voice_order_connection_state(False)
+        self._set_voice_order_status("비활성화", "warn")
+        self._set_voice_order_result(None)
+
+    def _layout_voice_order_panel(self):
+        frame_l = getattr(self, "frame", None)
+        panel = getattr(self, "_voice_order_panel", None)
+        if frame_l is None or panel is None:
+            return
+        panel_rect = getattr(self, "_voice_panel_layout_rect", None)
+        if panel_rect is not None and len(panel_rect) == 4:
+            x, y, w, h = panel_rect
+            panel.setGeometry(int(x), int(y), int(w), int(h))
+        else:
+            width = int(frame_l.width())
+            x = max(10, int(frame_l.x()) - width - VOICE_ORDER_PANEL_GAP)
+            panel.setGeometry(x, int(frame_l.y()), width, int(frame_l.height()))
+        self._layout_voice_order_panel_widgets()
+        panel.raise_()
+
+    def _layout_voice_order_panel_widgets(self):
+        panel = getattr(self, "_voice_order_panel", None)
+        if panel is None:
+            return
+        w = int(panel.width())
+        h = int(panel.height())
+        margin = 10
+        content_w = max(80, w - (margin * 2))
+
+        y = 10
+        if self._voice_order_connection_toggle is not None:
+            self._voice_order_connection_toggle.setGeometry(margin, y, 71, 20)
+        if self._voice_order_cycle_label is not None:
+            self._voice_order_cycle_label.setGeometry(max(margin, w - margin - 168), y, 168, 16)
+        y += 26
+        if self._voice_order_connection_dot is not None:
+            self._voice_order_connection_dot.setGeometry(0, y, 41, 41)
+        if self._voice_order_connection_label is not None:
+            self._voice_order_connection_label.setGeometry(50, max(0, y - 10), max(120, content_w - 170), 61)
+        y += 54
+        if self._voice_order_input_label is not None:
+            self._voice_order_input_label.setGeometry(margin, y, content_w, 20)
+        y += 22
+
+        input_h = max(66, int(h * 0.15))
+        if self._voice_order_input_edit is not None:
+            self._voice_order_input_edit.setGeometry(margin, y, content_w, input_h)
+        y += input_h + 8
+
+        if self._voice_order_mic_button is not None:
+            self._voice_order_mic_button.setGeometry(margin, y, content_w, 28)
+        y += 36
+
+        if self._voice_order_log_label is not None:
+            self._voice_order_log_label.setGeometry(margin, y, content_w, 20)
+        y += 22
+
+        footer_reserved = 20 + 72 + 8 + 24 + 8 + 24 + 18
+        log_h = max(120, h - y - footer_reserved)
+        if self._voice_order_log_view is not None:
+            self._voice_order_log_view.setGeometry(margin, y, content_w, log_h)
+        y += log_h + 8
+
+        if self._voice_order_result_label is not None:
+            self._voice_order_result_label.setGeometry(margin, y, content_w, 20)
+        y += 22
+
+        recipe_h = 72
+        if self._voice_order_recipe_view is not None:
+            self._voice_order_recipe_view.setGeometry(margin, y, content_w, recipe_h)
+        y += recipe_h + 8
+
+        if self._voice_order_webui_button is not None:
+            self._voice_order_webui_button.setGeometry(margin, y, content_w, 24)
+        y += 30
+
+        if self._voice_order_html_badge is not None:
+            self._voice_order_html_badge.setGeometry(margin, y, content_w, 24)
+
+    def _set_voice_order_connection_state(self, connected: bool):
+        on = bool(connected)
+        label = getattr(self, "_voice_order_connection_label", None)
+        dot = getattr(self, "_voice_order_connection_dot", None)
+        toggle = getattr(self, "_voice_order_connection_toggle", None)
+        if toggle is not None:
+            toggle.blockSignals(True)
+            toggle.setChecked(on)
+            toggle.setText("ON" if on else "OFF")
+            toggle.blockSignals(False)
+        if self._voice_order_mic_button is not None:
+            self._voice_order_mic_button.setEnabled(on)
+        if on:
+            self._start_voice_cycle_worker()
+        else:
+            self._stop_voice_cycle_worker(reason="음성주문 연결 OFF")
+            self._voice_order_cycle_ms = None
+            self._voice_prev_update_at = None
+            self._voice_backend_last_seen_at = None
+        if label is not None and dot is not None:
+            self._set_voice_order_status("정상연결" if on else "비활성화", "ok" if on else "warn")
+
+    def _on_voice_order_connection_toggled(self, checked: bool):
+        on = bool(checked)
+        self._set_voice_order_connection_state(on)
+        if on:
+            self._set_voice_order_status("정상연결", "ok")
+        else:
+            self._voice_order_cycle_ms = None
+            self._voice_prev_update_at = None
+            self._voice_backend_last_seen_at = None
+            self._set_voice_order_status("비활성화", "warn")
+            self._stop_voice_order_worker(reason="음성주문 연결 OFF")
+        self._update_cycle_time_labels()
+
+    def _set_voice_order_input_text(self, text: str):
+        view = getattr(self, "_voice_order_input_edit", None)
+        if view is None:
+            return
+        value = str(text or "").strip()
+        if value == self._voice_order_last_input_text:
+            return
+        self._voice_order_last_input_text = value
+        view.setPlainText(value)
+
+    def _mark_voice_order_update(self, seen_at=None):
+        now = time.monotonic() if seen_at is None else float(seen_at)
+        prev = self._voice_prev_update_at
+        if prev is not None:
+            dt = now - float(prev)
+            if dt > 0.0:
+                self._voice_order_cycle_ms = dt * 1000.0
+        self._voice_prev_update_at = now
+        self._update_cycle_time_labels()
+
+    def _on_voice_cycle_tick(self, _tick_at: float, token: int):
+        if getattr(self, "_closing", False):
+            return
+        if int(token) != int(self._voice_cycle_worker_token):
+            return
+        toggle = getattr(self, "_voice_order_connection_toggle", None)
+        if toggle is None or (not bool(toggle.isChecked())):
+            return
+        backend = getattr(self, "backend", None)
+        if backend is None or (not hasattr(backend, "get_voice_order_snapshot")):
+            return
+        try:
+            payload, backend_seen_at = backend.get_voice_order_snapshot()
+        except Exception:
+            return
+        # 주문 결과가 아직 없으면 폴링 하트비트 간격을 표시한다.
+        if payload is None or backend_seen_at is None:
+            self._mark_voice_order_update(seen_at=float(_tick_at))
+            return
+        backend_seen_at = float(backend_seen_at)
+        prev_seen_at = self._voice_backend_last_seen_at
+        if prev_seen_at is not None and abs(backend_seen_at - float(prev_seen_at)) < 1e-9:
+            return
+        self._voice_backend_last_seen_at = backend_seen_at
+        self._mark_voice_order_update(seen_at=backend_seen_at)
+
+    def _start_voice_cycle_worker(self):
+        if getattr(self, "_closing", False):
+            return
+        thread = getattr(self, "_voice_cycle_thread", None)
+        if thread is not None and thread.isRunning():
+            return
+        self._voice_cycle_worker_token += 1
+        token = int(self._voice_cycle_worker_token)
+        worker = VoiceOrderCycleWorker(VOICE_ORDER_CYCLE_INTERVAL_MS)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(thread.quit)
+        worker.tick.connect(lambda ts, _token=token: self._on_voice_cycle_tick(ts, _token))
+        thread.start()
+        self._voice_cycle_worker = worker
+        self._voice_cycle_thread = thread
+        self._append_voice_order_log(f"업데이트 워커 시작(interval={VOICE_ORDER_CYCLE_INTERVAL_MS}ms)")
+
+    def _stop_voice_cycle_worker(self, reason: str = ""):
+        worker = getattr(self, "_voice_cycle_worker", None)
+        thread = getattr(self, "_voice_cycle_thread", None)
+        if worker is None and thread is None:
+            return
+
+        if worker is not None:
+            try:
+                worker.tick.disconnect()
+            except Exception:
+                pass
+            try:
+                worker.stop()
+            except Exception:
+                pass
+            try:
+                worker.deleteLater()
+            except Exception:
+                pass
+        if thread is not None:
+            try:
+                thread.quit()
+            except Exception:
+                pass
+            if thread.isRunning():
+                if not thread.wait(1200):
+                    thread.requestInterruption()
+                    thread.wait(400)
+            try:
+                thread.deleteLater()
+            except Exception:
+                pass
+
+        self._voice_cycle_worker = None
+        self._voice_cycle_thread = None
+        if reason:
+            self._append_voice_order_log(f"업데이트 워커 중지: {reason}")
+
+    def _voice_order_webui_url(self):
+        host = str(VOICE_ORDER_WEBUI_HOST or "").strip() or "127.0.0.1"
+        if host in ("0.0.0.0", "::"):
+            host = "127.0.0.1"
+        port = str(VOICE_ORDER_WEBUI_PORT or "").strip() or "8000"
+        return f"http://{host}:{port}"
+
+    def _refresh_voice_order_webui_badge(self):
+        label = getattr(self, "_voice_order_html_badge", None)
+        if label is None:
+            return
+        label.setText("주문 WEB UI: 비활성화 (프로세스 실행중)")
+
+    def _open_voice_order_webui(self):
+        url = self._voice_order_webui_url()
+        ok = bool(QDesktopServices.openUrl(QUrl(url)))
+        if ok:
+            self._append_voice_order_log(f"WEB UI 열기: {url}")
+        else:
+            self._append_voice_order_log(f"WEB UI 열기 실패: {url}")
+
+    def _capture_voice_input_once(self):
+        toggle = getattr(self, "_voice_order_connection_toggle", None)
+        if toggle is not None and (not bool(toggle.isChecked())):
+            self._append_voice_order_log("마이크 입력 요청 거부: 음성주문 LLM 비활성화 상태")
+            return
+        self._set_voice_order_status("입력요청중", "running")
+        QApplication.processEvents()
+        self._start_voice_order_test(request_stt=True)
+
+    def _set_voice_order_status(self, text: str, severity: str = "info"):
+        label = getattr(self, "_voice_order_connection_label", None)
+        dot = getattr(self, "_voice_order_connection_dot", None)
+        if label is None or dot is None:
+            return
+        state_text = str(text or "").strip() or "-"
+        sev = str(severity or "info").strip().lower()
+        self._voice_order_status_text = state_text
+        self._voice_order_status_severity = sev
+
+        if sev in ("ok", "normal", "success"):
+            bright = STATE_COLOR_NORMAL
+        elif sev in ("error", "fail", "failed"):
+            bright = STATE_COLOR_ERROR
+        else:
+            bright = STATE_COLOR_WARNING
+        dim = "#ffffff"
+
+        # 음성주문 상태도 상단 상태등처럼 점멸 표현을 적용한다.
+        phase = time.monotonic() % 1.0
+        fade = 0.5 * (1.0 + np.sin((2.0 * np.pi * phase) - (np.pi / 2.0)))
+        should_blink = True
+
+        def _hex_to_rgb(h: str):
+            h = str(h or "#000000").lstrip("#")
+            if len(h) != 6:
+                return 0, 0, 0
+            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+        def _mix(c1: str, c2: str, t: float):
+            r1, g1, b1 = _hex_to_rgb(c1)
+            r2, g2, b2 = _hex_to_rgb(c2)
+            return (
+                int(max(0, min(255, round(r1 + (r2 - r1) * t)))),
+                int(max(0, min(255, round(g1 + (g2 - g1) * t)))),
+                int(max(0, min(255, round(b1 + (b2 - b1) * t)))),
+            )
+
+        if should_blink:
+            r, g, b = _mix(dim, bright, fade)
+            alpha = int(max(0, min(255, round(255.0 * fade))))
+        else:
+            r, g, b = _hex_to_rgb(bright)
+            alpha = 255
+
+        label.setText(f"음성주문 LLM: {state_text}")
+        label.setStyleSheet("font-size: 14pt; font-weight: 700; color: #202020;")
+        dot.setStyleSheet(f"font-size: 20pt; color: rgba({r}, {g}, {b}, {alpha});")
+
+    def _append_voice_order_log(self, message: str):
+        view = getattr(self, "_voice_order_log_view", None)
+        if view is None:
+            return
+        ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        view.appendPlainText(f"[{ts}] {message}")
+
+    def _set_voice_order_result(self, payload: dict | None):
+        view = getattr(self, "_voice_order_recipe_view", None)
+        if view is None:
+            return
+        if not payload:
+            view.setPlainText(
+                "메뉴: -\n"
+                "상태: 대기\n"
+                "TTS: -\n"
+                "레시피: -"
+            )
+            return
+        menu_label = str(payload.get("selected_menu_label") or "").strip()
+        menu_code = str(payload.get("selected_menu") or "").strip()
+        if not menu_label:
+            menu_label = menu_code or "-"
+        status = str(payload.get("status") or "-")
+        tts_text = str(payload.get("tts_text") or "-")
+        recipe = payload.get("recipe", {})
+        if isinstance(recipe, dict) and recipe:
+            recipe_text = ", ".join(f"{k}: {v}ml" for k, v in recipe.items())
+        else:
+            recipe_text = "-"
+        view.setPlainText(
+            f"메뉴: {menu_label}\n"
+            f"상태: {status}\n"
+            f"TTS: {tts_text}\n"
+            f"레시피: {recipe_text}"
+        )
+
+    def _start_voice_order_test(self, request_stt: bool = False):
+        if self._voice_order_input_edit is None:
+            return
+        input_text = self._voice_order_input_edit.toPlainText().strip()
+        if (not request_stt) and (not input_text):
+            QMessageBox.warning(self, "음성주문 LLM", "마이크 입력(STT 결과)이 아직 없습니다.")
+            return
+        self._stop_voice_order_worker(reason="이전 테스트 중단")
+        self._voice_worker_done = False
+        self._voice_last_result = None
+        self._set_voice_order_result(None)
+        self._set_voice_order_status("실행 중", "running")
+        self._append_voice_order_log("=== 테스트 시작 ===")
+        payload = {"input_text": input_text, "allow_llm": True, "request_stt": bool(request_stt)}
+        if not self._start_voice_order_worker(payload):
+            self._set_voice_order_status("실행 실패", "error")
+
+    def _start_voice_order_worker(self, payload: dict) -> bool:
+        backend = getattr(self, "backend", None)
+        if backend is None or (not hasattr(backend, "run_voice_order_runtime")):
+            self._append_voice_order_log("음성주문 백엔드가 아직 준비되지 않았습니다.")
+            return False
+
+        self._voice_worker_token += 1
+        token = int(self._voice_worker_token)
+        self._voice_worker_proc = None
+        thread = threading.Thread(
+            target=self._run_voice_order_backend_job,
+            args=(token, dict(payload or {})),
+            name=f"voice-backend-worker-{token}",
+            daemon=True,
+        )
+        self._voice_worker_thread = thread
+        thread.start()
+        self._append_voice_order_log("백엔드 음성주문 워커 시작")
+        return True
+
+    def _run_voice_order_backend_job(self, token: int, payload: dict):
+        rc = 0
+        try:
+            backend = getattr(self, "backend", None)
+            if backend is None or (not hasattr(backend, "run_voice_order_runtime")):
+                raise RuntimeError("음성주문 백엔드가 준비되지 않았습니다.")
+
+            input_text = str((payload or {}).get("input_text", "") or "").strip()
+            recommend_menu = str((payload or {}).get("recommend_menu", "") or "").strip()
+            allow_llm = bool((payload or {}).get("allow_llm", True))
+            request_stt = bool((payload or {}).get("request_stt", False))
+
+            ok, out_payload, msg = backend.run_voice_order_runtime(
+                input_text=input_text,
+                recommend_menu=recommend_menu,
+                allow_llm=allow_llm,
+                request_stt=request_stt,
+            )
+            if not isinstance(out_payload, dict):
+                raise RuntimeError(str(msg or "음성주문 처리 실패"))
+
+            for item in list(out_payload.get("events", []) or []):
+                if not isinstance(item, dict):
+                    continue
+                event = dict(item)
+                event["_token"] = int(token)
+                self.voice_order_event_received.emit(event)
+
+            result = out_payload.get("result", {})
+            if isinstance(result, dict):
+                event = dict(result)
+                event["type"] = "result"
+                event["_token"] = int(token)
+                self.voice_order_event_received.emit(event)
+
+            done_ok = bool(out_payload.get("ok", ok))
+            if (not ok) and done_ok:
+                done_ok = False
+            self.voice_order_event_received.emit({"type": "done", "ok": done_ok, "_token": int(token)})
+            if not done_ok:
+                rc = 1
+        except Exception as e:
+            rc = 1
+            self.voice_order_event_received.emit(
+                {"type": "error", "message": f"백엔드 음성주문 처리 예외: {e}", "_token": int(token)}
+            )
+            self.voice_order_event_received.emit({"type": "done", "ok": False, "_token": int(token)})
+        finally:
+            self.voice_order_event_received.emit({"type": "process_exit", "returncode": int(rc), "_token": int(token)})
+            if int(token) == int(self._voice_worker_token):
+                self._voice_worker_thread = None
+
+    def _on_voice_order_worker_event(self, event):
+        if not isinstance(event, dict):
+            return
+        toggle = getattr(self, "_voice_order_connection_toggle", None)
+        if toggle is not None and (not bool(toggle.isChecked())):
+            return
+        token = int(event.get("_token", -1))
+        if token != int(self._voice_worker_token):
+            return
+        self._mark_voice_order_update()
+        evt_type = str(event.get("type", "") or "").strip().lower()
+        if evt_type == "stage":
+            stage = str(event.get("stage", "") or "")
+            stage_norm = stage.strip().lower()
+            actor = str(event.get("actor", "") or "")
+            message = str(event.get("message", "") or "")
+            data = event.get("data", None)
+            transcript = ""
+            if isinstance(data, dict):
+                for key in ("input_text", "stt_text", "recognized_text", "transcript", "text"):
+                    value = data.get(key, None)
+                    if value is None:
+                        continue
+                    transcript = str(value).strip()
+                    if transcript:
+                        break
+            if transcript:
+                self._set_voice_order_input_text(transcript)
+            elif stage_norm == "stt":
+                maybe_text = str(event.get("text", "") or "").strip()
+                if maybe_text:
+                    self._set_voice_order_input_text(maybe_text)
+            line = f"[{stage}] {actor}: {message}"
+            if data is not None:
+                try:
+                    line += f" | {json.dumps(data, ensure_ascii=False)}"
+                except Exception:
+                    line += f" | {data}"
+            self._append_voice_order_log(line)
+            return
+        if evt_type == "result":
+            self._voice_last_result = dict(event)
+            self._set_voice_order_result(self._voice_last_result)
+            menu = str(event.get("selected_menu_label") or event.get("selected_menu") or "-")
+            self._append_voice_order_log(f"[result] 메뉴={menu}, status={event.get('status')}")
+            return
+        if evt_type == "done":
+            self._voice_worker_done = True
+            ok = bool(event.get("ok", False))
+            if not ok:
+                self._set_voice_order_status("실패", "error")
+                self._append_voice_order_log("[done] 처리 실패")
+                return
+            status_text = str((self._voice_last_result or {}).get("status", "")).strip().lower()
+            if status_text == "success":
+                self._set_voice_order_status("완료", "ok")
+            elif status_text == "retry":
+                self._set_voice_order_status("재입력 필요", "warn")
+            else:
+                self._set_voice_order_status("완료", "ok")
+            self._append_voice_order_log("[done] 처리 완료")
+            return
+        if evt_type == "stderr":
+            self._append_voice_order_log(f"[stderr] {event.get('message', '')}")
+            return
+        if evt_type == "error":
+            self._set_voice_order_status("오류", "error")
+            self._append_voice_order_log(f"[error] {event.get('message', '')}")
+            return
+        if evt_type == "process_exit":
+            rc = int(event.get("returncode", -1))
+            proc = self._voice_worker_proc
+            if proc is not None and proc.poll() is not None:
+                self._voice_worker_proc = None
+            if rc != 0 and not self._voice_worker_done:
+                self._set_voice_order_status("프로세스 종료 오류", "error")
+                self._append_voice_order_log(f"워커 비정상 종료(returncode={rc})")
+            elif rc == 0 and not self._voice_worker_done:
+                self._set_voice_order_status("완료", "ok")
+                self._append_voice_order_log("워커 종료")
+            return
+        self._append_voice_order_log(str(event))
+
+    def _stop_voice_order_worker(self, reason: str = ""):
+        self._voice_worker_token += 1
+        self._voice_worker_done = True
+        self._voice_worker_thread = None
+        proc = self._voice_worker_proc
+        if proc is None:
+            if reason:
+                self._append_voice_order_log(f"워커 중지: {reason}")
+            return
+        self._voice_worker_proc = None
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=1.2)
+            except Exception:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=0.5)
+                except Exception:
+                    pass
+        if reason:
+            self._append_voice_order_log(f"워커 중지: {reason}")
+
     def _reserve_top_status_space(self):
         if self._status_row_ready:
             return
@@ -793,60 +1469,100 @@ class App(QMainWindow, form):
         if frame_l is None or frame_r is None or frame_log is None:
             return
 
-        target_y = TOP_STATUS_BAR_HEIGHT + TOP_STATUS_GAP
-        dx_l = frame_l.x()
-        dx_m = frame_m.x() if frame_m is not None else None
-        dx_r = frame_r.x()
-        w_l = frame_l.width()
-        w_m = frame_m.width() if frame_m is not None else None
-        w_r = frame_r.width()
+        margin = DASHBOARD_MARGIN
+        col_gap = DASHBOARD_COL_GAP
+        row_gap = DASHBOARD_ROW_GAP
 
-        total_h = max(640, self.centralwidget.height())
-        upper_h = int(total_h * 0.58)
-        upper_h = max(470, upper_h)
-        upper_h = min(upper_h, total_h - 240)
-        h_lr = upper_h
-        frame_l.setGeometry(dx_l, target_y, w_l, h_lr)
-        if frame_m is not None and dx_m is not None and w_m is not None:
-            frame_m.setGeometry(dx_m, target_y, w_m, h_lr)
-        frame_r.setGeometry(dx_r, target_y, w_r, h_lr)
+        has_top_status_row = self._top_status_panel is not None
+        target_y = (TOP_STATUS_BAR_HEIGHT + TOP_STATUS_GAP) if has_top_status_row else margin
+        col_w = [int(DASHBOARD_COL_WIDTHS[0]), int(DASHBOARD_COL_WIDTHS[1]), int(DASHBOARD_COL_WIDTHS[2])]
+        top_h = int(DASHBOARD_TOP_PANEL_HEIGHT)
+        bottom_h = int(DASHBOARD_BOTTOM_PANEL_HEIGHT)
+        content_h = top_h + row_gap + bottom_h
+
+        required_central_w = (2 * margin) + col_w[0] + col_gap + col_w[1] + col_gap + col_w[2]
+        required_central_h = target_y + content_h + margin + DASHBOARD_BOTTOM_EXTRA_MARGIN
+        central_w = int(self.centralwidget.width())
+        central_h = int(self.centralwidget.height())
+        extra_w = max(0, int(self.width()) - central_w)
+        extra_h = max(0, int(self.height()) - central_h)
+        required_window_w = required_central_w + extra_w
+        required_window_h = required_central_h + extra_h
+
+        if not bool(getattr(self, "_dashboard_resize_guard", False)):
+            self.setMinimumSize(required_window_w, required_window_h)
+            need_fit = (
+                (not self.isMaximized())
+                and (not self.isFullScreen())
+                and (self.width() != required_window_w or self.height() != required_window_h)
+            )
+            if need_fit:
+                self._dashboard_resize_guard = True
+                try:
+                    self.resize(required_window_w, required_window_h)
+                finally:
+                    self._dashboard_resize_guard = False
+
+        x_voice = margin
+        x_robot = x_voice + col_w[0] + col_gap
+        x_log = x_robot + col_w[1] + col_gap
+
+        y_top = target_y
+        y_bottom = y_top + top_h + row_gap
+
+        self._voice_panel_layout_rect = (x_voice, y_top, col_w[0], top_h)
+        frame_r.setGeometry(x_robot, y_top, col_w[1], top_h)
+        frame_log.setGeometry(x_log, y_top, col_w[2], content_h)
+        frame_l.setGeometry(x_voice, y_bottom, col_w[0], bottom_h)
+        if frame_m is not None:
+            frame_m.setGeometry(x_robot, y_bottom, col_w[1], bottom_h)
+
+        self._layout_voice_order_panel()
         self._layout_vision_widgets()
 
-        log_y = target_y + h_lr + TOP_STATUS_GAP + LOG_AREA_SHIFT_Y
-        log_h = max(260, self.centralwidget.height() - log_y - 8)
-        frame_log.setGeometry(frame_log.x(), log_y, frame_log.width(), log_h)
         if hasattr(self, "_log_clear_button") and self._log_clear_button is not None:
             btn_w = 96
             btn_h = 24
             self._log_clear_button.setGeometry(max(10, frame_log.width() - btn_w - 12), 8, btn_w, btn_h)
         if term is not None:
-            term.setGeometry(10, 40, frame_log.width() - 30, max(120, log_h - 50))
+            term.setGeometry(10, 40, max(120, frame_log.width() - 20), max(120, frame_log.height() - 50))
 
     def _layout_vision_widgets(self):
-        frame_l = getattr(self, "frame", None)
-        view = getattr(self, "yolo_view", None)
-        if frame_l is None or view is None:
-            return
-        top_y = 72
-        side = 10
-        bottom = 14
-        w = max(220, frame_l.width() - (side * 2))
-        calib_box = getattr(self, "calibration_group_box", None)
-        if calib_box is not None:
-            h = max(180, calib_box.y() - top_y - 8)
-        else:
-            h = max(180, frame_l.height() - top_y - bottom)
-        view.setGeometry(side, top_y, w, h)
-        frame_m = getattr(self, "frame_4", None)
-        view2 = getattr(self, "yolo_view_2", None)
-        if frame_m is not None and view2 is not None:
-            w2 = max(220, frame_m.width() - (side * 2))
-            calib_box2 = getattr(self, "calibration_group_box_2", None)
-            if calib_box2 is not None:
-                h2 = max(180, calib_box2.y() - top_y - 8)
-            else:
-                h2 = max(180, frame_m.height() - top_y - bottom)
-            view2.setGeometry(side, top_y, w2, h2)
+        def _layout_single(frame_obj, view_obj, calib_box):
+            if frame_obj is None or view_obj is None:
+                return
+            top_y = 93
+            side = 10
+            bottom = 14
+            gap = 8
+            min_view_h = 120
+            min_calib_h = 96
+            default_calib_h = 129
+            panel_w = max(220, frame_obj.width() - (side * 2))
+            panel_h = int(frame_obj.height())
+            view_h = max(min_view_h, panel_h - top_y - bottom)
+            if calib_box is not None:
+                enough_for_calib = panel_h >= (top_y + min_view_h + gap + min_calib_h + bottom)
+                if enough_for_calib:
+                    calib_h = min(default_calib_h, max(min_calib_h, int(panel_h * 0.28)))
+                    calib_y = max(top_y + min_view_h + gap, panel_h - bottom - calib_h)
+                    calib_box.setGeometry(side, calib_y, panel_w, calib_h)
+                    calib_box.show()
+                    view_h = max(min_view_h, calib_y - top_y - gap)
+                else:
+                    calib_box.hide()
+            view_obj.setGeometry(side, top_y, panel_w, view_h)
+
+        _layout_single(
+            getattr(self, "frame", None),
+            getattr(self, "yolo_view", None),
+            getattr(self, "calibration_group_box", None),
+        )
+        _layout_single(
+            getattr(self, "frame_4", None),
+            getattr(self, "yolo_view_2", None),
+            getattr(self, "calibration_group_box_2", None),
+        )
 
     def _setup_log_controls(self):
         frame_log = getattr(self, "frame_3", None)
@@ -1673,13 +2389,18 @@ class App(QMainWindow, form):
         text.setText(f"{title}: {state_text}")
 
     def _tick_top_status_animation(self):
-        if not self._top_status_state_cache:
-            return
-        for key, payload in list(self._top_status_state_cache.items()):
-            if not isinstance(payload, tuple) or len(payload) != 2:
-                continue
-            state_text, severity = payload
-            self._set_top_status(key, state_text, severity)
+        if self._top_status_state_cache:
+            for key, payload in list(self._top_status_state_cache.items()):
+                if not isinstance(payload, tuple) or len(payload) != 2:
+                    continue
+                state_text, severity = payload
+                self._set_top_status(key, state_text, severity)
+        voice_state = str(getattr(self, "_voice_order_status_text", "") or "").strip()
+        if voice_state:
+            self._set_voice_order_status(
+                voice_state,
+                str(getattr(self, "_voice_order_status_severity", "info") or "info"),
+            )
 
     def _set_robot_controls_enabled(self, enabled: bool):
         enabled = bool(enabled)
@@ -2563,7 +3284,8 @@ class App(QMainWindow, form):
         self._vision_cycle_label = getattr(self, "vision_cycle_label", None)
         self._vision_cycle_label_2 = getattr(self, "vision_cycle_label_2", None)
         self._robot_cycle_label = getattr(self, "robot_cycle_label", None)
-        style = f"color: #555; font-size: {max(7, UI_TERMINAL_FONT_SIZE - 1)}pt;"
+        self._voice_order_cycle_label = getattr(self, "_voice_order_cycle_label", None)
+        style = f"color: #555; font-size: {max(6, UI_TERMINAL_FONT_SIZE)}pt;"
         if self._vision_cycle_label is not None:
             self._vision_cycle_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self._vision_cycle_label.setStyleSheet(style)
@@ -2575,6 +3297,10 @@ class App(QMainWindow, form):
         if self._robot_cycle_label is not None:
             self._robot_cycle_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self._robot_cycle_label.setStyleSheet(style)
+        if self._voice_order_cycle_label is not None:
+            self._voice_order_cycle_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self._voice_order_cycle_label.setStyleSheet(style)
+            self._voice_order_cycle_label.show()
 
         serial_style = style
         self._vision_serial_label = getattr(self, "vision_serial_label", None)
@@ -2754,6 +3480,12 @@ class App(QMainWindow, form):
                 self._robot_cycle_label.setText("업데이트: - ms")
             else:
                 self._robot_cycle_label.setText(f"업데이트: {self._robot_cycle_ms:.1f} ms")
+        if hasattr(self, "_voice_order_cycle_label") and self._voice_order_cycle_label is not None:
+            if self._voice_order_cycle_ms is None:
+                self._voice_order_cycle_label.setText("업데이트: - ms")
+            else:
+                self._voice_order_cycle_label.setText(f"업데이트: {self._voice_order_cycle_ms:.1f} ms")
+        self._refresh_voice_order_webui_badge()
         self._refresh_vision_serial_labels()
 
     def performance_snapshot(self):
@@ -8542,6 +9274,7 @@ class App(QMainWindow, form):
         super().resizeEvent(event)
         if not UI_USE_DESIGN_GEOMETRY:
             self._layout_main_frames()
+        self._layout_voice_order_panel()
         self._reposition_top_status_row()
         self._reposition_cycle_labels()
         self._layout_control_buttons()
@@ -8894,6 +9627,8 @@ class App(QMainWindow, form):
             if hasattr(self, "_current_tool_timer") and self._current_tool_timer is not None:
                 self._current_tool_timer.stop()
 
+            self._stop_voice_cycle_worker(reason="앱 종료")
+            self._stop_voice_order_worker(reason="앱 종료")
             if self._reset_thread is not None:
                 self._reset_thread.quit()
                 if not self._reset_thread.wait(800):

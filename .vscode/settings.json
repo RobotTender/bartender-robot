@@ -1,3 +1,19 @@
 {
-    "ros.distro": "jazzy"
+    "ros.distro": "jazzy",
+    "python.autoComplete.extraPaths": [
+        "/home/up/ros2_ws/install/dsr_visualservoing/lib/python3.12/site-packages",
+        "/home/up/ros2_ws/install/dsr_mujoco/lib/python3.12/site-packages",
+        "/home/up/ros2_ws/install/dsr_bringup2/lib/python3.12/site-packages",
+        "/home/up/ros2_ws/install/dsr_msgs2/lib/python3.12/site-packages",
+        "/home/up/ros2_ws/install/dsr_common2/lib/python3.12/site-packages",
+        "/opt/ros/jazzy/lib/python3.12/site-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/up/ros2_ws/install/dsr_visualservoing/lib/python3.12/site-packages",
+        "/home/up/ros2_ws/install/dsr_mujoco/lib/python3.12/site-packages",
+        "/home/up/ros2_ws/install/dsr_bringup2/lib/python3.12/site-packages",
+        "/home/up/ros2_ws/install/dsr_msgs2/lib/python3.12/site-packages",
+        "/home/up/ros2_ws/install/dsr_common2/lib/python3.12/site-packages",
+        "/opt/ros/jazzy/lib/python3.12/site-packages"
+    ]
 }

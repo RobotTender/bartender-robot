@@ -4,6 +4,9 @@ import time
 import math
 import os
 import csv
+import sys
+import json
+import subprocess
 
 import DR_init
 try:
@@ -95,6 +98,10 @@ GRIPPER_RELEASE_DISTANCE_MM = gripper_pulse_to_distance_mm(0)
 HOME_POSJ = (0.00, -33.24, 104.14, -178.48, -22.49, 90.49)
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
+SRC_ROOT = os.path.join(PROJECT_ROOT, "src")
+if SRC_ROOT not in sys.path:
+    sys.path.insert(0, SRC_ROOT)
+VOICE_ORDER_WORKER_PATH = os.path.join(SRC_ROOT, "order_integration", "voice_order_test_worker.py")
 PARAM_DIR = os.path.join(PROJECT_ROOT, "config")
 PARAM_FILE = os.path.join(PARAM_DIR, "parameter.csv")
 
@@ -498,6 +505,9 @@ class RobotBackend:
         self._fixed_pick_place_abc = list(DEFAULT_PICK_PLACE_ABC) if DEFAULT_PICK_PLACE_ABC is not None else None
         self._home_posj_lock = threading.Lock()
         self._home_posj = tuple(float(v) for v in list(HOME_POSJ)[:6])
+        self._voice_order_lock = threading.Lock()
+        self._voice_order_last_payload = None
+        self._voice_order_last_seen_at = None
         self._load_home_posj_from_file()
 
     def _parse_home_row(self, row):
@@ -1890,6 +1900,164 @@ class RobotBackend:
         if gr_ok:
             return True, f"리셋 완료: {name} -> STANDBY, {gr_msg}"
         return True, f"리셋 완료: {name} -> STANDBY, 하지만 {gr_msg}"
+
+    def run_voice_order_runtime(
+        self,
+        input_text: str,
+        recommend_menu: str = "",
+        allow_llm: bool = True,
+        request_stt: bool = False,
+    ):
+        text = str(input_text or "").strip()
+        rec = str(recommend_menu or "").strip()
+        llm_on = bool(allow_llm)
+        req_stt = bool(request_stt) or (not bool(text))
+        payload_in = {
+            "input_text": text,
+            "recommend_menu": rec,
+            "allow_llm": llm_on,
+            "request_stt": req_stt,
+        }
+        if not os.path.isfile(VOICE_ORDER_WORKER_PATH):
+            payload = {
+                "events": [
+                    {
+                        "type": "error",
+                        "actor": "voice_backend",
+                        "message": f"음성처리 워커 경로 없음: {VOICE_ORDER_WORKER_PATH}",
+                    }
+                ],
+                "result": {
+                    "status": "error",
+                    "selected_menu": "",
+                    "selected_menu_label": "",
+                    "tts_text": "음성처리 워커를 찾지 못했습니다.",
+                    "recipe": {},
+                    "route": "worker_not_found",
+                },
+                "ok": False,
+            }
+            with self._voice_order_lock:
+                self._voice_order_last_payload = payload
+                self._voice_order_last_seen_at = time.monotonic()
+            return False, payload, "음성처리 워커를 찾지 못했습니다."
+
+        cmd = [sys.executable, VOICE_ORDER_WORKER_PATH]
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=PROJECT_ROOT,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                bufsize=1,
+                env=dict(os.environ, PYTHONUNBUFFERED="1"),
+            )
+            raw_out, raw_err = proc.communicate(json.dumps(payload_in, ensure_ascii=False), timeout=40.0)
+            rc = int(proc.returncode)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            payload = {
+                "events": [
+                    {"type": "error", "actor": "voice_backend", "message": "음성처리 워커 타임아웃(40s)"}
+                ],
+                "result": {
+                    "status": "error",
+                    "selected_menu": "",
+                    "selected_menu_label": "",
+                    "tts_text": "음성처리 응답 시간초과",
+                    "recipe": {},
+                    "route": "worker_timeout",
+                },
+                "ok": False,
+            }
+            with self._voice_order_lock:
+                self._voice_order_last_payload = payload
+                self._voice_order_last_seen_at = time.monotonic()
+            return False, payload, "음성처리 워커 타임아웃"
+        except Exception as e:
+            payload = {
+                "events": [{"type": "error", "actor": "voice_backend", "message": f"워커 실행 실패: {e}"}],
+                "result": {
+                    "status": "error",
+                    "selected_menu": "",
+                    "selected_menu_label": "",
+                    "tts_text": f"음성처리 워커 실행 실패: {e}",
+                    "recipe": {},
+                    "route": "worker_spawn_error",
+                },
+                "ok": False,
+            }
+            with self._voice_order_lock:
+                self._voice_order_last_payload = payload
+                self._voice_order_last_seen_at = time.monotonic()
+            return False, payload, f"음성처리 워커 실행 실패: {e}"
+
+        events = []
+        result = {}
+        done_ok = (rc == 0)
+
+        for raw_line in str(raw_out or "").splitlines():
+            line = str(raw_line or "").strip()
+            if not line:
+                continue
+            try:
+                evt = json.loads(line)
+            except Exception:
+                events.append({"type": "log", "actor": "voice_worker", "message": line})
+                continue
+            if not isinstance(evt, dict):
+                continue
+            evt_type = str(evt.get("type", "") or "").strip().lower()
+            if evt_type == "result":
+                result = dict(evt)
+            elif evt_type == "done":
+                done_ok = bool(evt.get("ok", False))
+            else:
+                events.append(dict(evt))
+
+        err_text = str(raw_err or "").strip()
+        if err_text:
+            for line in err_text.splitlines():
+                s = str(line or "").strip()
+                if s:
+                    events.append({"type": "stderr", "actor": "voice_worker", "message": s})
+            done_ok = False
+
+        if not result:
+            result = {
+                "status": "error" if not done_ok else "unknown",
+                "selected_menu": "",
+                "selected_menu_label": "",
+                "tts_text": "음성처리 결과 없음" if not done_ok else "-",
+                "recipe": {},
+                "route": "worker_no_result",
+            }
+
+        payload = {
+            "events": events,
+            "result": result,
+            "ok": bool(done_ok),
+        }
+        with self._voice_order_lock:
+            self._voice_order_last_payload = payload
+            self._voice_order_last_seen_at = time.monotonic()
+        if done_ok:
+            return True, payload, "음성처리 결과 수신 완료"
+        return False, payload, "음성처리 실패"
+
+    def get_voice_order_snapshot(self):
+        with self._voice_order_lock:
+            payload = self._voice_order_last_payload
+            seen_at = self._voice_order_last_seen_at
+            if payload is None:
+                return None, seen_at
+            return dict(payload), seen_at
 
     def send_pick_place(self, value):
         if not self._ready_event.is_set():
