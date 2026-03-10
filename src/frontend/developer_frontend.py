@@ -3,7 +3,7 @@ import sys
 import glob
 import json
 import csv
-import shlex
+import html
 import signal
 import subprocess
 import threading
@@ -125,7 +125,9 @@ CALIB_CAMERA_INFO_TOPIC_PRIMARY = os.environ.get("CALIB_CAMERA_INFO_TOPIC", "/ca
 CALIB_CAMERA_INFO_TOPIC_FALLBACK = os.environ.get("CALIB_CAMERA_INFO_TOPIC_FALLBACK", "/camera/color/camera_info")
 CALIB_OUTPUT_META_TOPIC_1 = os.environ.get("CALIB_OUTPUT_META_TOPIC_1", "/vision1/calibration/meta")
 CALIB_OUTPUT_META_TOPIC_2 = os.environ.get("CALIB_OUTPUT_META_TOPIC_2", "/vision2/calibration/meta")
-YOLO_AUTO_LAUNCH_NODE = os.environ.get("YOLO_AUTO_LAUNCH_NODE", "0") == "1"
+VISION_OBJECT_META_TOPIC_1 = os.environ.get("VISION_OBJECT_META_TOPIC_1", "/vision1/object/meta")
+VISION_VOLUME_META_TOPIC_2 = os.environ.get("VISION_VOLUME_META_TOPIC_2", "/vision2/volume/meta")
+YOLO_AUTO_LAUNCH_NODE = os.environ.get("YOLO_AUTO_LAUNCH_NODE", "1") == "1"
 YOLO_AUTO_LAUNCH_ALWAYS = os.environ.get("YOLO_AUTO_LAUNCH_ALWAYS", "0") == "1"
 YOLO_AUTO_LAUNCH_CMD = os.environ.get("YOLO_AUTO_LAUNCH_CMD", "").strip()
 CALIB_HELPER_AUTO_LAUNCH = os.environ.get("CALIB_HELPER_AUTO_LAUNCH", "0") == "1"
@@ -174,6 +176,11 @@ CALIB_DEFAULT_PATTERN_ROWS = 9
 CALIB_DETECTION_HOLD_SEC = float(os.environ.get("CALIB_DETECTION_HOLD_SEC", "1.2"))
 CALIB_DETECT_INTERVAL_SEC = float(os.environ.get("CALIB_DETECT_INTERVAL_SEC", "0.18"))
 CALIB_PROCESS_HZ = float(os.environ.get("CALIB_PROCESS_HZ", "10.0"))
+VISION_META_PROCESS_HZ = float(os.environ.get("VISION_META_PROCESS_HZ", "8.0"))
+VISION_META_STALE_SEC = float(os.environ.get("VISION_META_STALE_SEC", "2.0"))
+VISION_META_HOLD_SEC = float(os.environ.get("VISION_META_HOLD_SEC", "1.5"))
+VISION_RUNTIME_UI_HOLD_SEC = float(os.environ.get("VISION_RUNTIME_UI_HOLD_SEC", "3.0"))
+VISION_RENDER_INTERVAL_MS = max(15, int(float(os.environ.get("VISION_RENDER_INTERVAL_MS", "33"))))
 DEFAULT_VISION1_SERIAL = os.environ.get("DEFAULT_VISION1_SERIAL", "313522301601")
 DEFAULT_VISION2_SERIAL = os.environ.get("DEFAULT_VISION2_SERIAL", "311322302867")
 CALIB_SEQUENCE_ROW_DEFS = [
@@ -354,6 +361,7 @@ class App(QMainWindow, form):
     ros_log_received = pyqtSignal(str)
     ros_image_received = pyqtSignal(QImage)
     calibration_ui_refresh_requested = pyqtSignal()
+    vision_runtime_ui_refresh_requested = pyqtSignal(int)
 
     def __init__(self, backend=None, auto_start_backend=True):
         super().__init__()
@@ -449,6 +457,16 @@ class App(QMainWindow, form):
         self._calib_proc_started_by_ui_2 = False
         self._calib_status_blink_on = False
         self._calibration_sequence_running = False
+        self._vision_meta_payload_1 = None
+        self._vision_meta_payload_2 = None
+        self._vision_meta_received_at_1 = None
+        self._vision_meta_received_at_2 = None
+        self._vision_meta_last_nonempty_payload_1 = None
+        self._vision_meta_last_nonempty_payload_2 = None
+        self._vision_meta_last_nonempty_at_1 = None
+        self._vision_meta_last_nonempty_at_2 = None
+        self._vision_meta_cycle_ms_1 = None
+        self._vision_meta_cycle_ms_2 = None
 
         self._setup_control_buttons()
         self._set_robot_controls_enabled(False)
@@ -466,6 +484,7 @@ class App(QMainWindow, form):
         self.ros_log_received.connect(self.append_log)
         self.ros_image_received.connect(self._update_yolo_view)
         self.calibration_ui_refresh_requested.connect(self._update_calibration_mode_ui)
+        self.vision_runtime_ui_refresh_requested.connect(self._update_vision_runtime_panel_ui)
         sys.stdout = self._stdout
         sys.stderr = self._stderr
         sys.excepthook = self._handle_exception
@@ -504,10 +523,10 @@ class App(QMainWindow, form):
         self._current_tool_timer.start(700)
         self._vision_render_timer_1 = QTimer(self)
         self._vision_render_timer_1.timeout.connect(self._drain_pending_vision_frame_1)
-        self._vision_render_timer_1.start(16)
+        self._vision_render_timer_1.start(VISION_RENDER_INTERVAL_MS)
         self._vision_render_timer_2 = QTimer(self)
         self._vision_render_timer_2.timeout.connect(self._drain_pending_vision_frame_2)
-        self._vision_render_timer_2.start(16)
+        self._vision_render_timer_2.start(VISION_RENDER_INTERVAL_MS)
 
         self._yolo_thread = None
         self._yolo_worker = None
@@ -516,6 +535,8 @@ class App(QMainWindow, form):
         self._vision_sub_2 = None
         self._calib_meta_sub_1 = None
         self._calib_meta_sub_2 = None
+        self._vision_meta_sub_1 = None
+        self._vision_meta_sub_2 = None
         self._vision_depth_sub = None
         self._vision_depth_sub_2 = None
         self._vision_cb_group_1 = ReentrantCallbackGroup() if ReentrantCallbackGroup is not None else None
@@ -528,12 +549,20 @@ class App(QMainWindow, form):
         self._vision_image_topic_in_use_2 = None
         self._calib_meta_topic_in_use_1 = None
         self._calib_meta_topic_in_use_2 = None
+        self._vision_meta_topic_in_use_1 = None
+        self._vision_meta_topic_in_use_2 = None
         self._vision_rebind_last_try_at = 0.0
         self._vision_bridge_fail_last_at = 0.0
         self._vision_bridge_fail_last_msg = ""
         self._external_vision_proc = None
         self._external_vision_cmd = None
         self._external_vision_started_by_ui = False
+        self._external_vision_proc_1 = None
+        self._external_vision_proc_2 = None
+        self._external_vision_cmd_1 = None
+        self._external_vision_cmd_2 = None
+        self._external_vision_started_by_ui_1 = False
+        self._external_vision_started_by_ui_2 = False
         self._last_yolo_image_size = None
         self._last_yolo_image_size_2 = None
         self._vision_depth_image = None
@@ -545,6 +574,16 @@ class App(QMainWindow, form):
         self._camera_intrinsics = None  # legacy alias for panel 1
         self._camera_intrinsics_1 = None  # (fx, fy, cx, cy)
         self._camera_intrinsics_2 = None  # (fx, fy, cx, cy)
+        self._vision_meta_payload_1 = None
+        self._vision_meta_payload_2 = None
+        self._vision_meta_received_at_1 = None
+        self._vision_meta_received_at_2 = None
+        self._vision_meta_last_nonempty_payload_1 = None
+        self._vision_meta_last_nonempty_payload_2 = None
+        self._vision_meta_last_nonempty_at_1 = None
+        self._vision_meta_last_nonempty_at_2 = None
+        self._vision_meta_cycle_ms_1 = None
+        self._vision_meta_cycle_ms_2 = None
         self._last_mouse_xy = None
         self._last_mouse_xy_2 = None
         self._last_clicked_vision_xyz_mm = None
@@ -568,12 +607,31 @@ class App(QMainWindow, form):
         self._last_yolo_qimage_2 = None
         self._pending_yolo_qimage = None
         self._pending_yolo_qimage_2 = None
+        self._last_raw_bgr_1 = None
+        self._last_raw_bgr_2 = None
+        self._latest_vision_bgr_1 = None
+        self._latest_vision_bgr_2 = None
+        self._latest_vision_frame_at_1 = None
+        self._latest_vision_frame_at_2 = None
+        self._latest_vision_token_1 = 0
+        self._latest_vision_token_2 = 0
         self._pending_vision_token_1 = 0
         self._pending_vision_token_2 = 0
         self._vision_frame_pending = False
         self._vision_frame_pending_2 = False
         self._vision_frame_lock_1 = threading.Lock()
         self._vision_frame_lock_2 = threading.Lock()
+        self._vision_raw_frame_lock_1 = threading.Lock()
+        self._vision_raw_frame_lock_2 = threading.Lock()
+        self._vision_compose_lock_1 = threading.Lock()
+        self._vision_compose_lock_2 = threading.Lock()
+        self._vision_compose_cv_1 = threading.Condition(self._vision_compose_lock_1)
+        self._vision_compose_cv_2 = threading.Condition(self._vision_compose_lock_2)
+        self._vision_compose_pending_1 = False
+        self._vision_compose_pending_2 = False
+        self._vision_compose_thread_1 = None
+        self._vision_compose_thread_2 = None
+        self._vision_compose_stop = threading.Event()
         self._yolo_view_map = None
         self._yolo_view_map_2 = None
         self._last_robot_posx = None
@@ -596,6 +654,8 @@ class App(QMainWindow, form):
         self._vision_render_delay_ms_2 = None
         self._vision_render_interval_ms = None
         self._vision_render_interval_ms_2 = None
+        self._vision_compose_ms = None
+        self._vision_compose_ms_2 = None
         self._pending_vision_enqueued_at_1 = None
         self._pending_vision_enqueued_at_2 = None
         self._calib_proc_input_ms_1 = None
@@ -620,18 +680,26 @@ class App(QMainWindow, form):
         self._runtime_camera_serial_1 = DEFAULT_VISION1_SERIAL
         self._runtime_camera_serial_2 = DEFAULT_VISION2_SERIAL
         self._available_camera_serials = []
-        self._vision_serial_label = None
-        self._vision_serial_label_2 = None
-        self._vision_serial_change_button = None
-        self._vision_serial_change_button_2 = None
-        self._vision_rotate_left_button = None
-        self._vision_rotate_zero_button = None
-        self._vision_rotate_right_button = None
-        self._vision_rotation_label = None
-        self._vision_rotate_left_button_2 = None
-        self._vision_rotate_zero_button_2 = None
-        self._vision_rotate_right_button_2 = None
-        self._vision_rotation_label_2 = None
+        self._vision_serial_label = getattr(self, "_vision_serial_label", None)
+        self._vision_serial_label_2 = getattr(self, "_vision_serial_label_2", None)
+        self._vision_mode_badge_1 = getattr(self, "_vision_mode_badge_1", None)
+        self._vision_mode_badge_2 = getattr(self, "_vision_mode_badge_2", None)
+        self._vision_meta_rate_label_1 = getattr(self, "_vision_meta_rate_label_1", None)
+        self._vision_meta_rate_label_2 = getattr(self, "_vision_meta_rate_label_2", None)
+        self._vision_runtime_detail_label_1 = getattr(self, "_vision_runtime_detail_label_1", None)
+        self._vision_runtime_detail_label_2 = getattr(self, "_vision_runtime_detail_label_2", None)
+        self._vision_runtime_list_label_1 = getattr(self, "_vision_runtime_list_label_1", None)
+        self._vision_runtime_list_label_2 = getattr(self, "_vision_runtime_list_label_2", None)
+        self._vision_serial_change_button = getattr(self, "_vision_serial_change_button", None)
+        self._vision_serial_change_button_2 = getattr(self, "_vision_serial_change_button_2", None)
+        self._vision_rotate_left_button = getattr(self, "_vision_rotate_left_button", None)
+        self._vision_rotate_zero_button = getattr(self, "_vision_rotate_zero_button", None)
+        self._vision_rotate_right_button = getattr(self, "_vision_rotate_right_button", None)
+        self._vision_rotation_label = getattr(self, "_vision_rotation_label", None)
+        self._vision_rotate_left_button_2 = getattr(self, "_vision_rotate_left_button_2", None)
+        self._vision_rotate_zero_button_2 = getattr(self, "_vision_rotate_zero_button_2", None)
+        self._vision_rotate_right_button_2 = getattr(self, "_vision_rotate_right_button_2", None)
+        self._vision_rotation_label_2 = getattr(self, "_vision_rotation_label_2", None)
         self._vision_rotation_deg_1 = 0
         self._vision_rotation_deg_2 = 0
         self._vision_stream_token_1 = 0
@@ -640,8 +708,11 @@ class App(QMainWindow, form):
         self._set_vision_panel_controls_enabled(1, bool(self._top_status_enabled.get("vision", True)))
         self._set_vision_panel_controls_enabled(2, bool(self._top_status_enabled.get("vision2", True)))
         self._sync_vision_render_timers()
+        self._start_vision_compose_workers()
         self._save_vision_serial_settings()
         self._mode_switch_grace_until = 0.0
+        self._vision_mode_switch_grace_until_1 = 0.0
+        self._vision_mode_switch_grace_until_2 = 0.0
         self._vision_drop_frames_until_1 = 0.0
         self._vision_drop_frames_until_2 = 0.0
         self._last_robot_comm_connected = False
@@ -949,6 +1020,7 @@ class App(QMainWindow, form):
                 self._vision_cycle_ms = None
                 self._teardown_external_vision_bridge_panel(1)
                 self._stop_calibration_process(1)
+                self._stop_external_vision_process_panel(1)
                 self._clear_vision_view_data(panel_index=1)
                 if YOLO_EXTERNAL_NODE and (not bool(self._top_status_enabled.get("vision2", True))):
                     self._stop_external_vision_process()
@@ -971,6 +1043,7 @@ class App(QMainWindow, form):
                 self._vision_cycle_ms_2 = None
                 self._teardown_external_vision_bridge_panel(2)
                 self._stop_calibration_process(2)
+                self._stop_external_vision_process_panel(2)
                 self._clear_vision_view_data(panel_index=2)
                 if YOLO_EXTERNAL_NODE and (not bool(self._top_status_enabled.get("vision", True))):
                     self._stop_external_vision_process()
@@ -1021,9 +1094,8 @@ class App(QMainWindow, form):
         if self.backend is None:
             return
         try:
-            calib_on_any = bool(self._calibration_mode_enabled_1 or self._calibration_mode_enabled_2)
-            if YOLO_EXTERNAL_NODE and YOLO_AUTO_LAUNCH_NODE and (not calib_on_any):
-                self._ensure_external_vision_process()
+            if YOLO_EXTERNAL_NODE and YOLO_AUTO_LAUNCH_NODE:
+                self._ensure_external_vision_process_panel(panel)
             self._sync_calibration_processes()
             panel = 1 if key == "vision" else 2
             self._setup_external_vision_bridge_panel(panel)
@@ -1065,15 +1137,176 @@ class App(QMainWindow, form):
         if hasattr(self, "_vision_render_timer_1") and self._vision_render_timer_1 is not None:
             want_1 = bool(self._top_status_enabled.get("vision", True))
             if want_1 and (not self._vision_render_timer_1.isActive()):
-                self._vision_render_timer_1.start(16)
+                self._vision_render_timer_1.start(VISION_RENDER_INTERVAL_MS)
             elif (not want_1) and self._vision_render_timer_1.isActive():
                 self._vision_render_timer_1.stop()
         if hasattr(self, "_vision_render_timer_2") and self._vision_render_timer_2 is not None:
             want_2 = bool(self._top_status_enabled.get("vision2", True))
             if want_2 and (not self._vision_render_timer_2.isActive()):
-                self._vision_render_timer_2.start(16)
+                self._vision_render_timer_2.start(VISION_RENDER_INTERVAL_MS)
             elif (not want_2) and self._vision_render_timer_2.isActive():
                 self._vision_render_timer_2.stop()
+
+    def _start_vision_compose_workers(self):
+        self._vision_compose_stop.clear()
+        if self._vision_compose_thread_1 is None or not self._vision_compose_thread_1.is_alive():
+            self._vision_compose_thread_1 = threading.Thread(
+                target=self._vision_compose_loop,
+                args=(1,),
+                name="vision-compose-1",
+                daemon=True,
+            )
+            self._vision_compose_thread_1.start()
+        if self._vision_compose_thread_2 is None or not self._vision_compose_thread_2.is_alive():
+            self._vision_compose_thread_2 = threading.Thread(
+                target=self._vision_compose_loop,
+                args=(2,),
+                name="vision-compose-2",
+                daemon=True,
+            )
+            self._vision_compose_thread_2.start()
+
+    def _stop_vision_compose_workers(self):
+        self._vision_compose_stop.set()
+        for cond in (
+            getattr(self, "_vision_compose_cv_1", None),
+            getattr(self, "_vision_compose_cv_2", None),
+        ):
+            if cond is None:
+                continue
+            with cond:
+                cond.notify_all()
+        for attr in ("_vision_compose_thread_1", "_vision_compose_thread_2"):
+            thread = getattr(self, attr, None)
+            if thread is None:
+                continue
+            thread.join(timeout=0.8)
+            setattr(self, attr, None)
+
+    def _queue_vision_frame_for_compose(self, panel_index: int, bgr, now=None, stream_token=None):
+        if bgr is None:
+            return
+        panel = 2 if int(panel_index) == 2 else 1
+        t_now = time.monotonic() if now is None else float(now)
+        h, w = bgr.shape[:2]
+        if panel == 2:
+            self._last_yolo_image_size_2 = (w, h)
+            cond = self._vision_compose_cv_2
+            token = int(self._vision_stream_token_2 if stream_token is None else stream_token)
+            with cond:
+                self._latest_vision_bgr_2 = bgr
+                self._latest_vision_frame_at_2 = t_now
+                self._latest_vision_token_2 = token
+                self._vision_compose_pending_2 = True
+                cond.notify()
+        else:
+            self._last_yolo_image_size = (w, h)
+            cond = self._vision_compose_cv_1
+            token = int(self._vision_stream_token_1 if stream_token is None else stream_token)
+            with cond:
+                self._latest_vision_bgr_1 = bgr
+                self._latest_vision_frame_at_1 = t_now
+                self._latest_vision_token_1 = token
+                self._vision_compose_pending_1 = True
+                cond.notify()
+
+    def _cache_latest_raw_vision_frame(self, panel_index: int, bgr):
+        if bgr is None:
+            return
+        panel = 2 if int(panel_index) == 2 else 1
+        if panel == 2:
+            with self._vision_raw_frame_lock_2:
+                self._last_raw_bgr_2 = bgr
+        else:
+            with self._vision_raw_frame_lock_1:
+                self._last_raw_bgr_1 = bgr
+
+    def _request_vision_overlay_refresh(self, panel_index: int):
+        panel = 2 if int(panel_index) == 2 else 1
+        if panel == 2:
+            if not bool(self._top_status_enabled.get("vision2", True)):
+                return
+            token = int(getattr(self, "_vision_stream_token_2", 0))
+            with self._vision_raw_frame_lock_2:
+                raw_bgr = None if self._last_raw_bgr_2 is None else self._last_raw_bgr_2.copy()
+        else:
+            if not bool(self._top_status_enabled.get("vision", True)):
+                return
+            token = int(getattr(self, "_vision_stream_token_1", 0))
+            with self._vision_raw_frame_lock_1:
+                raw_bgr = None if self._last_raw_bgr_1 is None else self._last_raw_bgr_1.copy()
+        if raw_bgr is None:
+            return
+        self._queue_vision_frame_for_compose(panel, raw_bgr, now=time.monotonic(), stream_token=token)
+
+    def _compose_vision_frame_qimage(self, panel_index: int, bgr):
+        panel = 2 if int(panel_index) == 2 else 1
+        frame = np.ascontiguousarray(bgr)
+        h, w = frame.shape[:2]
+        if panel == 2:
+            self._last_yolo_image_size_2 = (w, h)
+            calib_on = bool(self._calibration_mode_enabled_2)
+            calib_data = self._calib_last_points_uvz_mm_2
+        else:
+            self._last_yolo_image_size = (w, h)
+            calib_on = bool(self._calibration_mode_enabled_1)
+            calib_data = self._calib_last_points_uvz_mm_1
+        if not calib_on:
+            frame = self._draw_vision_runtime_meta_overlay(frame, panel_index=panel)
+        frame = self._draw_vision_axes_overlay(frame, panel_index=panel)
+        if calib_on:
+            if calib_data is not None:
+                frame = self._draw_calib_points_only(frame, calib_data, panel_index=panel)
+            frame = self._draw_calib_info_overlay(frame, calib_data)
+        rgb = np.ascontiguousarray(frame[:, :, ::-1])
+        return QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy()
+
+    def _vision_compose_loop(self, panel_index: int):
+        panel = 2 if int(panel_index) == 2 else 1
+        if panel == 2:
+            cond = self._vision_compose_cv_2
+        else:
+            cond = self._vision_compose_cv_1
+        while not self._vision_compose_stop.is_set():
+            with cond:
+                while not self._vision_compose_stop.is_set():
+                    pending = self._vision_compose_pending_2 if panel == 2 else self._vision_compose_pending_1
+                    if pending:
+                        break
+                    cond.wait(timeout=0.2)
+                if self._vision_compose_stop.is_set():
+                    return
+                if panel == 2:
+                    bgr = self._latest_vision_bgr_2
+                    frame_at = self._latest_vision_frame_at_2
+                    token = self._latest_vision_token_2
+                    self._latest_vision_bgr_2 = None
+                    self._latest_vision_frame_at_2 = None
+                    self._vision_compose_pending_2 = False
+                else:
+                    bgr = self._latest_vision_bgr_1
+                    frame_at = self._latest_vision_frame_at_1
+                    token = self._latest_vision_token_1
+                    self._latest_vision_bgr_1 = None
+                    self._latest_vision_frame_at_1 = None
+                    self._vision_compose_pending_1 = False
+            if bgr is None:
+                continue
+            current_token = int(getattr(self, "_vision_stream_token_2", 0)) if panel == 2 else int(getattr(self, "_vision_stream_token_1", 0))
+            if int(token) != current_token:
+                continue
+            compose_started_at = time.monotonic()
+            try:
+                qimg = self._compose_vision_frame_qimage(panel, bgr)
+            except Exception:
+                continue
+            compose_ms = (time.monotonic() - compose_started_at) * 1000.0
+            if panel == 2:
+                self._vision_compose_ms_2 = compose_ms
+                self._enqueue_vision_frame_2(qimg, now=frame_at, stream_token=token)
+            else:
+                self._vision_compose_ms = compose_ms
+                self._enqueue_vision_frame(qimg, now=frame_at, stream_token=token)
 
     def _clear_vision_view_data(self, panel_index: int):
         panel = 2 if int(panel_index) == 2 else 1
@@ -1082,29 +1315,50 @@ class App(QMainWindow, form):
                 self._pending_yolo_qimage_2 = None
                 self._pending_vision_token_2 = 0
                 self._vision_frame_pending_2 = False
+            with self._vision_raw_frame_lock_2:
+                self._last_raw_bgr_2 = None
+            with self._vision_compose_cv_2:
+                self._latest_vision_bgr_2 = None
+                self._latest_vision_frame_at_2 = None
+                self._latest_vision_token_2 = 0
+                self._vision_compose_pending_2 = False
             self._last_yolo_qimage_2 = None
             self._vision_prev_update_at_2 = None
             self._vision_cycle_ms_2 = None
             self._vision_decode_ms_2 = None
             self._vision_render_delay_ms_2 = None
             self._vision_render_interval_ms_2 = None
+            self._vision_compose_ms_2 = None
             self._pending_vision_enqueued_at_2 = None
             self._vision_render_prev_at_2 = None
             self._vision_depth_image_2 = None
             self._vision_depth_shape_2 = None
             self._vision_depth_encoding_2 = None
             self._camera_intrinsics_2 = None
+            self._vision_meta_payload_2 = None
+            self._vision_meta_received_at_2 = None
+            self._vision_meta_last_nonempty_payload_2 = None
+            self._vision_meta_last_nonempty_at_2 = None
+            self._vision_meta_cycle_ms_2 = None
         else:
             with self._vision_frame_lock_1:
                 self._pending_yolo_qimage = None
                 self._pending_vision_token_1 = 0
                 self._vision_frame_pending = False
+            with self._vision_raw_frame_lock_1:
+                self._last_raw_bgr_1 = None
+            with self._vision_compose_cv_1:
+                self._latest_vision_bgr_1 = None
+                self._latest_vision_frame_at_1 = None
+                self._latest_vision_token_1 = 0
+                self._vision_compose_pending_1 = False
             self._last_yolo_qimage = None
             self._vision_prev_update_at = None
             self._vision_cycle_ms = None
             self._vision_decode_ms = None
             self._vision_render_delay_ms = None
             self._vision_render_interval_ms = None
+            self._vision_compose_ms = None
             self._pending_vision_enqueued_at_1 = None
             self._vision_render_prev_at = None
             self._vision_depth_image = None
@@ -1112,6 +1366,11 @@ class App(QMainWindow, form):
             self._vision_depth_encoding = None
             self._camera_intrinsics_1 = None
             self._camera_intrinsics = None
+            self._vision_meta_payload_1 = None
+            self._vision_meta_received_at_1 = None
+            self._vision_meta_last_nonempty_payload_1 = None
+            self._vision_meta_last_nonempty_at_1 = None
+            self._vision_meta_cycle_ms_1 = None
         if panel == 2:
             self._last_vision_frame_at_2 = None
             view = getattr(self, "yolo_view_2", None)
@@ -1169,6 +1428,16 @@ class App(QMainWindow, form):
         self._vision_stream_token_1 += 1
         return self._vision_stream_token_1
 
+    def _vision_mode_switch_grace_until(self, panel_index: int):
+        panel = 2 if int(panel_index) == 2 else 1
+        return float(
+            getattr(
+                self,
+                "_vision_mode_switch_grace_until_2" if panel == 2 else "_vision_mode_switch_grace_until_1",
+                0.0,
+            )
+        )
+
     def _camera_status_for_panel(self, panel_index: int, now: float, enabled: bool):
         panel = 2 if int(panel_index) == 2 else 1
         if not enabled:
@@ -1177,7 +1446,7 @@ class App(QMainWindow, form):
             getattr(self, "_last_camera_frame_at_2", None) if panel == 2 else getattr(self, "_last_camera_frame_at_1", None)
         )
         if last_camera_frame_at is None:
-            return "확인중" if now < float(getattr(self, "_mode_switch_grace_until", 0.0)) else "끊김"
+            return "확인중" if now < self._vision_mode_switch_grace_until(panel) else "끊김"
         if (now - float(last_camera_frame_at)) > POSITION_STALE_SEC:
             return "지연"
         return "정상 수신 중"
@@ -1721,7 +1990,7 @@ class App(QMainWindow, form):
             else:
                 vision_text = self._camera_status_for_panel(panel, now, vision_on)
 
-        if now < float(getattr(self, "_mode_switch_grace_until", 0.0)) and vision_text in ("지연", "끊김", "오류", "실패"):
+        if now < self._vision_mode_switch_grace_until(panel) and vision_text in ("지연", "끊김", "오류", "실패"):
             vision_text = "전환중"
 
         calib_on_any = bool(getattr(self, "_calibration_mode_enabled_1", False) or getattr(self, "_calibration_mode_enabled_2", False))
@@ -1733,9 +2002,9 @@ class App(QMainWindow, form):
             retry_needed = True
             self._vision_rebind_last_try_at = now
             if (not calib_on_any) and YOLO_EXTERNAL_NODE and YOLO_AUTO_LAUNCH_NODE:
-                self._ensure_external_vision_process()
-            self._sync_calibration_processes()
-            self._rebind_external_vision_bridge_for_mode()
+                self._ensure_external_vision_process_panel(panel)
+            self._sync_calibration_process_panel(panel)
+            self._rebind_external_vision_bridge_panel_for_mode(panel)
 
         if retry_needed:
             if not bool(getattr(self, "_vision_retry_notice_logged", {}).get(panel, False)):
@@ -1766,6 +2035,7 @@ class App(QMainWindow, form):
             self._set_signal_state_label(self._vision_state_label, vision_text, vision_severity, False)
         self._set_top_status(key, vision_text, vision_severity)
         self._update_cycle_time_labels()
+        self._update_vision_runtime_panel_ui(panel)
 
     def _set_signal_state_label(self, label: QLabel, text: str, severity: str, is_bold: bool = False):
         if label is None:
@@ -2503,6 +2773,8 @@ class App(QMainWindow, form):
         self._advance_vision_stream_token(1)
         self._advance_vision_stream_token(2)
         now = time.monotonic()
+        self._vision_mode_switch_grace_until_1 = now + MODE_SWITCH_GRACE_SEC
+        self._vision_mode_switch_grace_until_2 = now + MODE_SWITCH_GRACE_SEC
         self._vision_drop_frames_until_1 = now + 1.2
         self._vision_drop_frames_until_2 = now + 1.2
         self._vision_state_text = "전환중"
@@ -2768,6 +3040,47 @@ class App(QMainWindow, form):
             ["행렬:", "matrix"],
         )
         self._calibration_matrix_file_label_2 = getattr(self, "calibration_matrix_file_label_2", None)
+
+        def _ensure_runtime_info_widgets(box, panel_index: int):
+            if box is None:
+                return
+            badge_name = "_vision_mode_badge_2" if int(panel_index) == 2 else "_vision_mode_badge_1"
+            rate_name = "_vision_meta_rate_label_2" if int(panel_index) == 2 else "_vision_meta_rate_label_1"
+            detail_name = "_vision_runtime_detail_label_2" if int(panel_index) == 2 else "_vision_runtime_detail_label_1"
+            list_name = "_vision_runtime_list_label_2" if int(panel_index) == 2 else "_vision_runtime_list_label_1"
+            badge = getattr(self, badge_name, None)
+            if badge is None:
+                badge = QLabel(box)
+                badge.setObjectName(f"vision_mode_badge_{int(panel_index)}")
+                badge.setGeometry(318, 12, 158, 20)
+                badge.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                setattr(self, badge_name, badge)
+            rate = getattr(self, rate_name, None)
+            if rate is None:
+                rate = QLabel(box)
+                rate.setObjectName(f"vision_meta_rate_label_{int(panel_index)}")
+                rate.setGeometry(172, 14, 54, 16)
+                rate.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                setattr(self, rate_name, rate)
+            detail = getattr(self, detail_name, None)
+            if detail is None:
+                detail = QLabel(box)
+                detail.setObjectName(f"vision_runtime_detail_label_{int(panel_index)}")
+                detail.setGeometry(14, 56, 462, 22)
+                detail.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                detail.setWordWrap(False)
+                setattr(self, detail_name, detail)
+            data = getattr(self, list_name, None)
+            if data is None:
+                data = QLabel(box)
+                data.setObjectName(f"vision_runtime_list_label_{int(panel_index)}")
+                data.setGeometry(14, 84, 462, 34)
+                data.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+                data.setWordWrap(True)
+                setattr(self, list_name, data)
+
+        _ensure_runtime_info_widgets(getattr(self, "calibration_group_box", None), 1)
+        _ensure_runtime_info_widgets(getattr(self, "calibration_group_box_2", None), 2)
 
         if self._print_pos_button is not None:
             try:
@@ -3455,8 +3768,11 @@ class App(QMainWindow, form):
             self._vision_drop_frames_until_1 = now + 1.2
         if (not checked) and self._vision_to_robot_affine is None:
             self._try_load_calibration_matrix_on_startup()
-        self._mode_switch_grace_until = now + MODE_SWITCH_GRACE_SEC
-        self._rebind_external_vision_bridge_for_mode()
+        if src_panel == 2:
+            self._vision_mode_switch_grace_until_2 = now + MODE_SWITCH_GRACE_SEC
+        else:
+            self._vision_mode_switch_grace_until_1 = now + MODE_SWITCH_GRACE_SEC
+        self._rebind_external_vision_bridge_panel_for_mode(src_panel)
         self._update_calibration_mode_ui()
         base_enabled = False
         cache = self._robot_controls_enabled_cache
@@ -3507,6 +3823,361 @@ class App(QMainWindow, form):
             return True
         return (time.monotonic() - float(seen_at)) <= max(0.2, float(CALIB_DETECTION_HOLD_SEC) + 0.2)
 
+    def _vision_mode_name(self, panel_index: int = 1):
+        return "용량인식모드" if int(panel_index) == 2 else "객체인식모드"
+
+    def _vision_panel_mode_name(self, panel_index: int = 1, calib_on=None):
+        panel = 2 if int(panel_index) == 2 else 1
+        if calib_on is None:
+            calib_on = bool(self._calibration_mode_enabled_2) if panel == 2 else bool(self._calibration_mode_enabled_1)
+        if bool(calib_on):
+            return "TF"
+        return "용량인식" if panel == 2 else "객체인식"
+
+    def _layout_vision_mode_box(self, panel_index: int = 1):
+        panel = 2 if int(panel_index) == 2 else 1
+        box = getattr(self, "calibration_group_box_2", None) if panel == 2 else getattr(self, "calibration_group_box", None)
+        if box is None:
+            return
+        calib_on = bool(self._calibration_mode_enabled_2) if panel == 2 else bool(self._calibration_mode_enabled_1)
+        switch = self._calibration_mode_switch_2 if panel == 2 else self._calibration_mode_switch
+        status_label = self._calibration_status_label_2 if panel == 2 else self._calibration_status_label
+        matrix_label = self._calibration_matrix_file_label_2 if panel == 2 else self._calibration_matrix_file_label
+        load_button = self._calibration_load_button_2 if panel == 2 else self._calibration_load_button
+        transform_button = self._calibration_transform_button_2 if panel == 2 else self._calibration_transform_button
+        badge = self._vision_mode_badge_2 if panel == 2 else self._vision_mode_badge_1
+        rate_label = self._vision_meta_rate_label_2 if panel == 2 else self._vision_meta_rate_label_1
+        detail = self._vision_runtime_detail_label_2 if panel == 2 else self._vision_runtime_detail_label_1
+        data = self._vision_runtime_list_label_2 if panel == 2 else self._vision_runtime_list_label_1
+
+        margin_x = 14
+        margin_right = 8
+        top_y = 10
+        box_w = max(460, int(box.width()))
+        box_h = max(110, int(box.height()))
+        content_w = max(220, box_w - (margin_x * 2))
+        switch_w = 50
+        gap = 10
+        meta_rate_w = 86
+        badge_w = min(max(118, content_w - switch_w - (gap * 2) - 8), max(118, content_w - 100))
+        if badge is not None:
+            badge.setGeometry(margin_x, top_y, badge_w, 24)
+            badge.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            badge.raise_()
+        if rate_label is not None:
+            if calib_on:
+                rate_label.setGeometry(0, 0, 0, 0)
+            else:
+                rate_label.setGeometry(box_w - margin_right - meta_rate_w, box_h - 24, meta_rate_w, 16)
+            rate_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            rate_label.raise_()
+        if switch is not None:
+            switch.setGeometry(box_w - margin_right - switch_w, top_y + 2, switch_w, 18)
+            switch.raise_()
+        if status_label is not None:
+            status_label.setGeometry(margin_x, 36, content_w, 86 if not calib_on else 20)
+            status_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            status_label.setWordWrap(True)
+            status_label.raise_()
+        if calib_on:
+            if matrix_label is not None:
+                matrix_label.setGeometry(margin_x, 56, content_w - 92, 22)
+                matrix_label.raise_()
+            if load_button is not None:
+                load_button.setGeometry(box_w - margin_x - 82, 54, 82, 26)
+                load_button.raise_()
+            if transform_button is not None:
+                transform_button.setGeometry(margin_x, 86, content_w, 32)
+                transform_button.raise_()
+            if detail is not None:
+                detail.setGeometry(0, 0, 0, 0)
+                detail.hide()
+            if data is not None:
+                data.setGeometry(0, 0, 0, 0)
+                data.hide()
+        else:
+            if detail is not None:
+                detail.setGeometry(0, 0, 0, 0)
+                detail.hide()
+            if data is not None:
+                data.setGeometry(0, 0, 0, 0)
+                data.hide()
+
+    def _vision_runtime_summary(self, panel_index: int = 1):
+        panel = 2 if int(panel_index) == 2 else 1
+        mode_name = self._vision_mode_name(panel)
+        vision_enabled = bool(self._top_status_enabled.get("vision2" if panel == 2 else "vision", True))
+        meta_cycle_ms = self._vision_meta_cycle_ms_2 if panel == 2 else self._vision_meta_cycle_ms_1
+        payload = self._current_vision_meta_payload_for_ui(panel)
+        if meta_cycle_ms is not None:
+            meta_rate_text = f"{meta_cycle_ms:.0f}ms"
+        else:
+            proc_ms = None
+            source_age_ms = None
+            if isinstance(payload, dict):
+                try:
+                    proc_ms = float(payload.get("processing_ms"))
+                except Exception:
+                    proc_ms = None
+                try:
+                    source_age_ms = float(payload.get("source_age_ms"))
+                except Exception:
+                    source_age_ms = None
+            if proc_ms is not None:
+                meta_rate_text = f"{proc_ms:.0f}ms"
+            elif source_age_ms is not None:
+                meta_rate_text = f"{source_age_ms:.0f}ms"
+            elif isinstance(payload, dict):
+                meta_rate_text = f"{(1000.0 / max(1.0, float(VISION_META_PROCESS_HZ))):.0f}ms"
+            else:
+                meta_rate_text = "-"
+        if not vision_enabled:
+            return {
+                "mode_name": mode_name,
+                "status_text": f"[{mode_name}] 비전 비활성화",
+                "status_style": "color: #8d6e63; font-size: 9.5pt; font-weight: 800;",
+                "detail_text": "패널이 꺼져 있습니다.",
+                "list_text": "데이터 리스트: -",
+                "meta_text": "",
+                "status_color": "#8d6e63",
+                "summary_lines": [],
+                "meta_rate_text": meta_rate_text,
+                "detail_visible": False,
+                "list_visible": False,
+                "meta_visible": False,
+            }
+        if not isinstance(payload, dict):
+            return {
+                "mode_name": mode_name,
+                "status_text": f"[{mode_name}] 메타 대기 중",
+                "status_style": "color: #8d6e63; font-size: 9.5pt; font-weight: 800;",
+                "detail_text": "최근 감지 데이터 없음",
+                "list_text": "데이터 리스트: -",
+                "meta_text": "",
+                "status_color": "#8d6e63",
+                "summary_lines": [],
+                "meta_rate_text": meta_rate_text,
+                "detail_visible": False,
+                "list_visible": False,
+                "meta_visible": False,
+            }
+        detections = payload.get("detections")
+        if not isinstance(detections, list):
+            detections = []
+        if panel == 1:
+            if not detections:
+                return {
+                    "mode_name": mode_name,
+                    "status_text": f"[{mode_name}] 객체 미감지",
+                    "status_style": "color: #ef6c00; font-size: 9.5pt; font-weight: 800;",
+                    "detail_text": "감지 결과 없음",
+                    "list_text": "데이터 리스트: -",
+                    "meta_text": "",
+                    "status_color": "#ef6c00",
+                    "summary_lines": [],
+                    "meta_rate_text": meta_rate_text,
+                    "detail_visible": False,
+                    "list_visible": False,
+                    "meta_visible": False,
+                }
+            top = detections[0]
+            class_name = str(top.get("class_name", "-"))
+            conf = top.get("confidence")
+            depth_m = top.get("depth_m")
+            detail_parts = [f"대표 {class_name}"]
+            if conf is not None:
+                try:
+                    detail_parts.append(f"정확도 {float(conf):.2f}")
+                except Exception:
+                    pass
+            if depth_m is not None:
+                try:
+                    detail_parts.append(f"거리 {float(depth_m):.2f}m")
+                except Exception:
+                    pass
+            detail = " / ".join(detail_parts)
+            line_parts = []
+            for idx, det in enumerate(detections[:3], start=1):
+                name = str(det.get("class_name", "-"))
+                depth_text = ""
+                try:
+                    if det.get("depth_m") is not None:
+                        depth_text = f" {float(det.get('depth_m')):.2f}m"
+                except Exception:
+                    pass
+                line_parts.append(f"{idx}.{name}{depth_text}")
+            return {
+                "mode_name": mode_name,
+                "status_text": f"[{mode_name}] 객체 {len(detections)}개 감지",
+                "status_style": "color: #2e7d32; font-size: 9.5pt; font-weight: 800;",
+                "detail_text": detail,
+                "list_text": " / ".join(line_parts) if line_parts else "데이터 리스트: -",
+                "meta_text": "메타: class / conf / bbox / center / depth",
+                "status_color": "#2e7d32",
+                "summary_lines": [
+                    f"대표: {class_name} / {float(conf):.2f}" if conf is not None else f"대표: {class_name}",
+                    "감지: " + " / ".join(line_parts[:3]) if line_parts else "",
+                    "메타: class / conf / bbox / center / depth",
+                ],
+                "meta_rate_text": meta_rate_text,
+                "detail_visible": True,
+                "list_visible": bool(line_parts),
+                "meta_visible": True,
+            }
+
+        bottle = payload.get("bottle") if isinstance(payload.get("bottle"), dict) else None
+        liquid = payload.get("liquid") if isinstance(payload.get("liquid"), dict) else None
+        volume_ml = liquid.get("volume_ml") if liquid else None
+        if volume_ml is not None:
+            try:
+                status_text = f"[{mode_name}] 현재 용량 {float(volume_ml):.1f}ml"
+                status_style = "color: #2e7d32; font-size: 9.5pt; font-weight: 800;"
+            except Exception:
+                status_text = f"[{mode_name}] 용량 계산 완료"
+                status_style = "color: #2e7d32; font-size: 9.5pt; font-weight: 800;"
+        elif bottle or liquid:
+            status_text = f"[{mode_name}] 병/액체 감지 중"
+            status_style = "color: #ef6c00; font-size: 9.5pt; font-weight: 800;"
+        else:
+            status_text = f"[{mode_name}] 용량 대상 미감지"
+            status_style = "color: #8d6e63; font-size: 9.5pt; font-weight: 800;"
+        detail_parts = []
+        if bottle:
+            detail_parts.append(f"병 {str(bottle.get('class_name', '-'))}")
+            if bottle.get("depth_m") is not None:
+                try:
+                    detail_parts.append(f"병거리 {float(bottle.get('depth_m')):.2f}m")
+                except Exception:
+                    pass
+        if liquid:
+            detail_parts.append(f"액체 {str(liquid.get('class_name', '-'))}")
+        if liquid and liquid.get("depth_m") is not None:
+            try:
+                detail_parts.append(f"액체거리 {float(liquid.get('depth_m')):.2f}m")
+            except Exception:
+                pass
+        if volume_ml is not None:
+            try:
+                detail_parts.insert(0, f"현재용량 {float(volume_ml):.1f}ml")
+            except Exception:
+                pass
+        detail_text = " / ".join(detail_parts) if detail_parts else "대표 대상 없음"
+        list_parts = []
+        if bottle and bottle.get("bottom_y") is not None:
+            try:
+                list_parts.append(f"병바닥Y {int(bottle.get('bottom_y'))}")
+            except Exception:
+                pass
+        if liquid:
+            if liquid.get("waterline_y") is not None:
+                list_parts.append(f"수면선Y {int(liquid.get('waterline_y'))}")
+            if liquid.get("height_px") is not None:
+                list_parts.append(f"높이 {int(liquid.get('height_px'))}px")
+            if liquid.get("height_px_ema") is not None:
+                try:
+                    list_parts.append(f"EMA {float(liquid.get('height_px_ema')):.1f}px")
+                except Exception:
+                    pass
+            if liquid.get("volume_ml") is not None:
+                try:
+                    list_parts.append(f"용량 {float(liquid.get('volume_ml')):.1f}ml")
+                except Exception:
+                    pass
+        list_text = " / ".join(list_parts) if list_parts else "데이터 리스트: -"
+        return {
+            "mode_name": mode_name,
+            "status_text": status_text,
+            "status_style": status_style,
+            "detail_text": detail_text,
+            "list_text": list_text,
+            "meta_text": "메타: bottle / liquid / contour / bbox / depth / waterline / height / volume",
+            "status_color": "#2e7d32" if volume_ml is not None else ("#ef6c00" if (bottle or liquid) else "#8d6e63"),
+            "summary_lines": [
+                detail_text,
+                "값: " + " / ".join(list_parts[:3]) if list_parts else "",
+                "메타: bottle / liquid / contour / bbox / depth / waterline / height / volume",
+            ],
+            "meta_rate_text": meta_rate_text,
+            "detail_visible": bool(detail_parts),
+            "list_visible": bool(list_parts),
+            "meta_visible": True,
+        }
+
+    def _update_vision_runtime_panel_ui(self, panel_index: int = 1):
+        panel = 2 if int(panel_index) == 2 else 1
+        calib_on = bool(self._calibration_mode_enabled_2) if panel == 2 else bool(self._calibration_mode_enabled_1)
+        switch = self._calibration_mode_switch_2 if panel == 2 else self._calibration_mode_switch
+        status_label = self._calibration_status_label_2 if panel == 2 else self._calibration_status_label
+        matrix_label = self._calibration_matrix_file_label_2 if panel == 2 else self._calibration_matrix_file_label
+        load_button = self._calibration_load_button_2 if panel == 2 else self._calibration_load_button
+        transform_button = self._calibration_transform_button_2 if panel == 2 else self._calibration_transform_button
+        badge = self._vision_mode_badge_2 if panel == 2 else self._vision_mode_badge_1
+        rate_label = self._vision_meta_rate_label_2 if panel == 2 else self._vision_meta_rate_label_1
+        detail = self._vision_runtime_detail_label_2 if panel == 2 else self._vision_runtime_detail_label_1
+        data = self._vision_runtime_list_label_2 if panel == 2 else self._vision_runtime_list_label_1
+        runtime = self._vision_runtime_summary(panel)
+
+        self._layout_vision_mode_box(panel)
+
+        if switch is not None:
+            switch.blockSignals(True)
+            switch.setText("TF")
+            switch.setToolTip("TF 모드 변경 스위치")
+            switch.blockSignals(False)
+            switch.setStyleSheet("font-size: 7pt; font-weight: 700; padding-left: 2px;")
+        if badge is not None:
+            badge_title = self._vision_panel_mode_name(panel, calib_on=calib_on)
+            badge.setTextFormat(Qt.PlainText)
+            badge.setText(badge_title)
+            badge.setStyleSheet("color: #1f2937; background: transparent; border: none; font-size: 11pt; font-weight: 800;")
+            badge.show()
+        if rate_label is not None:
+            if calib_on:
+                rate_label.clear()
+                rate_label.hide()
+            else:
+                rate_text = str(runtime.get("meta_rate_text", "") or "-")
+                rate_label.setText(f"메타 {rate_text}")
+                rate_label.setStyleSheet("color: #475569; background: transparent; border: none; font-size: 7.8pt; font-weight: 700;")
+                rate_label.show()
+        if status_label is not None and (not calib_on):
+            status_label.setVisible(True)
+            status_text = str(runtime.get("status_text", "") or "")
+            summary_lines = [str(line).strip() for line in list(runtime.get("summary_lines", []) or []) if str(line).strip()]
+            if summary_lines:
+                status_html = (
+                    f"<div style='font-size:9.5pt; font-weight:800; color:{html.escape(str(runtime.get('status_color', '#2e7d32')))};'>"
+                    f"{html.escape(status_text)}</div>"
+                )
+                for idx, line in enumerate(summary_lines):
+                    font_size = "7.6pt" if idx == 0 else "7.2pt"
+                    status_html += (
+                        f"<div style='font-size:{font_size}; font-weight:600; color:#475569; margin-top:1px;'>"
+                        f"{html.escape(line)}</div>"
+                    )
+                status_label.setTextFormat(Qt.RichText)
+                status_label.setText(status_html)
+                status_label.setStyleSheet("background: transparent;")
+            else:
+                status_label.setTextFormat(Qt.PlainText)
+                status_label.setText(status_text)
+                status_label.setStyleSheet(runtime["status_style"])
+        if matrix_label is not None:
+            if calib_on:
+                matrix_label.show()
+            else:
+                matrix_label.hide()
+        if detail is not None:
+            detail.hide()
+            detail.clear()
+        if data is not None:
+            data.hide()
+            data.clear()
+        if load_button is not None and (not calib_on):
+            load_button.hide()
+        if transform_button is not None and (not calib_on):
+            transform_button.hide()
+
     def _update_calibration_mode_ui(self):
         calib_on_1 = bool(getattr(self, "_calibration_mode_enabled_1", False))
         calib_on_2 = bool(getattr(self, "_calibration_mode_enabled_2", False))
@@ -3520,15 +4191,17 @@ class App(QMainWindow, form):
         if hasattr(self, "_calibration_mode_switch") and self._calibration_mode_switch is not None:
             self._calibration_mode_switch.blockSignals(True)
             self._calibration_mode_switch.setChecked(calib_on_1)
-            self._calibration_mode_switch.setText(f"켈리브레이션활성화 ({'ON' if calib_on_1 else 'OFF'})")
-            self._calibration_mode_switch.setToolTip("켈리브레이션 활성화 스위치")
+            self._calibration_mode_switch.setText("TF")
+            self._calibration_mode_switch.setToolTip("객체인식/TF 모드 변경")
             self._calibration_mode_switch.blockSignals(False)
+            self._calibration_mode_switch.setStyleSheet("font-size: 7pt; font-weight: 700; padding-left: 2px;")
         if hasattr(self, "_calibration_mode_switch_2") and self._calibration_mode_switch_2 is not None:
             self._calibration_mode_switch_2.blockSignals(True)
             self._calibration_mode_switch_2.setChecked(calib_on_2)
-            self._calibration_mode_switch_2.setText(f"켈리브레이션활성화 ({'ON' if calib_on_2 else 'OFF'})")
-            self._calibration_mode_switch_2.setToolTip("켈리브레이션 활성화 스위치")
+            self._calibration_mode_switch_2.setText("TF")
+            self._calibration_mode_switch_2.setToolTip("용량인식/TF 모드 변경")
             self._calibration_mode_switch_2.blockSignals(False)
+            self._calibration_mode_switch_2.setStyleSheet("font-size: 7pt; font-weight: 700; padding-left: 2px;")
         if hasattr(self, "_calibration_transform_button") and self._calibration_transform_button is not None:
             self._calibration_transform_button.setVisible(calib_on_1)
             self._calibration_transform_button.setEnabled(
@@ -3585,6 +4258,8 @@ class App(QMainWindow, form):
                 self._calibration_status_label.setStyleSheet(
                     "color: #5f5a1e; font-size: 9pt; font-weight: 700;"
                 )
+        if hasattr(self, "_vision_mode_badge_1") and self._vision_mode_badge_1 is not None:
+            self._vision_mode_badge_1.setText(self._vision_panel_mode_name(1, calib_on=calib_on_1))
         if hasattr(self, "_calibration_status_label_2") and self._calibration_status_label_2 is not None:
             self._calibration_status_label_2.setVisible(calib_on_2)
             if calib_on_2:
@@ -3617,6 +4292,19 @@ class App(QMainWindow, form):
                 self._calibration_status_label_2.setStyleSheet(
                     "color: #5f5a1e; font-size: 9pt; font-weight: 700;"
                 )
+        if hasattr(self, "_vision_mode_badge_2") and self._vision_mode_badge_2 is not None:
+            self._vision_mode_badge_2.setText(self._vision_panel_mode_name(2, calib_on=calib_on_2))
+        for panel, detail, data, calib_on_panel in (
+            (1, getattr(self, "_vision_runtime_detail_label_1", None), getattr(self, "_vision_runtime_list_label_1", None), calib_on_1),
+            (2, getattr(self, "_vision_runtime_detail_label_2", None), getattr(self, "_vision_runtime_list_label_2", None), calib_on_2),
+        ):
+            _ = panel
+            if detail is not None and calib_on_panel:
+                detail.hide()
+                detail.clear()
+            if data is not None and calib_on_panel:
+                data.hide()
+                data.clear()
 
         # yolo_view 배경색은 프레임 렌더링/미수신 상태에서만 관리한다.
         # (캘리브레이션 상태 갱신 타이머와 충돌해 깜박이는 현상 방지)
@@ -3627,6 +4315,8 @@ class App(QMainWindow, form):
                 w.setVisible(True)
         if hasattr(self, "_vision_dialog_toggle_button") and self._vision_dialog_toggle_button is not None:
             self._vision_dialog_toggle_button.hide()
+        self._update_vision_runtime_panel_ui(1)
+        self._update_vision_runtime_panel_ui(2)
 
     def _parse_point_file_sections(self, file_path):
         sections = {}
@@ -5223,6 +5913,8 @@ class App(QMainWindow, form):
             self._yolo_pan_y = -1000000.0
             self._render_yolo_view()
             self.append_log(f"[비전1] 화면 회전: {self._vision_rotation_deg_1}도\n")
+        if self.backend is not None and YOLO_EXTERNAL_NODE and YOLO_AUTO_LAUNCH_NODE:
+            self._ensure_external_vision_process_panel(panel_index)
         self._refresh_vision_rotation_labels()
         self._save_vision_serial_settings()
 
@@ -5240,6 +5932,8 @@ class App(QMainWindow, form):
             self._yolo_pan_y = -1000000.0
             self._render_yolo_view()
             self.append_log(f"[비전1] 화면 회전: {self._vision_rotation_deg_1}도\n")
+        if self.backend is not None and YOLO_EXTERNAL_NODE and YOLO_AUTO_LAUNCH_NODE:
+            self._ensure_external_vision_process_panel(panel_index)
         self._refresh_vision_rotation_labels()
         self._save_vision_serial_settings()
 
@@ -5284,10 +5978,9 @@ class App(QMainWindow, form):
         return CALIB_CAMERA_INFO_TOPIC_PRIMARY
 
     def _vision_panel_needs_depth(self, panel_index: int = 1):
-        # 비전 클릭 좌표 출력/이동은 평상시에도 즉시 가능해야 하므로
-        # 활성 비전 패널은 캘리브레이션 여부와 무관하게 depth를 계속 유지한다.
-        _ = panel_index
-        return True
+        panel = 2 if int(panel_index) == 2 else 1
+        calib_on = bool(self._calibration_mode_enabled_2) if panel == 2 else bool(self._calibration_mode_enabled_1)
+        return not calib_on
 
     def _vision_panel_needs_camera_info(self, panel_index: int = 1):
         # camera_info는 저부하이며 축/좌표 정확도에 직접 필요하므로 active panel에서는 유지한다.
@@ -5430,6 +6123,81 @@ class App(QMainWindow, form):
     def _calibration_output_meta_topic(self, panel_index: int = 1):
         return CALIB_OUTPUT_META_TOPIC_2 if int(panel_index) == 2 else CALIB_OUTPUT_META_TOPIC_1
 
+    def _vision_output_meta_topic(self, panel_index: int = 1):
+        return VISION_VOLUME_META_TOPIC_2 if int(panel_index) == 2 else VISION_OBJECT_META_TOPIC_1
+
+    def _stop_foreign_vision_helpers(self, panel_index: int, keep_pid=None):
+        panel = 2 if int(panel_index) == 2 else 1
+        meta_topic = self._vision_output_meta_topic(panel)
+        script_name = "glass_fill_level.py" if panel == 2 else "drink_detection.py"
+        legacy_script_name = "realsense_panel_meta_process.py"
+        keep = set()
+        try:
+            if keep_pid is not None:
+                keep.add(int(keep_pid))
+        except Exception:
+            pass
+        keep.add(int(os.getpid()))
+        try:
+            outputs = []
+            for name in (script_name, legacy_script_name):
+                try:
+                    outputs.append(subprocess.check_output(["pgrep", "-af", name], text=True))
+                except Exception:
+                    continue
+        except Exception:
+            return
+        for output in outputs:
+            for raw in str(output).splitlines():
+                line = str(raw).strip()
+                if not line:
+                    continue
+                parts = line.split(None, 1)
+                if not parts:
+                    continue
+                try:
+                    pid = int(parts[0])
+                except Exception:
+                    continue
+                if pid in keep:
+                    continue
+                cmdline = parts[1] if len(parts) > 1 else ""
+                if meta_topic not in cmdline:
+                    continue
+                try:
+                    os.kill(pid, signal.SIGINT)
+                except Exception:
+                    continue
+                deadline = time.monotonic() + 1.0
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(pid, 0)
+                    except OSError:
+                        pid = None
+                        break
+                    QApplication.processEvents()
+                    time.sleep(0.05)
+                if pid is not None:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except Exception:
+                        pass
+                    deadline = time.monotonic() + 1.0
+                    while time.monotonic() < deadline:
+                        try:
+                            os.kill(pid, 0)
+                        except OSError:
+                            pid = None
+                            break
+                        QApplication.processEvents()
+                        time.sleep(0.05)
+                if pid is not None:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except Exception:
+                        pass
+                self.append_log(f"[비전{panel}] 기존 메타 헬퍼 정리: PID {parts[0]}\n")
+
     def _stop_foreign_calibration_helpers(self, panel_index: int, keep_pid=None):
         panel = 2 if int(panel_index) == 2 else 1
         meta_topic = self._calibration_output_meta_topic(panel)
@@ -5509,6 +6277,99 @@ class App(QMainWindow, form):
             return self._assigned_raw_topic_for_serial(self._vision_assigned_serial_2, node)
         return self._assigned_topic_for_serial(self._vision_assigned_serial_2)
 
+    def _build_vision_meta_process_cmd(self, panel_index: int):
+        panel = 2 if int(panel_index) == 2 else 1
+        node = getattr(self.backend, "robot_controller", None) if self.backend is not None else None
+        if node is None:
+            return None
+        serial = self._vision_assigned_serial_2 if panel == 2 else self._vision_assigned_serial_1
+        script_name = "glass_fill_level.py" if panel == 2 else "drink_detection.py"
+        return [
+            sys.executable,
+            os.path.join(PROJECT_ROOT, "src", "vision", script_name),
+            "--image-topic",
+            self._assigned_raw_topic_for_serial(serial, node),
+            "--depth-topic",
+            self._assigned_depth_topic_for_serial(serial),
+            "--output-meta-topic",
+            self._vision_output_meta_topic(panel),
+            "--process-hz",
+            str(float(VISION_META_PROCESS_HZ)),
+            "--rotation-deg",
+            str(int(self._vision_rotation_deg_2 if panel == 2 else self._vision_rotation_deg_1)),
+        ]
+
+    def _ensure_external_vision_process_panel(self, panel_index: int):
+        panel = 2 if int(panel_index) == 2 else 1
+        calib_on = bool(self._calibration_mode_enabled_2) if panel == 2 else bool(self._calibration_mode_enabled_1)
+        if calib_on:
+            self._stop_external_vision_process_panel(panel)
+            return False
+        if not bool(self._top_status_enabled.get("vision2" if panel == 2 else "vision", True)):
+            self._stop_external_vision_process_panel(panel)
+            return False
+        cmd = self._build_vision_meta_process_cmd(panel)
+        if not cmd:
+            return False
+        proc = self._external_vision_proc_2 if panel == 2 else self._external_vision_proc_1
+        prev_cmd = self._external_vision_cmd_2 if panel == 2 else self._external_vision_cmd_1
+        keep_pid = proc.pid if (proc is not None and proc.poll() is None) else None
+        self._stop_foreign_vision_helpers(panel, keep_pid=keep_pid)
+        if proc is not None and proc.poll() is None and prev_cmd == cmd:
+            return True
+        self._stop_external_vision_process_panel(panel)
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=PROJECT_ROOT,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            self.append_log(f"[비전{panel}] 메타 프로세스 시작 실패: {e}\n")
+            return False
+        if panel == 2:
+            self._external_vision_proc_2 = proc
+            self._external_vision_cmd_2 = list(cmd)
+            self._external_vision_started_by_ui_2 = True
+        else:
+            self._external_vision_proc_1 = proc
+            self._external_vision_cmd_1 = list(cmd)
+            self._external_vision_started_by_ui_1 = True
+        self.append_log(f"[비전{panel}] 메타 프로세스 시작\n")
+        return True
+
+    def _stop_external_vision_process_panel(self, panel_index: int):
+        panel = 2 if int(panel_index) == 2 else 1
+        if panel == 2:
+            proc = self._external_vision_proc_2
+            started_by_ui = bool(self._external_vision_started_by_ui_2)
+        else:
+            proc = self._external_vision_proc_1
+            started_by_ui = bool(self._external_vision_started_by_ui_1)
+        if proc is not None and proc.poll() is None and started_by_ui:
+            try:
+                proc.send_signal(signal.SIGINT)
+                proc.wait(timeout=1.0)
+            except Exception:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=1.0)
+                except Exception:
+                    try:
+                        proc.kill()
+                        proc.wait(timeout=1.0)
+                    except Exception:
+                        pass
+        if panel == 2:
+            self._external_vision_proc_2 = None
+            self._external_vision_cmd_2 = None
+            self._external_vision_started_by_ui_2 = False
+        else:
+            self._external_vision_proc_1 = None
+            self._external_vision_cmd_1 = None
+            self._external_vision_started_by_ui_1 = False
+
     def _teardown_external_vision_bridge_panel(self, panel_index: int):
         node = getattr(self.backend, "robot_controller", None) if self.backend is not None else None
 
@@ -5530,25 +6391,31 @@ class App(QMainWindow, form):
         if panel == 2:
             _destroy(getattr(self, "_vision_sub_2", None))
             _destroy(getattr(self, "_calib_meta_sub_2", None))
+            _destroy(getattr(self, "_vision_meta_sub_2", None))
             _destroy(getattr(self, "_vision_depth_sub_2", None))
             _destroy(getattr(self, "_vision_info_sub_2", None))
             self._vision_sub_2 = None
             self._calib_meta_sub_2 = None
+            self._vision_meta_sub_2 = None
             self._vision_depth_sub_2 = None
             self._vision_info_sub_2 = None
             self._vision_image_topic_in_use_2 = None
             self._calib_meta_topic_in_use_2 = None
+            self._vision_meta_topic_in_use_2 = None
         else:
             _destroy(getattr(self, "_vision_sub", None))
             _destroy(getattr(self, "_calib_meta_sub_1", None))
+            _destroy(getattr(self, "_vision_meta_sub_1", None))
             _destroy(getattr(self, "_vision_depth_sub", None))
             _destroy(getattr(self, "_vision_info_sub", None))
             self._vision_sub = None
             self._calib_meta_sub_1 = None
+            self._vision_meta_sub_1 = None
             self._vision_depth_sub = None
             self._vision_info_sub = None
             self._vision_image_topic_in_use = None
             self._calib_meta_topic_in_use_1 = None
+            self._vision_meta_topic_in_use_1 = None
 
     def _teardown_external_vision_bridge(self):
         self._teardown_external_vision_bridge_panel(1)
@@ -5664,6 +6531,21 @@ class App(QMainWindow, form):
         else:
             self._stop_calibration_process(2)
 
+    def _sync_calibration_process_panel(self, panel_index: int):
+        panel = 2 if int(panel_index) == 2 else 1
+        if self.backend is None:
+            return
+        if panel == 2:
+            if bool(getattr(self, "_calibration_mode_enabled_2", False)) and bool(self._top_status_enabled.get("vision2", True)):
+                self._ensure_calibration_process(2)
+            else:
+                self._stop_calibration_process(2)
+        else:
+            if bool(getattr(self, "_calibration_mode_enabled_1", False)) and bool(self._top_status_enabled.get("vision", True)):
+                self._ensure_calibration_process(1)
+            else:
+                self._stop_calibration_process(1)
+
     def _apply_calibration_meta(self, panel_index: int, raw: str, stream_token=None):
         panel = 2 if int(panel_index) == 2 else 1
         if stream_token is not None:
@@ -5729,6 +6611,7 @@ class App(QMainWindow, form):
             self._calib_last_points_uvz_mm = self._calib_last_points_uvz_mm_1
             self._calib_last_points_at = self._calib_last_points_at_1
             self._calib_last_reason = self._calib_last_reason_1
+        self._request_vision_overlay_refresh(panel)
         self.calibration_ui_refresh_requested.emit()
 
     def _on_calibration_meta_msg(self, msg, stream_token=None):
@@ -5743,53 +6626,87 @@ class App(QMainWindow, form):
         except Exception:
             return
 
+    def _apply_vision_meta(self, panel_index: int, raw: str, stream_token=None):
+        panel = 2 if int(panel_index) == 2 else 1
+        if stream_token is not None:
+            current = int(getattr(self, "_vision_stream_token_2", 0)) if panel == 2 else int(getattr(self, "_vision_stream_token_1", 0))
+            if int(stream_token) != current:
+                return
+        try:
+            meta = json.loads(raw or "{}")
+        except Exception:
+            return
+        meta_payload = meta if isinstance(meta, dict) else None
+        now = time.monotonic()
+        prev_received_at = self._vision_meta_received_at_2 if panel == 2 else self._vision_meta_received_at_1
+        fallback_ms = None
+        if isinstance(meta_payload, dict):
+            for key in ("processing_ms", "source_age_ms"):
+                try:
+                    value = float(meta_payload.get(key))
+                except Exception:
+                    value = None
+                if value is not None and value >= 0.0:
+                    fallback_ms = value
+                    break
+            if fallback_ms is None:
+                try:
+                    fallback_ms = 1000.0 / max(1.0, float(VISION_META_PROCESS_HZ))
+                except Exception:
+                    fallback_ms = None
+        if prev_received_at is not None:
+            try:
+                interval_ms = max(0.0, (now - float(prev_received_at)) * 1000.0)
+            except Exception:
+                interval_ms = fallback_ms
+        else:
+            interval_ms = fallback_ms
+        if panel == 2:
+            self._vision_meta_payload_2 = meta_payload
+            self._vision_meta_received_at_2 = now
+            self._vision_meta_cycle_ms_2 = interval_ms
+            if self._vision_payload_has_runtime_data(2, meta_payload):
+                self._vision_meta_last_nonempty_payload_2 = meta_payload
+                self._vision_meta_last_nonempty_at_2 = now
+        else:
+            self._vision_meta_payload_1 = meta_payload
+            self._vision_meta_received_at_1 = now
+            self._vision_meta_cycle_ms_1 = interval_ms
+            if self._vision_payload_has_runtime_data(1, meta_payload):
+                self._vision_meta_last_nonempty_payload_1 = meta_payload
+                self._vision_meta_last_nonempty_at_1 = now
+        self._request_vision_overlay_refresh(panel)
+        self.vision_runtime_ui_refresh_requested.emit(panel)
+
+    def _on_vision_meta_msg(self, msg, stream_token=None):
+        try:
+            self._apply_vision_meta(1, getattr(msg, "data", ""), stream_token=stream_token)
+        except Exception:
+            return
+
+    def _on_vision_meta_msg_2(self, msg, stream_token=None):
+        try:
+            self._apply_vision_meta(2, getattr(msg, "data", ""), stream_token=stream_token)
+        except Exception:
+            return
+
     def _ensure_external_vision_process(self):
-        proc = getattr(self, "_external_vision_proc", None)
-        if proc is not None and proc.poll() is None:
-            return True
-        if not YOLO_AUTO_LAUNCH_CMD:
+        if self.backend is None or not UI_ENABLE_VISION or (not YOLO_EXTERNAL_NODE):
             return False
-        try:
-            cmd = shlex.split(YOLO_AUTO_LAUNCH_CMD)
-        except Exception as e:
-            self._append_vision_log(f"자동실행 명령 파싱 실패: {e}")
-            return False
-        if not cmd:
-            return False
-        try:
-            self._external_vision_proc = subprocess.Popen(
-                cmd,
-                cwd=PROJECT_ROOT,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            self._external_vision_cmd = cmd
-            self._external_vision_started_by_ui = True
-            self._append_vision_log(f"외부 비전 프로세스 시작: {' '.join(cmd)}")
-            return True
-        except Exception as e:
-            self._external_vision_proc = None
-            self._external_vision_cmd = None
-            self._external_vision_started_by_ui = False
-            self._append_vision_log(f"외부 비전 프로세스 시작 실패: {e}")
-            return False
+        ok = False
+        if bool(self._top_status_enabled.get("vision", True)):
+            ok = self._ensure_external_vision_process_panel(1) or ok
+        else:
+            self._stop_external_vision_process_panel(1)
+        if bool(self._top_status_enabled.get("vision2", True)):
+            ok = self._ensure_external_vision_process_panel(2) or ok
+        else:
+            self._stop_external_vision_process_panel(2)
+        return ok
 
     def _stop_external_vision_process(self):
-        proc = getattr(self, "_external_vision_proc", None)
-        if proc is None:
-            self._external_vision_cmd = None
-            self._external_vision_started_by_ui = False
-            return
-        if proc.poll() is None and bool(getattr(self, "_external_vision_started_by_ui", False)):
-            try:
-                proc.terminate()
-                proc.wait(timeout=1.5)
-            except Exception:
-                try:
-                    proc.kill()
-                    proc.wait(timeout=1.0)
-                except Exception:
-                    pass
+        self._stop_external_vision_process_panel(1)
+        self._stop_external_vision_process_panel(2)
         self._external_vision_proc = None
         self._external_vision_cmd = None
         self._external_vision_started_by_ui = False
@@ -5798,7 +6715,7 @@ class App(QMainWindow, form):
         if not UI_ENABLE_VISION or self.backend is None:
             return
         try:
-            if YOLO_EXTERNAL_NODE and YOLO_AUTO_LAUNCH_NODE and (YOLO_AUTO_LAUNCH_ALWAYS or (not self._calibration_mode_enabled)):
+            if YOLO_EXTERNAL_NODE and YOLO_AUTO_LAUNCH_NODE:
                 self._ensure_external_vision_process()
             self._setup_external_vision_bridge()
             return
@@ -5813,6 +6730,7 @@ class App(QMainWindow, form):
         if node is None:
             return False
         panel = 2 if int(panel_index) == 2 else 1
+        calib_on = bool(self._calibration_mode_enabled_2) if panel == 2 else bool(self._calibration_mode_enabled_1)
         image_qos = self._build_vision_image_qos()
         if panel == 2:
             sub_kwargs = {}
@@ -5825,7 +6743,17 @@ class App(QMainWindow, form):
                 RosImageMsg, image_topic, lambda msg, token=stream_token: self._on_vision_image_msg_2(msg, token), image_qos, **sub_kwargs
             )
             self._vision_image_topic_in_use_2 = image_topic
-            if bool(self._calibration_mode_enabled_2) and RosStringMsg is not None:
+            if (not calib_on) and RosStringMsg is not None:
+                meta_topic_runtime_2 = self._vision_output_meta_topic(2)
+                self._vision_meta_sub_2 = node.create_subscription(
+                    RosStringMsg,
+                    meta_topic_runtime_2,
+                    lambda msg, token=stream_token: self._on_vision_meta_msg_2(msg, token),
+                    10,
+                    **sub_kwargs,
+                )
+                self._vision_meta_topic_in_use_2 = meta_topic_runtime_2
+            if calib_on and RosStringMsg is not None:
                 meta_topic_2 = self._calibration_output_meta_topic(2)
                 self._calib_meta_sub_2 = node.create_subscription(
                     RosStringMsg,
@@ -5854,7 +6782,9 @@ class App(QMainWindow, form):
                 self.append_log(f"[비전2] 카메라정보 구독 시작: {info_topic_2}\n")
             self._vision_state_text_2 = "끊김"
             self.append_log(f"[비전2] 비전 원본 구독 시작({'CALIB' if self._calibration_mode_enabled_2 else 'RAW'}): {image_topic}\n")
-            if bool(self._calibration_mode_enabled_2) and self._calib_meta_topic_in_use_2:
+            if (not calib_on) and self._vision_meta_topic_in_use_2:
+                self.append_log(f"[비전2] 메타 구독 시작: {self._vision_meta_topic_in_use_2}\n")
+            if calib_on and self._calib_meta_topic_in_use_2:
                 self.append_log(f"[캘리브레이션2] 메타 구독 시작: {self._calib_meta_topic_in_use_2}\n")
             if depth_topic_2:
                 self.append_log(f"[비전2] 뎁스 구독 시작: {depth_topic_2}\n")
@@ -5869,7 +6799,17 @@ class App(QMainWindow, form):
                 RosImageMsg, image_topic, lambda msg, token=stream_token: self._on_vision_image_msg(msg, token), image_qos, **sub_kwargs
             )
             self._vision_image_topic_in_use = image_topic
-            if bool(self._calibration_mode_enabled_1) and RosStringMsg is not None:
+            if (not calib_on) and RosStringMsg is not None:
+                meta_topic_runtime_1 = self._vision_output_meta_topic(1)
+                self._vision_meta_sub_1 = node.create_subscription(
+                    RosStringMsg,
+                    meta_topic_runtime_1,
+                    lambda msg, token=stream_token: self._on_vision_meta_msg(msg, token),
+                    10,
+                    **sub_kwargs,
+                )
+                self._vision_meta_topic_in_use_1 = meta_topic_runtime_1
+            if calib_on and RosStringMsg is not None:
                 meta_topic_1 = self._calibration_output_meta_topic(1)
                 self._calib_meta_sub_1 = node.create_subscription(
                     RosStringMsg,
@@ -5901,7 +6841,9 @@ class App(QMainWindow, form):
                 f"비전 원본 구독 시작({'CALIB' if self._calibration_mode_enabled_1 else 'RAW'}): {image_topic}",
                 panel_index=1,
             )
-            if bool(self._calibration_mode_enabled_1) and self._calib_meta_topic_in_use_1:
+            if (not calib_on) and self._vision_meta_topic_in_use_1:
+                self._append_vision_log(f"메타 구독 시작: {self._vision_meta_topic_in_use_1}", panel_index=1)
+            if calib_on and self._calib_meta_topic_in_use_1:
                 self.append_log(f"[캘리브레이션1] 메타 구독 시작: {self._calib_meta_topic_in_use_1}\n")
             if depth_topic:
                 self._append_vision_log(f"뎁스 구독 시작: {depth_topic}", panel_index=1)
@@ -5919,7 +6861,33 @@ class App(QMainWindow, form):
         if not self._vision_panel_needs_depth(2):
             self._clear_vision_depth_cache(2)
         self._sync_calibration_processes()
+        if YOLO_EXTERNAL_NODE and YOLO_AUTO_LAUNCH_NODE:
+            self._ensure_external_vision_process()
         self._setup_external_vision_bridge()
+
+    def _rebind_external_vision_bridge_panel_for_mode(self, panel_index: int):
+        panel = 2 if int(panel_index) == 2 else 1
+        if self.backend is None:
+            return
+        node = getattr(self.backend, "robot_controller", None)
+        if node is None:
+            return
+        self._teardown_external_vision_bridge_panel(panel)
+        if not self._vision_panel_needs_depth(panel):
+            self._clear_vision_depth_cache(panel)
+        self._sync_calibration_process_panel(panel)
+        if YOLO_EXTERNAL_NODE and YOLO_AUTO_LAUNCH_NODE:
+            if panel == 2:
+                if bool(self._top_status_enabled.get("vision2", True)):
+                    self._ensure_external_vision_process_panel(2)
+                else:
+                    self._stop_external_vision_process_panel(2)
+            else:
+                if bool(self._top_status_enabled.get("vision", True)):
+                    self._ensure_external_vision_process_panel(1)
+                else:
+                    self._stop_external_vision_process_panel(1)
+        self._setup_external_vision_bridge_panel(panel)
 
     def _setup_external_vision_bridge(self):
         if RosImageMsg is None:
@@ -6077,6 +7045,333 @@ class App(QMainWindow, form):
     def _draw_calib_info_overlay(self, bgr, data_dict):
         # 캘리브레이션 좌표 텍스트는 Qt 캔버스(좌하단)에서 정방향으로 별도 표시한다.
         return bgr
+
+    def _vision_payload_has_runtime_data(self, panel_index: int, payload):
+        if not isinstance(payload, dict):
+            return False
+        panel = 2 if int(panel_index) == 2 else 1
+        detections = payload.get("detections")
+        if isinstance(detections, list) and len(detections) > 0:
+            return True
+        if panel == 2:
+            bottle = payload.get("bottle")
+            liquid = payload.get("liquid")
+            if isinstance(bottle, dict) or isinstance(liquid, dict):
+                return True
+            if bool(payload.get("volume_ready", False)):
+                return True
+        return False
+
+    def _current_vision_meta_payload(self, panel_index: int = 1):
+        panel = 2 if int(panel_index) == 2 else 1
+        payload = getattr(self, "_vision_meta_payload_2", None) if panel == 2 else getattr(self, "_vision_meta_payload_1", None)
+        received_at = getattr(self, "_vision_meta_received_at_2", None) if panel == 2 else getattr(self, "_vision_meta_received_at_1", None)
+        last_nonempty = getattr(self, "_vision_meta_last_nonempty_payload_2", None) if panel == 2 else getattr(self, "_vision_meta_last_nonempty_payload_1", None)
+        last_nonempty_at = getattr(self, "_vision_meta_last_nonempty_at_2", None) if panel == 2 else getattr(self, "_vision_meta_last_nonempty_at_1", None)
+        if payload is not None:
+            if self._vision_payload_has_runtime_data(panel, payload):
+                return payload
+            if (
+                last_nonempty is not None
+                and last_nonempty_at is not None
+                and received_at is not None
+                and float(last_nonempty_at) > float(received_at)
+            ):
+                return last_nonempty
+            return payload
+        if last_nonempty is not None and last_nonempty_at is not None:
+            return last_nonempty
+        return None
+
+    def _current_vision_meta_payload_for_ui(self, panel_index: int = 1):
+        panel = 2 if int(panel_index) == 2 else 1
+        payload = self._current_vision_meta_payload(panel)
+        if isinstance(payload, dict):
+            return payload
+        now = time.monotonic()
+        if panel == 2:
+            last_nonempty = getattr(self, "_vision_meta_last_nonempty_payload_2", None)
+            last_nonempty_at = getattr(self, "_vision_meta_last_nonempty_at_2", None)
+        else:
+            last_nonempty = getattr(self, "_vision_meta_last_nonempty_payload_1", None)
+            last_nonempty_at = getattr(self, "_vision_meta_last_nonempty_at_1", None)
+        if last_nonempty is not None and last_nonempty_at is not None:
+            if (now - float(last_nonempty_at)) <= float(max(VISION_META_STALE_SEC, VISION_META_HOLD_SEC, VISION_RUNTIME_UI_HOLD_SEC)):
+                return last_nonempty
+        return None
+
+    def _draw_detection_contour(self, overlay, contour_uv, color, thickness=2):
+        try:
+            import cv2
+        except Exception:
+            return
+        if not contour_uv:
+            return
+        try:
+            pts = np.asarray(contour_uv, dtype=np.int32).reshape((-1, 1, 2))
+        except Exception:
+            return
+        if pts.shape[0] < 3:
+            return
+        cv2.polylines(overlay, [pts], True, color, thickness, cv2.LINE_AA)
+
+    def _fill_detection_contour(self, overlay, contour_uv, color, alpha=0.18):
+        try:
+            import cv2
+        except Exception:
+            return
+        if not contour_uv:
+            return
+        try:
+            pts = np.asarray(contour_uv, dtype=np.int32).reshape((-1, 1, 2))
+        except Exception:
+            return
+        if pts.shape[0] < 3:
+            return
+        layer = overlay.copy()
+        cv2.fillPoly(layer, [pts], color, cv2.LINE_AA)
+        cv2.addWeighted(layer, float(alpha), overlay, 1.0 - float(alpha), 0.0, dst=overlay)
+
+    def _rotate_bgr_for_overlay(self, bgr, rot_deg: int):
+        try:
+            import cv2
+        except Exception:
+            return bgr
+        rot = self._normalize_rotation_deg(rot_deg)
+        if bgr is None or rot == 0:
+            return bgr
+        if rot == 90:
+            return cv2.rotate(bgr, cv2.ROTATE_90_CLOCKWISE)
+        if rot == 180:
+            return cv2.rotate(bgr, cv2.ROTATE_180)
+        if rot == 270:
+            return cv2.rotate(bgr, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        return bgr
+
+    def _inverse_rotation_deg(self, rot_deg: int):
+        rot = self._normalize_rotation_deg(rot_deg)
+        return (360 - rot) % 360
+
+    def _map_source_bbox_to_rotated(self, bbox_xyxy, src_w: int, src_h: int, rot_deg: int):
+        if not isinstance(bbox_xyxy, (list, tuple)) or len(bbox_xyxy) < 4:
+            return None
+        try:
+            x1, y1, x2, y2 = [int(round(float(v))) for v in bbox_xyxy[:4]]
+        except Exception:
+            return None
+        corners = [
+            self._map_source_to_rotated_coords(x1, y1, src_w, src_h, rot_deg),
+            self._map_source_to_rotated_coords(x2, y1, src_w, src_h, rot_deg),
+            self._map_source_to_rotated_coords(x2, y2, src_w, src_h, rot_deg),
+            self._map_source_to_rotated_coords(x1, y2, src_w, src_h, rot_deg),
+        ]
+        xs = [int(p[0]) for p in corners]
+        ys = [int(p[1]) for p in corners]
+        return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
+
+    def _map_source_contour_to_rotated(self, contour_uv, src_w: int, src_h: int, rot_deg: int):
+        if not contour_uv:
+            return None
+        out = []
+        for pt in contour_uv:
+            if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+                continue
+            try:
+                mapped = self._map_source_to_rotated_coords(
+                    int(round(float(pt[0]))),
+                    int(round(float(pt[1]))),
+                    int(src_w),
+                    int(src_h),
+                    int(rot_deg),
+                )
+            except Exception:
+                continue
+            out.append([int(mapped[0]), int(mapped[1])])
+        return out if len(out) >= 3 else None
+
+    def _draw_outlined_text(self, overlay, text: str, origin, color, font_scale=0.8, thickness=2):
+        try:
+            import cv2
+        except Exception:
+            return
+        if not text:
+            return
+        try:
+            x = int(round(float(origin[0])))
+            y = int(round(float(origin[1])))
+        except Exception:
+            return
+        cv2.putText(overlay, str(text), (x, y), cv2.FONT_HERSHEY_SIMPLEX, float(font_scale), (0, 0, 0), int(thickness) + 2, cv2.LINE_AA)
+        cv2.putText(overlay, str(text), (x, y), cv2.FONT_HERSHEY_SIMPLEX, float(font_scale), color, int(thickness), cv2.LINE_AA)
+
+    def _measure_text_rect(self, shape, text: str, origin, font_scale=0.8, thickness=2, pad_x=0, pad_y=0):
+        try:
+            import cv2
+        except Exception:
+            return None
+        if not text or shape is None or len(shape) < 2:
+            return None
+        try:
+            x = int(round(float(origin[0])))
+            y = int(round(float(origin[1])))
+        except Exception:
+            return None
+        (text_w, text_h), baseline = cv2.getTextSize(str(text), cv2.FONT_HERSHEY_SIMPLEX, float(font_scale), int(thickness))
+        width = int(shape[1])
+        height = int(shape[0])
+        x1 = max(0, x - int(pad_x))
+        y1 = max(0, y - text_h - int(pad_y))
+        x2 = min(width - 1, x + text_w + int(pad_x))
+        y2 = min(height - 1, y + baseline + int(pad_y))
+        return (x1, y1, x2, y2)
+
+    def _rects_overlap(self, rect_a, rect_b):
+        if rect_a is None or rect_b is None:
+            return False
+        ax1, ay1, ax2, ay2 = rect_a
+        bx1, by1, bx2, by2 = rect_b
+        return not (ax2 < bx1 or bx2 < ax1 or ay2 < by1 or by2 < ay1)
+
+    def _draw_text_badge(self, overlay, text: str, origin, color, font_scale=0.8, thickness=2, bg_color=(0, 0, 0)):
+        try:
+            import cv2
+        except Exception:
+            return
+        if not text:
+            return
+        try:
+            x = int(round(float(origin[0])))
+            y = int(round(float(origin[1])))
+        except Exception:
+            return
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        (text_w, text_h), baseline = cv2.getTextSize(str(text), font, float(font_scale), int(thickness))
+        pad_x = 8
+        pad_y = 6
+        x1 = max(0, x - pad_x)
+        y1 = max(0, y - text_h - pad_y)
+        x2 = min(overlay.shape[1] - 1, x + text_w + pad_x)
+        y2 = min(overlay.shape[0] - 1, y + baseline + 2)
+        layer = overlay.copy()
+        cv2.rectangle(layer, (x1, y1), (x2, y2), bg_color, -1, cv2.LINE_AA)
+        cv2.addWeighted(layer, 0.65, overlay, 0.35, 0.0, dst=overlay)
+        cv2.putText(overlay, str(text), (x, y), font, float(font_scale), color, int(thickness), cv2.LINE_AA)
+
+    def _draw_vision_runtime_meta_overlay(self, bgr, panel_index: int = 1):
+        try:
+            import cv2
+        except Exception:
+            return bgr
+        payload = self._current_vision_meta_payload(panel_index)
+        if not isinstance(payload, dict):
+            return bgr
+        panel = 2 if int(panel_index) == 2 else 1
+        rot_deg = int(self._vision_rotation_deg_2) if panel == 2 else int(self._vision_rotation_deg_1)
+        src_h, src_w = bgr.shape[:2]
+        overlay = self._rotate_bgr_for_overlay(bgr.copy(), rot_deg)
+        if panel == 1:
+            detections = payload.get("detections")
+            if not isinstance(detections, list):
+                return bgr
+            for det in detections:
+                if not isinstance(det, dict):
+                    continue
+                bbox = self._map_source_bbox_to_rotated(det.get("bbox_xyxy"), src_w, src_h, rot_deg)
+                if bbox is None:
+                    continue
+                x1, y1, x2, y2 = bbox
+                class_name = str(det.get("class_name", "?"))
+                depth_m = det.get("depth_m")
+                label = class_name
+                if depth_m is not None:
+                    try:
+                        label += f"/{float(depth_m):.2f}m"
+                    except Exception:
+                        pass
+                color = (252, 119, 30)
+                cv2.rectangle(overlay, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
+                self._draw_outlined_text(overlay, label, (x1, max(18, y1 - 10)), color, font_scale=0.8, thickness=2)
+            return self._rotate_bgr_for_overlay(overlay, self._inverse_rotation_deg(rot_deg))
+
+        color_map = {
+            "bottle": (255, 0, 0),
+            "soju": (0, 0, 255),
+            "beer": (0, 255, 0),
+            "juice": (0, 255, 0),
+        }
+        occupied_label_rects = []
+        detections = payload.get("detections")
+        if isinstance(detections, list):
+            for det in detections:
+                if not isinstance(det, dict):
+                    continue
+                class_name = str(det.get("class_name", "") or "")
+                color = color_map.get(class_name, (255, 255, 255))
+                contour_uv = self._map_source_contour_to_rotated(det.get("contour_uv"), src_w, src_h, rot_deg)
+                self._fill_detection_contour(overlay, contour_uv, color, alpha=0.20)
+                self._draw_detection_contour(overlay, contour_uv, color, thickness=2)
+                bbox = self._map_source_bbox_to_rotated(det.get("bbox_xyxy"), src_w, src_h, rot_deg)
+                if bbox is None:
+                    continue
+                x1, y1, x2, y2 = bbox
+                cv2.rectangle(overlay, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
+                label = class_name
+                conf = det.get("confidence")
+                if conf is not None:
+                    try:
+                        label += f" {float(conf):.2f}"
+                    except Exception:
+                        pass
+                label_origin = (x1, max(18, y1 - 10))
+                self._draw_outlined_text(overlay, label, label_origin, color, font_scale=0.8, thickness=2)
+                occupied_label_rects.append(
+                    self._measure_text_rect(overlay.shape, label, label_origin, font_scale=0.8, thickness=2, pad_x=4, pad_y=4)
+                )
+
+        liquid = payload.get("liquid")
+        if isinstance(liquid, dict):
+            bbox = self._map_source_bbox_to_rotated(liquid.get("bbox_xyxy"), src_w, src_h, rot_deg)
+            volume_ml = liquid.get("volume_ml")
+            if bbox is not None and volume_ml is not None:
+                try:
+                    x1, y1, x2, _y2 = bbox
+                    liquid_color = color_map.get(str(liquid.get("class_name", "")), (0, 255, 0))
+                    volume_text = f"volume={float(volume_ml):.1f}ml"
+                    candidate_origins = [
+                        (max(12, overlay.shape[1] - 190), 38),
+                        (max(8, min(overlay.shape[1] - 190, x2 + 12)), max(30, y1 + 24)),
+                        (max(8, x1 + 12), max(30, _y2 + 28)),
+                        (max(8, x1 + 12), max(30, y1 - 16)),
+                    ]
+                    picked_origin = candidate_origins[0]
+                    for origin in candidate_origins:
+                        rect = self._measure_text_rect(
+                            overlay.shape,
+                            volume_text,
+                            origin,
+                            font_scale=0.8,
+                            thickness=2,
+                            pad_x=8,
+                            pad_y=6,
+                        )
+                        if rect is None:
+                            continue
+                        if any(self._rects_overlap(rect, occ) for occ in occupied_label_rects):
+                            continue
+                        picked_origin = origin
+                        break
+                    self._draw_text_badge(
+                        overlay,
+                        volume_text,
+                        picked_origin,
+                        liquid_color,
+                        font_scale=0.8,
+                        thickness=2,
+                        bg_color=(24, 24, 24),
+                    )
+                except Exception:
+                    pass
+        return self._rotate_bgr_for_overlay(overlay, self._inverse_rotation_deg(rot_deg))
 
     def _extract_calib_center_uvz(self, data_dict):
         if not isinstance(data_dict, dict):
@@ -6343,38 +7638,23 @@ class App(QMainWindow, form):
                 bgr = arr[:, :, ::-1] if msg.encoding == "rgb8" else arr
                 bgr = np.ascontiguousarray(bgr)
                 self._last_yolo_image_size = (w, h)
-                bgr = self._draw_vision_axes_overlay(bgr, panel_index=1)
-                if self._calibration_mode_enabled_1:
-                    calib_data = self._calib_last_points_uvz_mm_1
-                    if calib_data is not None:
-                        bgr = self._draw_calib_points_only(bgr, calib_data, panel_index=1)
-                    bgr = self._draw_calib_info_overlay(bgr, calib_data)
-                rgb = np.ascontiguousarray(bgr[:, :, ::-1])
-                qimg = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy()
+                self._cache_latest_raw_vision_frame(1, bgr)
             elif msg.encoding in ("rgba8", "bgra8"):
                 need = w * 4
                 if step < need or buf.size < h * step:
                     return
                 arr = buf.reshape((h, step))[:, :need].reshape((h, w, 4))
                 if msg.encoding == "bgra8":
-                    arr = arr[:, :, [2, 1, 0, 3]]
-                arr = np.ascontiguousarray(arr)
-                bgr = np.ascontiguousarray(arr[:, :, :3][:, :, ::-1])
+                    bgr = np.ascontiguousarray(arr[:, :, :3])
+                else:
+                    bgr = np.ascontiguousarray(arr[:, :, :3][:, :, ::-1])
                 self._last_yolo_image_size = (w, h)
-                bgr = self._draw_vision_axes_overlay(bgr, panel_index=1)
-                if self._calibration_mode_enabled_1:
-                    calib_data = self._calib_last_points_uvz_mm_1
-                    if calib_data is not None:
-                        bgr = self._draw_calib_points_only(bgr, calib_data, panel_index=1)
-                    bgr = self._draw_calib_info_overlay(bgr, calib_data)
-                rgba = np.concatenate([bgr[:, :, ::-1], arr[:, :, 3:4]], axis=2)
-                rgba = np.ascontiguousarray(rgba)
-                qimg = QImage(rgba.data, w, h, 4 * w, QImage.Format_RGBA8888).copy()
+                self._cache_latest_raw_vision_frame(1, bgr)
             else:
                 return
 
             self._vision_decode_ms = (time.monotonic() - decode_started_at) * 1000.0
-            self._enqueue_vision_frame(qimg, now=now, stream_token=stream_token)
+            self._queue_vision_frame_for_compose(1, bgr, now=now, stream_token=stream_token)
         except Exception:
             return
 
@@ -6404,38 +7684,23 @@ class App(QMainWindow, form):
                 bgr = arr[:, :, ::-1] if msg.encoding == "rgb8" else arr
                 bgr = np.ascontiguousarray(bgr)
                 self._last_yolo_image_size_2 = (w, h)
-                bgr = self._draw_vision_axes_overlay(bgr, panel_index=2)
-                if self._calibration_mode_enabled_2:
-                    calib_data = self._calib_last_points_uvz_mm_2
-                    if calib_data is not None:
-                        bgr = self._draw_calib_points_only(bgr, calib_data, panel_index=2)
-                    bgr = self._draw_calib_info_overlay(bgr, calib_data)
-                rgb = np.ascontiguousarray(bgr[:, :, ::-1])
-                qimg = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy()
+                self._cache_latest_raw_vision_frame(2, bgr)
             elif msg.encoding in ("rgba8", "bgra8"):
                 need = w * 4
                 if step < need or buf.size < h * step:
                     return
                 arr = buf.reshape((h, step))[:, :need].reshape((h, w, 4))
                 if msg.encoding == "bgra8":
-                    arr = arr[:, :, [2, 1, 0, 3]]
-                arr = np.ascontiguousarray(arr)
-                bgr = np.ascontiguousarray(arr[:, :, :3][:, :, ::-1])
+                    bgr = np.ascontiguousarray(arr[:, :, :3])
+                else:
+                    bgr = np.ascontiguousarray(arr[:, :, :3][:, :, ::-1])
                 self._last_yolo_image_size_2 = (w, h)
-                bgr = self._draw_vision_axes_overlay(bgr, panel_index=2)
-                if self._calibration_mode_enabled_2:
-                    calib_data = self._calib_last_points_uvz_mm_2
-                    if calib_data is not None:
-                        bgr = self._draw_calib_points_only(bgr, calib_data, panel_index=2)
-                    bgr = self._draw_calib_info_overlay(bgr, calib_data)
-                rgba = np.concatenate([bgr[:, :, ::-1], arr[:, :, 3:4]], axis=2)
-                rgba = np.ascontiguousarray(rgba)
-                qimg = QImage(rgba.data, w, h, 4 * w, QImage.Format_RGBA8888).copy()
+                self._cache_latest_raw_vision_frame(2, bgr)
             else:
                 return
 
             self._vision_decode_ms_2 = (time.monotonic() - decode_started_at) * 1000.0
-            self._enqueue_vision_frame_2(qimg, now=now, stream_token=stream_token)
+            self._queue_vision_frame_for_compose(2, bgr, now=now, stream_token=stream_token)
         except Exception:
             return
 
@@ -6943,9 +8208,11 @@ class App(QMainWindow, form):
         if int(panel_index) == 2:
             calib_on = bool(getattr(self, "_calibration_mode_enabled_2", False))
             data = getattr(self, "_calib_last_points_uvz_mm_2", None)
+            rot_deg = int(getattr(self, "_vision_rotation_deg_2", 0))
         else:
             calib_on = bool(getattr(self, "_calibration_mode_enabled_1", False))
             data = getattr(self, "_calib_last_points_uvz_mm_1", None)
+            rot_deg = int(getattr(self, "_vision_rotation_deg_1", 0))
         if not calib_on:
             return
         if not isinstance(data, dict) or not data:
@@ -6969,7 +8236,9 @@ class App(QMainWindow, form):
         if not lines:
             return
         from PyQt5.QtGui import QPainter, QPen
-        p = QPainter(canvas)
+        text_layer = QPixmap(canvas.size())
+        text_layer.fill(Qt.transparent)
+        p = QPainter(text_layer)
         try:
             font = QFont(UI_FONT_FAMILY, max(7, UI_TERMINAL_FONT_SIZE - 3))
             p.setFont(font)
@@ -6995,6 +8264,26 @@ class App(QMainWindow, form):
                 p.drawText(tx, ty, center_line)
         finally:
             p.end()
+        rot = self._normalize_rotation_deg(rot_deg)
+        if rot != 0:
+            tf = QTransform()
+            tf.rotate(float(rot))
+            rotated = text_layer.transformed(tf, Qt.SmoothTransformation)
+            layer = QPixmap(canvas.size())
+            layer.fill(Qt.transparent)
+            p_layer = QPainter(layer)
+            try:
+                dx = int(round((canvas.width() - rotated.width()) / 2.0))
+                dy = int(round((canvas.height() - rotated.height()) / 2.0))
+                p_layer.drawPixmap(dx, dy, rotated)
+            finally:
+                p_layer.end()
+            text_layer = layer
+        p_canvas = QPainter(canvas)
+        try:
+            p_canvas.drawPixmap(0, 0, text_layer)
+        finally:
+            p_canvas.end()
 
     def _set_yolo_message_if_needed(self, msg: str):
         if not hasattr(self, "yolo_view"):
@@ -7526,6 +8815,7 @@ class App(QMainWindow, form):
                 if not self._reset_thread.wait(800):
                     self._reset_thread.terminate()
                     self._reset_thread.wait(300)
+            self._stop_vision_compose_workers()
             self._stop_yolo_camera()
             self._stop_calibration_process(1)
             self._stop_calibration_process(2)
