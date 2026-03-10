@@ -43,8 +43,17 @@ This package provides ROS 2 nodes for controlling a Doosan E0509 robot for autom
 
 ### **Setup**
 ```bash
-colcon build --symlink-install --packages-select bartender_test dsr_description2 --allow-overriding dsr_description2
+# 1. Install dependencies
+rosdep install --from-paths src --ignore-src -y
+
+# 2. Build the workspace (First-time or All)
+colcon build --symlink-install --allow-overriding dsr_description2
+
+# 3. Source the environment
 source install/setup.bash
+
+# Incremental Build (Recommended for changes in bartender_test)
+colcon build --symlink-install --packages-select bartender_test dsr_description2 --allow-overriding dsr_description2
 ```
 
 ### **Run Simulation**
