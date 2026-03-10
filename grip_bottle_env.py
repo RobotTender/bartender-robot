@@ -46,9 +46,9 @@ class GripBottleEnvCfg(DirectRLEnvCfg):
     episode_length_s = 8.3333
     decimation = 2
     action_space = 7
-    observation_space = 29
+    observation_space = 21
     state_space = 0
-    obs_joint_dim = 10
+    obs_joint_dim = 6
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
@@ -65,7 +65,7 @@ class GripBottleEnvCfg(DirectRLEnvCfg):
 
     # scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=128,
+        num_envs=64,
         env_spacing=2.2,
         replicate_physics=True,
         clone_in_fabric=False,
@@ -223,6 +223,8 @@ class GripBottleEnvCfg(DirectRLEnvCfg):
     # control
     action_scale = 2.5
     dof_velocity_scale = 0.1
+    # Observation joints for sim2real consistency: 6 arm joints only (gripper uses gripper_state scalar).
+    obs_joint_names = ("joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6")
     # Real hardware command channel: use only rh_r1_joint for open/close.
     gripper_joint_names = ("rh_r1_joint",)
     gripper_open_joint_pos = 0.02
@@ -246,17 +248,36 @@ class GripBottleEnvCfg(DirectRLEnvCfg):
     target_lift_height = 0.05
     success_lift_height = 0.045
     success_ee_to_object = 0.055
-    object_grasp_offset_z_range = (0.06, 0.11)
+    object_grasp_offset_z_range = (0.04, 0.08)
     success_min_gripper_state = 0.50
+    stable_grasp_min_lift = 0.01
     upright_success_min_up_z = 0.96
-    topple_reset_max_up_z = 0.70
+    topple_reset_max_up_z = 0.90
     drop_below_table_margin = 0.03
     contact_force_threshold = 1.0
     terminate_contact_force = 6.0
-    dist_reward_scale = 1.0
-    grasp_reward_scale = 2.5
+    dist_reward_scale = 0.4
+    grasp_reward_scale = 5.0
     lift_reward_scale = 20.0
-    upright_reward_scale = 3.0
+    upright_reward_scale = 6.0
+    lift_upright_gate_min_up_z = 0.90
+    lift_upright_gate_span = 0.06
+    tilt_penalty_start_lift = 0.01
+    tilt_penalty_scale = 3.0
+    post_grasp_arm_slow_min_gripper_state = 0.60
+    post_grasp_arm_action_scale_ratio = 0.60
+    post_grasp_xy_penalty_min_gripper_state = 0.60
+    post_grasp_xy_penalty_min_lift = 0.01
+    post_grasp_xy_speed_penalty_scale = 1.5
+    post_grasp_z_bonus_min_gripper_state = 0.60
+    post_grasp_z_bonus_min_lift = 0.005
+    post_grasp_z_vel_bonus_scale = 2.0
+    post_grasp_z_vel_clip = 0.20
+    approach_pose_max_dist = 0.12
+    approach_pose_max_lift = 0.005
+    approach_pose_max_gripper_state = 0.60
+    approach_pose_dist_decay = 6.0
+    approach_pose_reward_scale = 1.5
     collision_penalty_scale = 2.0
     xy_drift_penalty_scale = 1.0
     xy_drift_free_margin = 0.03
@@ -288,6 +309,7 @@ class GripBottleEnv(DirectRLEnv):
         self.gripper_joint_ids = self._collect_exact_joint_ids(list(self.cfg.gripper_joint_names))
         if self.gripper_joint_ids.numel() > 0:
             self.robot_dof_speed_scales[self.gripper_joint_ids] = 0.12
+        self.obs_joint_ids = self._collect_exact_joint_ids(list(self.cfg.obs_joint_names))
 
         self.robot_dof_targets = torch.zeros((self.num_envs, self._robot.num_joints), device=self.device)
         self.home_joint_pos = self._robot.data.default_joint_pos[0].clone()
@@ -333,8 +355,14 @@ class GripBottleEnv(DirectRLEnv):
         self.xy_drift = torch.zeros((self.num_envs,), dtype=torch.float, device=self.device)
         self.ee_to_object = torch.zeros((self.num_envs,), dtype=torch.float, device=self.device)
         self.tcp_height = torch.zeros((self.num_envs,), dtype=torch.float, device=self.device)
+        self.object_xy_speed = torch.zeros((self.num_envs,), dtype=torch.float, device=self.device)
+        self.object_upward_speed = torch.zeros((self.num_envs,), dtype=torch.float, device=self.device)
+        self.post_grasp_arm_scale = torch.ones((self.num_envs,), dtype=torch.float, device=self.device)
+        self.tcp_x_w = torch.zeros((self.num_envs, 3), dtype=torch.float, device=self.device)
+        self.object_up_w = torch.zeros((self.num_envs, 3), dtype=torch.float, device=self.device)
 
         self.tcp_offset_axis_local = torch.tensor(self.cfg.tcp_axis_local, dtype=torch.float, device=self.device)
+        self.tcp_x_axis_local = torch.tensor((1.0, 0.0, 0.0), dtype=torch.float, device=self.device)
         self.object_up_axis_local = torch.tensor((0.0, 0.0, 1.0), dtype=torch.float, device=self.device)
         self.object_grasp_offset_z = sample_uniform(
             float(self.cfg.object_grasp_offset_z_range[0]),
@@ -401,16 +429,20 @@ class GripBottleEnv(DirectRLEnv):
 
     def _collect_exact_joint_ids(self, joint_names: list[str]) -> torch.Tensor:
         joint_ids = []
+        seen = set()
         for name in joint_names:
             try:
                 ids, _ = self._robot.find_joints(name)
                 if len(ids) > 0:
-                    joint_ids.append(int(ids[0]))
+                    joint_id = int(ids[0])
+                    if joint_id not in seen:
+                        joint_ids.append(joint_id)
+                        seen.add(joint_id)
             except ValueError:
                 continue
         if len(joint_ids) == 0:
             return torch.zeros((0,), dtype=torch.long, device=self.device)
-        return torch.tensor(sorted(set(joint_ids)), dtype=torch.long, device=self.device)
+        return torch.tensor(joint_ids, dtype=torch.long, device=self.device)
 
     def _find_joint_id(self, joint_name: str) -> int:
         try:
@@ -530,10 +562,12 @@ class GripBottleEnv(DirectRLEnv):
         tcp_len = torch.clamp(tcp_tip_len - float(self.cfg.grasp_center_from_tip_to_ee_m), min=0.0)
         tcp_local = self.tcp_offset_axis_local.unsqueeze(0) * tcp_len.unsqueeze(-1)
         self.robot_grasp_pos[env_ids] = ee_pos_w + quat_apply(ee_quat_w, tcp_local)
+        self.tcp_x_w[env_ids] = quat_apply(ee_quat_w, self.tcp_x_axis_local.unsqueeze(0).expand(len(env_ids), -1))
 
         self.object_pos_w[env_ids] = self._gather_active_bottle_tensor(env_ids, "root_pos_w")
         object_quat_w = self._gather_active_bottle_tensor(env_ids, "root_quat_w")
         object_up_w = quat_apply(object_quat_w, self.object_up_axis_local.unsqueeze(0).expand(len(env_ids), -1))
+        self.object_up_w[env_ids] = object_up_w
         self.object_up_z[env_ids] = torch.clamp(object_up_w[:, 2], -1.0, 1.0)
         self.object_grasp_pos_w[env_ids] = self.object_pos_w[env_ids] + object_up_w * self.object_grasp_offset_z[env_ids].unsqueeze(-1)
 
@@ -545,6 +579,9 @@ class GripBottleEnv(DirectRLEnv):
         self.xy_drift[env_ids] = torch.norm(object_xy_local - self.object_init_xy[env_ids], p=2, dim=-1)
         self.ee_to_object[env_ids] = torch.norm(self.robot_grasp_pos[env_ids] - self.object_grasp_pos_w[env_ids], p=2, dim=-1)
         self.tcp_height[env_ids] = self.robot_grasp_pos[env_ids, 2] - self.scene.env_origins[env_ids, 2]
+        object_lin_vel_w = self._gather_active_bottle_tensor(env_ids, "root_lin_vel_w")
+        self.object_xy_speed[env_ids] = torch.norm(object_lin_vel_w[:, :2], p=2, dim=-1)
+        self.object_upward_speed[env_ids] = object_lin_vel_w[:, 2]
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self.actions = actions.clone().clamp(-1.0, 1.0)
@@ -552,9 +589,20 @@ class GripBottleEnv(DirectRLEnv):
 
         arm_dim = min(6, self.actions.shape[1], self._robot.num_joints)
         if arm_dim > 0:
+            gripper_state = self._compute_gripper_state()
+            post_grasp_arm_scale = torch.where(
+                gripper_state > float(self.cfg.post_grasp_arm_slow_min_gripper_state),
+                torch.full_like(gripper_state, float(self.cfg.post_grasp_arm_action_scale_ratio)),
+                torch.ones_like(gripper_state),
+            )
+            self.post_grasp_arm_scale[:] = post_grasp_arm_scale
             targets[:, :arm_dim] = (
                 self.robot_dof_targets[:, :arm_dim]
-                + self.robot_dof_speed_scales[:arm_dim] * self.dt * self.actions[:, :arm_dim] * self.cfg.action_scale
+                + self.robot_dof_speed_scales[:arm_dim]
+                * self.dt
+                * self.actions[:, :arm_dim]
+                * self.cfg.action_scale
+                * post_grasp_arm_scale.unsqueeze(-1)
             )
 
         if self.actions.shape[1] > 6 and self.gripper_joint_ids.numel() > 0:
@@ -592,8 +640,60 @@ class GripBottleEnv(DirectRLEnv):
         gripper_state = self._compute_gripper_state()
         dist_reward = torch.exp(-8.0 * self.ee_to_object)
         grasp_reward = torch.exp(-float(self.cfg.grasp_dist_decay) * self.ee_to_object) * gripper_state
-        lift_reward = torch.clamp(self.lift_amount / float(self.cfg.target_lift_height), min=0.0, max=1.0)
-        upright_reward = lift_reward * torch.clamp(self.object_up_z, min=0.0, max=1.0)
+        lift_reward_raw = torch.clamp(self.lift_amount / float(self.cfg.target_lift_height), min=0.0, max=1.0)
+
+        near_mask = self.ee_to_object < float(self.cfg.success_ee_to_object)
+        closed_mask = gripper_state > float(self.cfg.success_min_gripper_state)
+        grasp_candidate_mask = near_mask & closed_mask
+
+        near_soft = torch.clamp(
+            1.0 - self.ee_to_object / max(float(self.cfg.success_ee_to_object), 1.0e-6),
+            min=0.0,
+            max=1.0,
+        )
+        closed_soft = torch.clamp(
+            (gripper_state - float(self.cfg.success_min_gripper_state))
+            / max(1.0 - float(self.cfg.success_min_gripper_state), 1.0e-6),
+            min=0.0,
+            max=1.0,
+        )
+        stable_grasp_gate = near_soft * closed_soft
+
+        lift_upright_gate = torch.clamp(
+            (self.object_up_z - float(self.cfg.lift_upright_gate_min_up_z)) / max(float(self.cfg.lift_upright_gate_span), 1.0e-6),
+            min=0.0,
+            max=1.0,
+        )
+        lift_reward = lift_reward_raw * lift_upright_gate * stable_grasp_gate
+        upright_reward = lift_reward_raw * torch.clamp(self.object_up_z, min=0.0, max=1.0) * stable_grasp_gate
+        tilt_penalty = torch.clamp(float(self.cfg.upright_success_min_up_z) - self.object_up_z, min=0.0)
+        tilt_penalty = torch.where(
+            self.lift_amount > float(self.cfg.tilt_penalty_start_lift),
+            tilt_penalty,
+            torch.zeros_like(tilt_penalty),
+        )
+        post_grasp_xy_mask = (
+            (gripper_state > float(self.cfg.post_grasp_xy_penalty_min_gripper_state))
+            & (self.lift_amount > float(self.cfg.post_grasp_xy_penalty_min_lift))
+        )
+        post_grasp_xy_penalty = self.object_xy_speed * post_grasp_xy_mask.float()
+
+        post_grasp_z_mask = (
+            (gripper_state > float(self.cfg.post_grasp_z_bonus_min_gripper_state))
+            & (self.lift_amount > float(self.cfg.post_grasp_z_bonus_min_lift))
+        )
+        post_grasp_z_up = torch.clamp(self.object_upward_speed, min=0.0, max=float(self.cfg.post_grasp_z_vel_clip))
+        post_grasp_z_bonus = post_grasp_z_up * post_grasp_z_mask.float() * torch.clamp(1.0 - lift_reward_raw, min=0.0, max=1.0)
+
+        # Encourage side-approach posture before grasp: TCP x-axis parallel to bottle up-axis.
+        x_parallel = torch.abs(torch.sum(self.tcp_x_w * self.object_up_w, dim=-1))
+        approach_pose_mask = (
+            (self.ee_to_object < float(self.cfg.approach_pose_max_dist))
+            & (self.lift_amount < float(self.cfg.approach_pose_max_lift))
+            & (gripper_state < float(self.cfg.approach_pose_max_gripper_state))
+        )
+        approach_pose_dist_weight = torch.exp(-float(self.cfg.approach_pose_dist_decay) * self.ee_to_object)
+        approach_pose_reward = x_parallel * approach_pose_dist_weight * approach_pose_mask.float()
 
         xy_penalty = torch.clamp(self.xy_drift - float(self.cfg.xy_drift_free_margin), min=0.0)
         action_penalty = torch.sum(self.actions**2, dim=-1)
@@ -603,8 +703,12 @@ class GripBottleEnv(DirectRLEnv):
             + self.cfg.grasp_reward_scale * grasp_reward
             + self.cfg.lift_reward_scale * lift_reward
             + self.cfg.upright_reward_scale * upright_reward
+            + self.cfg.post_grasp_z_vel_bonus_scale * post_grasp_z_bonus
+            + self.cfg.approach_pose_reward_scale * approach_pose_reward
             - self.cfg.collision_penalty_scale * self.arm_collision_over
             - self.cfg.singularity_penalty_scale * self.singularity_penalty
+            - self.cfg.tilt_penalty_scale * tilt_penalty
+            - self.cfg.post_grasp_xy_speed_penalty_scale * post_grasp_xy_penalty
             - self.cfg.xy_drift_penalty_scale * xy_penalty
             - self.cfg.action_penalty_scale * action_penalty
         )
@@ -617,6 +721,21 @@ class GripBottleEnv(DirectRLEnv):
             "mean_lift": self.lift_amount.mean(),
             "mean_dist": self.ee_to_object.mean(),
             "mean_up_z": self.object_up_z.mean(),
+            "mean_lift_upright_gate": lift_upright_gate.mean(),
+            "mean_stable_grasp_gate": stable_grasp_gate.mean(),
+            "near_rate": near_mask.float().mean(),
+            "closed_rate": closed_mask.float().mean(),
+            "grasp_candidate_rate": grasp_candidate_mask.float().mean(),
+            "stable_grasp_rate": (grasp_candidate_mask & (self.lift_amount > float(self.cfg.stable_grasp_min_lift))).float().mean(),
+            "mean_tilt_penalty": tilt_penalty.mean(),
+            "mean_post_grasp_xy_penalty": post_grasp_xy_penalty.mean(),
+            "mean_post_grasp_z_bonus": post_grasp_z_bonus.mean(),
+            "mean_object_xy_speed": self.object_xy_speed.mean(),
+            "mean_object_upward_speed": self.object_upward_speed.mean(),
+            "mean_post_grasp_arm_scale": self.post_grasp_arm_scale.mean(),
+            "mean_x_parallel": x_parallel.mean(),
+            "mean_approach_pose_reward": approach_pose_reward.mean(),
+            "approach_pose_mask_rate": approach_pose_mask.float().mean(),
             "mean_tcp_height": self.tcp_height.mean(),
             "mean_arm_collision_peak": self.arm_collision_peak.mean(),
             "collision_over_rate": (self.arm_collision_over > 0.0).float().mean(),
@@ -696,6 +815,11 @@ class GripBottleEnv(DirectRLEnv):
         self.joint_5_abs_rad[env_ids] = 0.0
         self.singularity_penalty[env_ids] = 0.0
         self.tcp_height[env_ids] = 0.0
+        self.object_xy_speed[env_ids] = 0.0
+        self.object_upward_speed[env_ids] = 0.0
+        self.post_grasp_arm_scale[env_ids] = 1.0
+        self.tcp_x_w[env_ids] = 0.0
+        self.object_up_w[env_ids] = 0.0
         self.object_grasp_offset_z[env_ids] = sample_uniform(
             float(self.cfg.object_grasp_offset_z_range[0]),
             float(self.cfg.object_grasp_offset_z_range[1]),
@@ -712,8 +836,8 @@ class GripBottleEnv(DirectRLEnv):
         dof_pos_scaled = 2.0 * (self._robot.data.joint_pos - self.policy_dof_lower_limits) / denom - 1.0
         dof_vel_scaled = self._robot.data.joint_vel * float(self.cfg.dof_velocity_scale)
 
-        joint_pos_obs = self._pad_or_truncate(dof_pos_scaled, int(self.cfg.obs_joint_dim))
-        joint_vel_obs = self._pad_or_truncate(dof_vel_scaled, int(self.cfg.obs_joint_dim))
+        joint_pos_obs = self._pad_or_truncate(dof_pos_scaled[:, self.obs_joint_ids], int(self.cfg.obs_joint_dim))
+        joint_vel_obs = self._pad_or_truncate(dof_vel_scaled[:, self.obs_joint_ids], int(self.cfg.obs_joint_dim))
 
         to_object = self.object_grasp_pos_w - self.robot_grasp_pos
         gripper_state = self._compute_gripper_state().unsqueeze(-1)
@@ -722,11 +846,11 @@ class GripBottleEnv(DirectRLEnv):
             (
                 joint_pos_obs,
                 joint_vel_obs,
+                gripper_state,
                 to_object,
                 self.lift_amount.unsqueeze(-1),
-                gripper_state,
-                self.active_bottle_one_hot,
                 self.object_up_z.unsqueeze(-1),
+                self.active_bottle_one_hot,
             ),
             dim=-1,
         )
