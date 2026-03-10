@@ -106,6 +106,12 @@ def stt_transcribe(request):
     }
 
     if recipe:
+        logger.info(
+            "Recipe generated: selected_menu=%s recipe=%s status=%s",
+            selected_menu,
+            recipe,
+            new_status,
+        )
         command_payload = {
             "selected_menu": selected_menu,
             "recipe": recipe,
