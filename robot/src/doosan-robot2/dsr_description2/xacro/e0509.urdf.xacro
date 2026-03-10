@@ -19,6 +19,8 @@
   <xacro:arg name="model"               default=""/>
   <xacro:arg name="update_rate"         default=""/>
 
+  <xacro:arg name="object"              default="none"/>         <!-- none | bottle -->
+
   <!-- Local properties -->
   <xacro:property name="cr"             value="$(arg color)"/>
   <xacro:property name="gr"             value="$(arg gripper)"/>
@@ -29,6 +31,7 @@
   <xacro:property name="mode"           value="$(arg mode)"/>
   <xacro:property name="model"          value="$(arg model)"/>
   <xacro:property name="update_rate"    value="$(arg update_rate)"/>
+  <xacro:property name="obj"            value="$(arg object)"/>
 
 
   <!-- Visual -->
@@ -48,6 +51,18 @@
     <parent link="world"/>
     <child  link="base_link"/>
   </joint>
+
+  <!-- Target Shapes -->
+  <xacro:include filename="$(find dsr_description2)/xacro/target_shapes.xacro"/>
+  <xacro:cup x="0.30" y="-0.10" z="0.13" r="0.05" h="0.26" color="0.5 0.5 0.5 0.8"/>
+
+  <!-- Target Markers (pos1-pos5) -->
+  <xacro:include filename="$(find dsr_description2)/xacro/target_marker.xacro"/>
+  <xacro:target_marker name="marker_pos1" parent="world" x="0.30848" y="0.06452" z="0.31375" r="0.015" color="1.0 0.0 0.0 0.8"/>
+  <xacro:target_marker name="marker_pos2" parent="world" x="0.34598" y="0.10202" z="0.18375" r="0.015" color="1.0 0.5 0.0 0.8"/>
+  <xacro:target_marker name="marker_pos3" parent="world" x="0.35948" y="0.11552" z="0.28" r="0.015" color="1.0 1.0 0.0 0.8"/>
+  <xacro:target_marker name="marker_pos4" parent="world" x="0.32098" y="0.07702" z="0.39875" r="0.015" color="0.0 1.0 0.0 0.8"/>
+  <xacro:target_marker name="marker_pos5" parent="world" x="0.22848" y="-0.01548" z="0.44375" r="0.015" color="0.0 0.0 1.0 0.8"/>
 
   <!-- Gazebo -->
   <xacro:if value="${gz}">
@@ -91,6 +106,43 @@
       max_speed="0.150"
       max_force="235.0"
       mock_sensor_commands="true" />
+
+  </xacro:if>
+
+  <xacro:if value="${gr == 'rh_p12_rn'}">
+
+    <xacro:include filename="$(find dsr_description2)/gripper/rh_p12_rn.xacro"/>
+    <xacro:rh_p12_rn
+      parent="$(arg gripper_parent_link)"
+      prefix="$(arg gripper_prefix)"/>
+
+    <xacro:include filename="$(find dsr_description2)/gripper/robotiq.ros2_control.xacro"/>
+    <xacro:robotiq_gripper_system
+      mode="$(arg mode)"
+      joint_name="$(arg gripper_prefix)rh_p12_rn_left_finger_joint"
+      system_name="$(arg gripper_prefix)rh_p12_rn_gripper_system"
+      pos_min="0.0"
+      pos_max="0.05"
+      init_pos="0.025"
+      speed_mult="1.0"
+      force_mult="0.5"
+      max_speed="0.1"
+      max_force="100.0"
+      mock_sensor_commands="true" />
+
+    <xacro:if value="${obj == 'bottle' or obj == 'cylinder'}">
+      <xacro:include filename="$(find dsr_description2)/xacro/bottle_object.xacro"/>
+      <xacro:bottle_object 
+        parent="$(arg gripper_prefix)gripper_tcp"
+        prefix="$(arg gripper_prefix)"
+        radius="0.04"
+        height="0.24"
+        mouth_radius="0.0125"
+        mouth_height="0.03"
+        grasp_height="0.1"
+        rpy="1.5708 -2.3562 0"
+      />
+    </xacro:if>
 
   </xacro:if>
 

@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="cylinder_object" params="parent prefix:='' radius:=0.04 height:=0.27 grasp_height:=0.1 rpy:='0 0 0'">
+
+    <link name="${prefix}cylinder_link">
+      <visual>
+        <!-- Origin is at the center of the cylinder -->
+        <!-- We want the grasp point (parent origin) to be at grasp_height from the bottom -->
+        <!-- Center of cylinder is at height/2 from bottom -->
+        <!-- Offset from grasp point to center = (height/2) - grasp_height -->
+        <origin xyz="0 0 ${(height/2) - grasp_height}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${radius}" length="${height}"/>
+        </geometry>
+        <material name="blue_transparent">
+          <color rgba="0 0.5 1 0.6"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${(height/2) - grasp_height}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${radius}" length="${height}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <origin xyz="0 0 ${(height/2) - grasp_height}" rpy="0 0 0"/>
+        <mass value="0.5"/>
+        <inertia ixx="0.003" ixy="0" ixz="0" iyy="0.003" iyz="0" izz="0.0004"/>
+      </inertial>
+    </link>
+
+    <joint name="${prefix}cylinder_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child  link="${prefix}cylinder_link"/>
+      <origin xyz="0 0 0" rpy="${rpy}"/>
+    </joint>
+
+  </xacro:macro>
+
+</robot>

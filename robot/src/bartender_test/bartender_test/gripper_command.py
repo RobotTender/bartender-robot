@@ -7,8 +7,8 @@ from .gripper_controller import GripperController
 def main(args=None):
     if len(sys.argv) < 2:
         print("Usage:")
-        print("  ros2 run bartender_test gripper_command open")
-        print("  ros2 run bartender_test gripper_command close <force>")
+        print("  ros2 run bartender_test gripper open")
+        print("  ros2 run bartender_test gripper close <force>")
         return
 
     cmd = sys.argv[1].lower()
@@ -20,18 +20,20 @@ def main(args=None):
         stroke = 0
         force = 400
 
-    # 2. Strict 'close <number>' logic
+    # 2. Strict 'close' logic
     elif cmd == 'close':
-        if len(sys.argv) < 3:
-            print("The 'close' command requires a force value (Usage: close <number>). No action taken.")
-            return
+        # Default to max safe force (800) if not specified
+        if len(sys.argv) >= 3:
+            try:
+                force = int(sys.argv[2])
+            except ValueError:
+                print(f"Invalid force value: '{sys.argv[2]}'. Must be a number.")
+                return
+        else:
+            force = 800 # Maximum Safe Force for RH-P12-RN
         
-        try:
-            force = int(sys.argv[2])
-            stroke = 700
-        except ValueError:
-            print(f"Invalid force value: '{sys.argv[2]}'. Must be a number.")
-            return
+        stroke = 700 # Fully closed stroke
+
 
     # 3. Handle manual stroke (if user provides a raw number first)
     else:

@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Cube (Box) Target -->
+  <xacro:macro name="target_cube" params="prefix:='' x:=0.3 y:=-0.25 z:=0.15 w:=0.1 l:=0.1 h:=0.005">
+    <link name="${prefix}target_cube_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${w} ${l} ${h}"/>
+        </geometry>
+        <material name="green_transparent">
+          <color rgba="0.0 1.0 0.0 0.4"/>
+        </material>
+      </visual>
+      <inertial>
+        <mass value="0.01"/>
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+      </inertial>
+    </link>
+    <joint name="${prefix}target_cube_joint" type="fixed">
+      <parent link="world"/>
+      <child  link="${prefix}target_cube_link"/>
+      <origin xyz="${x} ${y} ${z}" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- Cup (Disc) Target -->
+  <xacro:macro name="cup" params="prefix:='' x:=0.3 y:=-0.25 z:=0.15 r:=0.05 h:=0.005 color:='0.0 1.0 0.0 0.4'">
+    <link name="${prefix}cup_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${r}" length="${h}"/>
+        </geometry>
+        <material name="${prefix}cup_mat">
+          <color rgba="${color}"/>
+        </material>
+      </visual>
+      <inertial>
+        <mass value="0.01"/>
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+      </inertial>
+    </link>
+    <joint name="${prefix}cup_joint" type="fixed">
+      <parent link="world"/>
+      <child  link="${prefix}cup_link"/>
+      <origin xyz="${x} ${y} ${z}" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+</robot>

@@ -26,6 +26,7 @@ from launch.conditions import IfCondition, UnlessCondition
 
 from launch_ros.actions import Node, SetRemap
 from launch_ros.substitutions import FindPackageShare
+from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 from launch.actions import IncludeLaunchDescription
 
@@ -53,6 +54,8 @@ def generate_launch_description():
         DeclareLaunchArgument('gz',         default_value = 'false',          description = 'USE GAZEBO SIM' ),
         DeclareLaunchArgument('rt_host',    default_value = '192.168.137.50', description = 'ROBOT_RT_IP'    ),
         DeclareLaunchArgument('remap_tf',   default_value = 'false',          description = 'REMAP TF'       ),
+        DeclareLaunchArgument('gripper',    default_value = 'none',           description = 'GRIPPER'        ),
+        DeclareLaunchArgument('object',     default_value = 'none',           description = 'OBJECT'         ),
     ]
     xacro_path = os.path.join( get_package_share_directory('dsr_description2'), 'xacro')
     # gui = LaunchConfiguration("gui")
@@ -78,12 +81,14 @@ def generate_launch_description():
             " rt_host:=", LaunchConfiguration('rt_host'),
             " port:=", LaunchConfiguration('port'),
             " mode:=", LaunchConfiguration('mode'),
-            " model:=", LaunchConfiguration('model'),
+            " model:=", PythonExpression(["'", LaunchConfiguration('model'), "'.upper()"]),
             " update_rate:=", update_rate,
+            " gripper:=", LaunchConfiguration('gripper'),
+            " object:=", LaunchConfiguration('object'),
         ]
     )
 
-    robot_description = {"robot_description": robot_description_content}
+    robot_description = {"robot_description": ParameterValue(robot_description_content, value_type=str)}
 
     robot_controllers = [
         PathJoinSubstitution([
@@ -109,8 +114,8 @@ def generate_launch_description():
             {"host":    LaunchConfiguration('host')  },
             {"port":    LaunchConfiguration('port')  },
             {"mode":    LaunchConfiguration('mode')  },
-            {"model":   LaunchConfiguration('model') },
-            {"gripper": "none"      },
+            {"model":   PythonExpression(["'", LaunchConfiguration('model'), "'.upper()"]) },
+            {"gripper": LaunchConfiguration('gripper') },
             {"mobile":  "none"      },
             {"rt_host":  LaunchConfiguration('rt_host')      },
             #parameters_file_path       # 파라미터 설정을 동일이름으로 launch 파일과 yaml 파일에서 할 경우 yaml 파일로 셋팅된다.    
@@ -134,7 +139,7 @@ def generate_launch_description():
         namespace=LaunchConfiguration('name'),
         output='both',
         parameters=[{
-            'robot_description': Command([
+            'robot_description': ParameterValue(Command([
                 'xacro', ' ', xacro_path, '/', LaunchConfiguration('model'),
                 '.urdf.xacro color:=', LaunchConfiguration('color'),
                 " name:=", LaunchConfiguration('name'),
@@ -142,9 +147,11 @@ def generate_launch_description():
                 " rt_host:=", LaunchConfiguration('rt_host'),
                 " port:=", LaunchConfiguration('port'),
                 " mode:=", LaunchConfiguration('mode'),
-                " model:=", LaunchConfiguration('model'),
+                " model:=", PythonExpression(["'", LaunchConfiguration('model'), "'.upper()"]),
                 " update_rate:=", update_rate,
-            ]),
+                " gripper:=", LaunchConfiguration('gripper'),
+                " object:=", LaunchConfiguration('object'),
+            ]), value_type=str),
         }]
     )
     

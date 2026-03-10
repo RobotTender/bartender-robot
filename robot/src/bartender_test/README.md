@@ -1,89 +1,64 @@
-# Bartender Test Package
+# Bartender Test Package (Robotender)
 
-This package provides a suite of ROS 2 nodes for controlling a Doosan E0509 robot equipped with a Robotis RH-12-RN gripper. It includes specialized functions for precise movement, gripper control, and high-precision object weighing using joint torques.
+This package provides ROS 2 nodes for controlling a Doosan E0509 robot for automated beverage pouring.
 
-## Prerequisites
+---
 
-- **OS:** Ubuntu 22.04 or 24.04
-- **ROS 2:** Jazzy Jalisco
-- **Hardware:** Doosan E0509 Robot + Robotis RH-12-RN Gripper
-- **Driver:** [Doosan Robot ROS 2 Driver](https://github.com/doosan-robotics/doosan-robot2) (Must be installed in the same workspace).
+## 🍹 Pouring Implementation Detail
 
-## Installation
+### 1. `action pour move` (Circular)
+- **Implementation:** Uses `movec` to define a circular arc.
+- **Trajectory:** split into Horizontal (Cheers -> Pour_Horizontal) and Vertical (Pour_Horizontal -> Pour_Vertical).
+- **Why `movec` is not sufficient:** Circular motion is constrained to a perfect geometric arc. A bottle's center of mass and mouth do not naturally follow a perfect circle during a pour; attempting to force this often leads to inconsistent flow and awkward joint orientations.
 
-1. Create a ROS 2 workspace:
-   ```bash
-   mkdir -p ~/ros2_ws/src
-   cd ~/ros2_ws/src
-   ```
+### 2. `action pour orbit` (Spline)
+- **Implementation:** Uses `movesx` (Spline) to guide the TCP through a smooth 5-point path.
+- **Why `orbit` is better:**
+  - **Natural Curve:** Spline motion fits the complex, non-circular path required for pouring liquid from a bottle.
+  - **Continuous Flow:** Ensures the robot doesn't pause between points, maintaining a steady stream.
+  - **Orientation:** Provides superior control over the bottle's tilt angle throughout the motion.
 
-2. Clone the Doosan Driver and this package:
-   ```bash
-   # Clone Doosan driver (if not already present)
-   git clone https://github.com/doosan-robotics/doosan-robot2.git
-   
-   # Clone this package
-   git clone <your-repository-url> bartender_test
-   ```
+---
 
-## Building
+## 📁 File Descriptions
 
-From the root of your workspace (`~/ros2_ws`):
+| File | Purpose |
+| :--- | :--- |
+| `action.py` | Core node for high-level tasks (`pour move`, `pour orbit`, `warmup`). |
+| `defines.py` | Constants for Joint poses and Cartesian target coordinates (POS1-POS5). |
+| `monitor.py` | 1Hz monitor for live Joint and XYZ feedback. |
+| `pose.py` | Simple CLI to move to named poses (home, cheers, etc.). |
+| `gripper_command.py` | CLI for opening and closing the gripper with force control. |
+| `gripper_controller.py` | Internal library for gripper communication. |
+| `check_tcp.py` | Utility to print current Tool Center Point coordinates. |
+| `calc_mouth_world.py` | **(Utility)** Calculates bottle mouth position in world frame. |
+| `calc_marker_pos1.py` | **(Utility)** Calculates simulation marker positions based on joint angles. |
+| `movej.py` / `movec.py` | Basic testing scripts for joint and circular moves. |
 
+---
+
+## 🚀 Usage
+
+> **Note:** All commands must be run from the workspace root: `cd ~/bartender-robot/robot` (or your local workspace folder).
+
+### **Setup**
 ```bash
-# Build the package
-colcon build --packages-select bartender_test --symlink-install
-
-# Source the workspace
+colcon build --symlink-install --packages-select bartender_test dsr_description2 --allow-overriding dsr_description2
 source install/setup.bash
 ```
 
-## Usage
-
-### 1. Robot Movement (`move_to`)
-Move the robot to pre-defined poses or specific joint values.
-
+### **Run Simulation**
 ```bash
-# Pre-defined poses
-ros2 run bartender_test move_to home      # Standard home position
-ros2 run bartender_test move_to cheers    # Bottle-holding/Cheers position
-ros2 run bartender_test move_to pole      # Vertical/Pole position
-
-# Relative joint moves
-ros2 run bartender_test move_to j1 rel 10 # Joint 1 +10 degrees
-
-# Absolute joint moves
-ros2 run bartender_test move_to j3 abs 45 # Set Joint 3 to 45 degrees
+ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=virtual model:=e0509 gripper:=rh_p12_rn object:=bottle
 ```
 
-### 2. Gripper Control (`gripper_command`)
-Open or close the gripper. **Safety Note:** `close` requires a force value.
-
+### **Run Real Robot**
 ```bash
-# Open the gripper
-ros2 run bartender_test gripper_command open
-
-# Close the gripper (Strict order: close <force>)
-ros2 run bartender_test gripper_command close 150  # Success
-ros2 run bartender_test gripper_command close      # No action (Safe)
+ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.59 model:=e0509
 ```
 
-### 3. Precision Weighing (`measure_weight`)
-Measure the weight of a grasped object using multi-joint torque sensing (J2, J3, J5).
-
-```bash
-# Step 1: Establish baseline (Automated mechanical reset via Home)
-ros2 run bartender_test measure_weight tare
-
-# Step 2: Grab and weigh object (Active stabilization monitoring)
-ros2 run bartender_test measure_weight first 150
-
-# Step 3: Re-measure (Fast check without disturbing the grasp)
-ros2 run bartender_test measure_weight again
-```
-
-## Features
-- **Active Stabilization:** Automatically detects when mechanical vibrations settle (typically 3-5s) instead of using fixed timers.
-- **Gold Standard Workflow:** Automated Home-to-Pose resets during `tare` to eliminate harmonic drive hysteresis.
-- **Multi-Joint Sensing:** Uses torques from J2, J3, and J5 for high-precision payload estimation.
-- **Adaptive Wait:** Fast 2s wait for repeated measurements, 10s for initial movements.
+### **Main Actions**
+- `ros2 run bartender_test action pour move [horizontal|vertical] [repeat=n]`
+- `ros2 run bartender_test action pour orbit [<start_idx>] [<end_idx>] [repeat=n]`
+- `ros2 run bartender_test action warmup [repeat=n]`
+- `ros2 run bartender_test monitor [xyz|j]`
