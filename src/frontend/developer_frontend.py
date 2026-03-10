@@ -76,6 +76,10 @@ try:
     from rclpy.callback_groups import ReentrantCallbackGroup
 except Exception:
     ReentrantCallbackGroup = None
+try:
+    from rclpy.exceptions import RCLError
+except Exception:
+    RCLError = Exception
 import numpy as np
 
 # Project layout root
@@ -367,6 +371,8 @@ class App(QMainWindow, form):
         super().__init__()
         self.setupUi(self)
         self._status_row_ready = False
+        self._closing = False
+        self._ui_tick_error_last_at = {}
 
         self.backend = backend
         self._auto_start_backend = bool(auto_start_backend)
@@ -492,40 +498,56 @@ class App(QMainWindow, form):
             threading.excepthook = self._handle_thread_exception
 
         self._log_timer = QTimer(self)
-        self._log_timer.timeout.connect(self._flush_log_buffer)
+        self._log_timer.timeout.connect(lambda: self._safe_ui_tick("log_flush", self._flush_log_buffer))
         self._log_timer.start(100)
         self.append_log("[시작] 메인창 실행 완료\n")
         self.append_log("[시작] 백엔드 초기화 대기 중...\n")
 
         self._robot_status_timer = QTimer(self)
-        self._robot_status_timer.timeout.connect(self._refresh_robot_status)
+        self._robot_status_timer.timeout.connect(
+            lambda: self._safe_ui_tick("robot_status", self._refresh_robot_status)
+        )
         self._robot_status_timer.start(250)
         self._vision_status_timer_1 = QTimer(self)
-        self._vision_status_timer_1.timeout.connect(lambda: self._refresh_vision_status_panel(1))
+        self._vision_status_timer_1.timeout.connect(
+            lambda: self._safe_ui_tick("vision_status_1", self._refresh_vision_status_panel, 1)
+        )
         self._vision_status_timer_1.start(300)
         self._vision_status_timer_2 = QTimer(self)
-        self._vision_status_timer_2.timeout.connect(lambda: self._refresh_vision_status_panel(2))
+        self._vision_status_timer_2.timeout.connect(
+            lambda: self._safe_ui_tick("vision_status_2", self._refresh_vision_status_panel, 2)
+        )
         self._vision_status_timer_2.start(300)
         self._status_timer = self._robot_status_timer
         self._vision_status_timer = None
         self._top_status_anim_timer = QTimer(self)
-        self._top_status_anim_timer.timeout.connect(self._tick_top_status_animation)
+        self._top_status_anim_timer.timeout.connect(
+            lambda: self._safe_ui_tick("top_status_anim", self._tick_top_status_animation)
+        )
         self._top_status_anim_timer.start(30)
         self._calib_status_blink_timer = QTimer(self)
-        self._calib_status_blink_timer.timeout.connect(self._tick_calibration_status_blink)
+        self._calib_status_blink_timer.timeout.connect(
+            lambda: self._safe_ui_tick("calib_blink", self._tick_calibration_status_blink)
+        )
         self._calib_status_blink_timer.start(500)
 
         self._pos_timer = QTimer(self)
-        self._pos_timer.timeout.connect(self._refresh_positions)
+        self._pos_timer.timeout.connect(lambda: self._safe_ui_tick("positions", self._refresh_positions))
         self._pos_timer.start(200)
         self._current_tool_timer = QTimer(self)
-        self._current_tool_timer.timeout.connect(self._tick_current_tool_sync)
+        self._current_tool_timer.timeout.connect(
+            lambda: self._safe_ui_tick("current_tool", self._tick_current_tool_sync)
+        )
         self._current_tool_timer.start(700)
         self._vision_render_timer_1 = QTimer(self)
-        self._vision_render_timer_1.timeout.connect(self._drain_pending_vision_frame_1)
+        self._vision_render_timer_1.timeout.connect(
+            lambda: self._safe_ui_tick("vision_render_1", self._drain_pending_vision_frame_1)
+        )
         self._vision_render_timer_1.start(VISION_RENDER_INTERVAL_MS)
         self._vision_render_timer_2 = QTimer(self)
-        self._vision_render_timer_2.timeout.connect(self._drain_pending_vision_frame_2)
+        self._vision_render_timer_2.timeout.connect(
+            lambda: self._safe_ui_tick("vision_render_2", self._drain_pending_vision_frame_2)
+        )
         self._vision_render_timer_2.start(VISION_RENDER_INTERVAL_MS)
 
         self._yolo_thread = None
@@ -941,6 +963,42 @@ class App(QMainWindow, form):
             getattr(args, "exc_value", Exception("thread exception")),
             getattr(args, "exc_traceback", None),
         )
+
+    def _is_shutdown_exception(self, err: Exception) -> bool:
+        if isinstance(err, RCLError):
+            return True
+        msg = str(err or "").lower()
+        if not msg:
+            return False
+        markers = (
+            "context is invalid",
+            "rcl node's context is invalid",
+            "destruction was requested",
+            "cannot use destroyable because destruction was requested",
+            "failed to create subscription",
+            "failed to create guard condition",
+            "rcl_shutdown already called",
+        )
+        return any(marker in msg for marker in markers)
+
+    def _log_ui_tick_exception(self, tick_name: str, err: Exception):
+        now = time.monotonic()
+        key = str(tick_name or "ui_tick")
+        last_at = float(self._ui_tick_error_last_at.get(key, 0.0))
+        if (now - last_at) < 3.0:
+            return
+        self._ui_tick_error_last_at[key] = now
+        self.append_log(f"[UI] {key} 처리 중 예외: {err}\n")
+
+    def _safe_ui_tick(self, tick_name: str, fn, *args, **kwargs):
+        if getattr(self, "_closing", False):
+            return
+        try:
+            fn(*args, **kwargs)
+        except Exception as e:
+            if getattr(self, "_closing", False) or self._is_shutdown_exception(e):
+                return
+            self._log_ui_tick_exception(str(tick_name), e)
 
     def _setup_top_status_row(self):
         self._top_status_panel = getattr(self, "top_status_panel", None)
@@ -5949,9 +6007,29 @@ class App(QMainWindow, form):
         slot = self._runtime_camera_slot_for_serial(serial)
         return "/camera2/camera/color/image_raw" if slot == 2 else CALIB_VISION_TOPIC_PRIMARY
 
-    def _assigned_depth_topic_for_serial(self, serial):
+    def _assigned_depth_topic_for_serial(self, serial, node=None):
         slot = self._runtime_camera_slot_for_serial(serial)
-        return "/camera2/camera/aligned_depth_to_color/image_raw" if slot == 2 else "/camera/camera/aligned_depth_to_color/image_raw"
+        if slot == 2:
+            candidates = [
+                "/camera2/camera/aligned_depth_to_color/image_raw",
+                "/camera2/aligned_depth_to_color/image_raw",
+                "/camera2/camera/depth/image_rect_raw",
+                "/camera2/depth/image_rect_raw",
+                "/camera2/camera/depth/image_raw",
+            ]
+        else:
+            candidates = [
+                "/camera/camera/aligned_depth_to_color/image_raw",
+                "/camera/aligned_depth_to_color/image_raw",
+                "/camera/camera/depth/image_rect_raw",
+                "/camera/depth/image_rect_raw",
+                "/camera/camera/depth/image_raw",
+            ]
+        if node is not None:
+            for t in candidates:
+                if self._is_topic_alive(node, t):
+                    return t
+        return candidates[0]
 
     def _assigned_raw_topic_for_serial(self, serial, node):
         slot = self._runtime_camera_slot_for_serial(serial)
@@ -6290,7 +6368,7 @@ class App(QMainWindow, form):
             "--image-topic",
             self._assigned_raw_topic_for_serial(serial, node),
             "--depth-topic",
-            self._assigned_depth_topic_for_serial(serial),
+            self._assigned_depth_topic_for_serial(serial, node),
             "--output-meta-topic",
             self._vision_output_meta_topic(panel),
             "--process-hz",
@@ -6327,6 +6405,12 @@ class App(QMainWindow, form):
             )
         except Exception as e:
             self.append_log(f"[비전{panel}] 메타 프로세스 시작 실패: {e}\n")
+            return False
+        # Fail fast if helper exits immediately (missing dependency/model/topic args, etc.).
+        time.sleep(0.2)
+        exit_code = proc.poll()
+        if exit_code is not None:
+            self.append_log(f"[비전{panel}] 메타 프로세스 즉시 종료(code={exit_code})\n")
             return False
         if panel == 2:
             self._external_vision_proc_2 = proc
@@ -6433,7 +6517,7 @@ class App(QMainWindow, form):
             "--image-topic",
             self._assigned_raw_topic_for_serial(serial, node),
             "--depth-topic",
-            self._assigned_depth_topic_for_serial(serial),
+            self._assigned_depth_topic_for_serial(serial, node),
             "--camera-info-topic",
             self._assigned_info_topic_for_serial(serial, node),
             "--output-meta-topic",
@@ -6764,7 +6848,7 @@ class App(QMainWindow, form):
                 )
                 self._calib_meta_topic_in_use_2 = meta_topic_2
             if self._vision_panel_needs_depth(2):
-                depth_topic_2 = self._assigned_depth_topic_for_serial(self._vision_assigned_serial_2)
+                depth_topic_2 = self._assigned_depth_topic_for_serial(self._vision_assigned_serial_2, node)
                 self._vision_depth_sub_2 = node.create_subscription(
                     RosImageMsg, depth_topic_2, lambda msg, token=stream_token: self._on_vision_depth_msg_2(msg, token), image_qos, **sub_kwargs
                 )
@@ -6820,7 +6904,7 @@ class App(QMainWindow, form):
                 )
                 self._calib_meta_topic_in_use_1 = meta_topic_1
             if self._vision_panel_needs_depth(1):
-                depth_topic = self._assigned_depth_topic_for_serial(self._vision_assigned_serial_1)
+                depth_topic = self._assigned_depth_topic_for_serial(self._vision_assigned_serial_1, node)
                 self._vision_depth_sub = node.create_subscription(
                     RosImageMsg, depth_topic, lambda msg, token=stream_token: self._on_vision_depth_msg(msg, token), image_qos, **sub_kwargs
                 )

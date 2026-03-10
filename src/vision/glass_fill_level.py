@@ -23,10 +23,28 @@ DEFAULT_OUTPUT_TOPIC = os.environ.get("VISION_VOLUME_META_TOPIC_2", "/vision2/vo
 DEFAULT_WEIGHTS = model_path("cam_2.pt")
 
 
+def _enable_legacy_model_aliases():
+    # Older segmentation checkpoints may serialize custom class names.
+    # Map them to current ultralytics module symbols for compatibility.
+    try:
+        import ultralytics.nn.modules.head as _head
+        if (not hasattr(_head, "Segment26")) and hasattr(_head, "Segment"):
+            _head.Segment26 = _head.Segment
+    except Exception:
+        pass
+    try:
+        import ultralytics.nn.modules.block as _block
+        if (not hasattr(_block, "Proto26")) and hasattr(_block, "Proto"):
+            _block.Proto26 = _block.Proto
+    except Exception:
+        pass
+
+
 class GlassFillLevelProcess(BaseVisionMetaProcess):
     def __init__(self, args):
         self.mode = "volume"
         self.weights_path = os.path.abspath(str(args.weights or "").strip() or DEFAULT_WEIGHTS)
+        _enable_legacy_model_aliases()
         self.model = YOLO(self.weights_path)
         self.conf = float(args.conf) if float(args.conf) > 0.0 else 0.25
         self.height_ema_alpha = 0.2

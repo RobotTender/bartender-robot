@@ -2,9 +2,9 @@ name,v1,v2,v3,v4,v5,v6
 active_calibration_path,config/calibration/calib_matrix_260309_141508.txt
 active_calibration_path_1,config/calibration/calib_matrix_260309_141508.txt
 active_calibration_path_2,config/calibration/calib_matrix_260225_131257.txt
-home_posj,90.000000,-72.870000,88.990000,-181.570000,-70.250000,91.390000
+home_posj,95.590000,-56.940000,107.090000,-3.340000,35.860000,-85.580000
 top_status_robot_enabled,1
-top_status_vision2_enabled,0
+top_status_vision2_enabled,1
 top_status_vision_enabled,1
 vision1_calib_seq_p10_enabled,1
 vision1_calib_seq_p10_j,288.690000,312.020000,821.700000,40.630000,106.920000,-97.720000

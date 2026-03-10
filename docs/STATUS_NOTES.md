@@ -1,6 +1,11 @@
 # Current Status Notes
 
-기준일: 2026-03-09
+기준일: 2026-03-10
+
+## Jazzy 포팅/검증 메모
+
+- ROS2 Jazzy 기준 포팅 및 실행 검증 결과는 `docs/ROS2_JAZZY_PORTING_VERIFICATION.md`에 정리했다.
+- 변경 전체 패치는 `docs/patches/ros2_jazzy_porting_20260310.patch`를 기준으로 관리한다.
 
 ## 캘리브레이션
 

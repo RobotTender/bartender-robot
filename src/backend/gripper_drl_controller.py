@@ -3,6 +3,7 @@ from rclpy.node import Node
 from dsr_msgs2.srv import DrlStart
 import textwrap
 import time
+import os
 import DR_init
 
 # Gripper mapping for log display
@@ -93,10 +94,20 @@ class GripperController:
 
         self.node = node
         self.robot_system = robot_system
-        self.cli = self.node.create_client(DrlStart, f"/{namespace}/drl/drl_start")
+        ns = str(namespace or "dsr01").strip().strip("/")
+        self._service_name = f"/{ns}/dsr_controller2/drl/drl_start"
+        self.cli = self.node.create_client(DrlStart, self._service_name)
+        wait_timeout_sec = float(os.environ.get("GRIPPER_DRL_WAIT_TIMEOUT_SEC", "25.0"))
+        retry_interval_sec = float(os.environ.get("GRIPPER_DRL_WAIT_RETRY_SEC", "2.0"))
+        deadline = time.monotonic() + max(1.0, wait_timeout_sec)
 
-        self.node.get_logger().info(f"/{namespace}/drl/drl_start 서비스 대기 중...")
-        while not self.cli.wait_for_service(timeout_sec=2.0):
+        self.node.get_logger().info(f"{self._service_name} 서비스 대기 중...")
+        while not self.cli.wait_for_service(timeout_sec=max(0.2, retry_interval_sec)):
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"그리퍼 DRL 서비스 준비 시간 초과: {self._service_name} "
+                    f"(timeout={wait_timeout_sec:.1f}s)"
+                )
             self.node.get_logger().info("서비스가 아직 준비되지 않아 재시도합니다...")
         self.node.get_logger().info("그리퍼 컨트롤러 준비 완료")
 

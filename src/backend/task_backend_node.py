@@ -472,12 +472,12 @@ class RobotBackend:
         self._last_state_watchdog_restart_at = 0.0
         self._last_mode_source_scan_at = 0.0
         self._mode_source_scan_interval_sec = 1.0
-        self._set_robot_control_cli = None
-        self._set_robot_mode_cli = None
-        self._get_robot_mode_cli = None
+        self._set_robot_control_clients = {}
+        self._set_robot_mode_clients = {}
+        self._get_robot_mode_clients = {}
         self._robot_mode_service_lock = threading.Lock()
-        self._set_current_tcp_cli = None
-        self._get_current_tcp_cli = None
+        self._set_current_tcp_clients = {}
+        self._get_current_tcp_clients = {}
         self._tcp_service_lock = threading.Lock()
         self._get_robot_system_clients = {}
         self._startup_tool_tcp_config_done = False
@@ -1265,9 +1265,8 @@ class RobotBackend:
         if GetRobotSystem is not None and self._dsr_node is not None:
             try:
                 candidates = (
-                    "system/get_robot_system",
-                    f"/{ROBOT_ID}/system/get_robot_system",
-                    "/system/get_robot_system",
+                    "dsr_controller2/system/get_robot_system",
+                    f"/{ROBOT_ID}/dsr_controller2/system/get_robot_system",
                 )
                 for _ in range(3):
                     for srv_name in candidates:
@@ -1470,36 +1469,96 @@ class RobotBackend:
             return False, f"현재 상태가 {name}({code})라 동작 시작이 불가합니다."
         return True, "ok"
 
+    def _service_name_candidates(self, relative_name: str):
+        rel = str(relative_name or "").strip().lstrip("/")
+        if not rel:
+            return tuple()
+        prefixed_rel = f"dsr_controller2/{rel}"
+        candidates = [
+            prefixed_rel,
+            f"/{ROBOT_ID}/{prefixed_rel}",
+        ]
+        seen = set()
+        ordered = []
+        for name in candidates:
+            if name in seen:
+                continue
+            seen.add(name)
+            ordered.append(name)
+        return tuple(ordered)
+
+    def _get_or_create_service_client(self, node, cache: dict, srv_type, srv_name: str):
+        cli = cache.get(srv_name)
+        if cli is None:
+            cli = node.create_client(srv_type, srv_name)
+            cache[srv_name] = cli
+        return cli
+
+    def _call_service_with_candidates(
+        self,
+        *,
+        node,
+        srv_type,
+        cache: dict,
+        relative_name: str,
+        req,
+        timeout_sec: float,
+        action_name: str,
+    ):
+        if node is None:
+            return False, None, None, f"{action_name} 서비스 노드가 준비되지 않았습니다."
+
+        wait_timeout = max(0.2, min(0.8, float(timeout_sec)))
+        call_timeout = max(0.2, float(timeout_sec))
+        last_msg = f"{relative_name} 서비스가 준비되지 않았습니다."
+
+        for srv_name in self._service_name_candidates(relative_name):
+            cli = self._get_or_create_service_client(node, cache, srv_type, srv_name)
+            if not cli.wait_for_service(timeout_sec=wait_timeout):
+                last_msg = f"{srv_name} 서비스가 준비되지 않았습니다."
+                continue
+
+            future = cli.call_async(req)
+            end_at = time.monotonic() + call_timeout
+            while time.monotonic() < end_at:
+                if future.done():
+                    break
+                time.sleep(0.05)
+
+            if not future.done():
+                last_msg = f"{srv_name} 서비스 응답 시간 초과"
+                continue
+            if future.exception() is not None:
+                last_msg = f"{srv_name} 서비스 예외: {future.exception()}"
+                continue
+
+            res = future.result()
+            if res is None or not bool(getattr(res, "success", False)):
+                last_msg = f"{srv_name} 서비스 실패"
+                continue
+            return True, res, srv_name, f"{action_name} 성공({srv_name})"
+
+        return False, None, None, last_msg
+
     def _call_set_robot_control(self, control_value: int, timeout_sec: float = 2.0):
         if SetRobotControl is None:
             return False, "SetRobotControl 서비스 타입 import 실패"
         if self._dsr_node is None:
             return False, "DSR 노드가 없어 리셋 서비스를 호출할 수 없습니다."
-
-        if self._set_robot_control_cli is None:
-            self._set_robot_control_cli = self._dsr_node.create_client(SetRobotControl, "system/set_robot_control")
-        if not self._set_robot_control_cli.wait_for_service(timeout_sec=0.8):
-            return False, "system/set_robot_control 서비스가 준비되지 않았습니다."
-
         req = SetRobotControl.Request()
         req.robot_control = int(control_value)
-        future = self._set_robot_control_cli.call_async(req)
-
-        end_at = time.monotonic() + max(0.2, timeout_sec)
-        while time.monotonic() < end_at:
-            if future.done():
-                break
-            time.sleep(0.05)
-
-        if not future.done():
-            return False, f"리셋 서비스 응답 시간 초과(control={control_value})"
-        if future.exception() is not None:
-            return False, f"리셋 서비스 예외(control={control_value}): {future.exception()}"
-
-        res = future.result()
-        if res is None or not bool(getattr(res, "success", False)):
-            return False, f"리셋 서비스 실패(control={control_value})"
-        return True, f"리셋 서비스 성공(control={control_value})"
+        ok, _res, srv_name, msg = self._call_service_with_candidates(
+            node=self._dsr_node,
+            srv_type=SetRobotControl,
+            cache=self._set_robot_control_clients,
+            relative_name="system/set_robot_control",
+            req=req,
+            timeout_sec=timeout_sec,
+            action_name="리셋 서비스",
+        )
+        if not ok:
+            return False, f"{msg}(control={control_value})"
+        return True, f"리셋 서비스 성공(control={control_value}, srv={srv_name})"
 
     def _call_set_robot_mode(self, mode_value: int, timeout_sec: float = 2.0):
         if SetRobotMode is None:
@@ -1508,31 +1567,20 @@ class RobotBackend:
             return False, "모드 서비스 노드가 없어 모드 서비스를 호출할 수 없습니다."
 
         with self._robot_mode_service_lock:
-            if self._set_robot_mode_cli is None:
-                self._set_robot_mode_cli = self._mode_node.create_client(SetRobotMode, "system/set_robot_mode")
-            wait_timeout = max(0.8, min(2.0, float(timeout_sec)))
-            if not self._set_robot_mode_cli.wait_for_service(timeout_sec=wait_timeout):
-                return False, "system/set_robot_mode 서비스가 준비되지 않았습니다."
-
             req = SetRobotMode.Request()
             req.robot_mode = int(mode_value)
-            future = self._set_robot_mode_cli.call_async(req)
-
-            end_at = time.monotonic() + max(0.2, timeout_sec)
-            while time.monotonic() < end_at:
-                if future.done():
-                    break
-                time.sleep(0.05)
-
-            if not future.done():
-                return False, f"모드 서비스 응답 시간 초과(mode={mode_value})"
-            if future.exception() is not None:
-                return False, f"모드 서비스 예외(mode={mode_value}): {future.exception()}"
-
-            res = future.result()
-            if res is None or not bool(getattr(res, "success", False)):
-                return False, f"모드 서비스 실패(mode={mode_value})"
-            return True, f"모드 서비스 성공(mode={mode_value})"
+            ok, _res, srv_name, msg = self._call_service_with_candidates(
+                node=self._mode_node,
+                srv_type=SetRobotMode,
+                cache=self._set_robot_mode_clients,
+                relative_name="system/set_robot_mode",
+                req=req,
+                timeout_sec=timeout_sec,
+                action_name="모드 서비스",
+            )
+            if not ok:
+                return False, f"{msg}(mode={mode_value})"
+            return True, f"모드 서비스 성공(mode={mode_value}, srv={srv_name})"
 
     def _call_get_robot_mode(self, timeout_sec: float = 2.0):
         if GetRobotMode is None:
@@ -1541,34 +1589,23 @@ class RobotBackend:
             return False, None, "모드 서비스 노드가 없어 모드 조회 서비스를 호출할 수 없습니다."
 
         with self._robot_mode_service_lock:
-            if self._get_robot_mode_cli is None:
-                self._get_robot_mode_cli = self._mode_node.create_client(GetRobotMode, "system/get_robot_mode")
-            wait_timeout = max(0.8, min(2.0, float(timeout_sec)))
-            if not self._get_robot_mode_cli.wait_for_service(timeout_sec=wait_timeout):
-                return False, None, "system/get_robot_mode 서비스가 준비되지 않았습니다."
-
             req = GetRobotMode.Request()
-            future = self._get_robot_mode_cli.call_async(req)
-
-            end_at = time.monotonic() + max(0.2, timeout_sec)
-            while time.monotonic() < end_at:
-                if future.done():
-                    break
-                time.sleep(0.05)
-
-            if not future.done():
-                return False, None, "모드 조회 서비스 응답 시간 초과"
-            if future.exception() is not None:
-                return False, None, f"모드 조회 서비스 예외: {future.exception()}"
-
-            res = future.result()
-            if res is None or not bool(getattr(res, "success", False)):
-                return False, None, "모드 조회 서비스 실패"
+            ok, res, srv_name, msg = self._call_service_with_candidates(
+                node=self._mode_node,
+                srv_type=GetRobotMode,
+                cache=self._get_robot_mode_clients,
+                relative_name="system/get_robot_mode",
+                req=req,
+                timeout_sec=timeout_sec,
+                action_name="모드 조회 서비스",
+            )
+            if not ok:
+                return False, None, msg
             try:
                 mode_value = int(getattr(res, "robot_mode", -1))
             except Exception:
                 return False, None, "모드 조회 응답 파싱 실패"
-            return True, mode_value, f"모드 조회 성공(mode={mode_value})"
+            return True, mode_value, f"모드 조회 성공(mode={mode_value}, srv={srv_name})"
 
     def sync_robot_mode_once(self, force: bool = False, timeout_sec: float = 1.5):
         with self._robot_mode_lock:
@@ -1657,31 +1694,20 @@ class RobotBackend:
             return False, None, "모드 서비스 노드가 없어 TCP 조회 서비스를 호출할 수 없습니다."
 
         with self._tcp_service_lock:
-            if self._get_current_tcp_cli is None:
-                self._get_current_tcp_cli = self._mode_node.create_client(GetCurrentTcp, "tcp/get_current_tcp")
-            wait_timeout = max(0.8, min(2.0, float(timeout_sec)))
-            if not self._get_current_tcp_cli.wait_for_service(timeout_sec=wait_timeout):
-                return False, None, "tcp/get_current_tcp 서비스가 준비되지 않았습니다."
-
             req = GetCurrentTcp.Request()
-            future = self._get_current_tcp_cli.call_async(req)
-
-            end_at = time.monotonic() + max(0.2, timeout_sec)
-            while time.monotonic() < end_at:
-                if future.done():
-                    break
-                time.sleep(0.05)
-
-            if not future.done():
-                return False, None, "TCP 조회 서비스 응답 시간 초과"
-            if future.exception() is not None:
-                return False, None, f"TCP 조회 서비스 예외: {future.exception()}"
-
-            res = future.result()
-            if res is None or not bool(getattr(res, "success", False)):
-                return False, None, "TCP 조회 서비스 실패"
+            ok, res, srv_name, msg = self._call_service_with_candidates(
+                node=self._mode_node,
+                srv_type=GetCurrentTcp,
+                cache=self._get_current_tcp_clients,
+                relative_name="tcp/get_current_tcp",
+                req=req,
+                timeout_sec=timeout_sec,
+                action_name="TCP 조회 서비스",
+            )
+            if not ok:
+                return False, None, msg
             tcp_name = str(getattr(res, "info", "") or "").strip()
-            return True, tcp_name, f"TCP 조회 성공(name='{tcp_name}')"
+            return True, tcp_name, f"TCP 조회 성공(name='{tcp_name}', srv={srv_name})"
 
     def _call_set_current_tcp(self, tcp_name: str, timeout_sec: float = 2.0):
         if SetCurrentTcp is None:
@@ -1691,31 +1717,20 @@ class RobotBackend:
 
         name = str(tcp_name or "")
         with self._tcp_service_lock:
-            if self._set_current_tcp_cli is None:
-                self._set_current_tcp_cli = self._mode_node.create_client(SetCurrentTcp, "tcp/set_current_tcp")
-            wait_timeout = max(0.8, min(2.0, float(timeout_sec)))
-            if not self._set_current_tcp_cli.wait_for_service(timeout_sec=wait_timeout):
-                return False, "tcp/set_current_tcp 서비스가 준비되지 않았습니다."
-
             req = SetCurrentTcp.Request()
             req.name = name
-            future = self._set_current_tcp_cli.call_async(req)
-
-            end_at = time.monotonic() + max(0.2, timeout_sec)
-            while time.monotonic() < end_at:
-                if future.done():
-                    break
-                time.sleep(0.05)
-
-            if not future.done():
-                return False, f"TCP 설정 서비스 응답 시간 초과(name='{name}')"
-            if future.exception() is not None:
-                return False, f"TCP 설정 서비스 예외(name='{name}'): {future.exception()}"
-
-            res = future.result()
-            if res is None or not bool(getattr(res, "success", False)):
-                return False, f"TCP 설정 서비스 실패(name='{name}')"
-            return True, f"TCP 설정 서비스 성공(name='{name}')"
+            ok, _res, srv_name, msg = self._call_service_with_candidates(
+                node=self._mode_node,
+                srv_type=SetCurrentTcp,
+                cache=self._set_current_tcp_clients,
+                relative_name="tcp/set_current_tcp",
+                req=req,
+                timeout_sec=timeout_sec,
+                action_name="TCP 설정 서비스",
+            )
+            if not ok:
+                return False, f"{msg}(name='{name}')"
+            return True, f"TCP 설정 서비스 성공(name='{name}', srv={srv_name})"
 
     def sync_current_tcp_once(self, force: bool = False, timeout_sec: float = 1.5):
         now = time.monotonic()

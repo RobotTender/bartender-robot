@@ -279,7 +279,9 @@ class BaseVisionMetaProcess(Node):
     def _tick(self):
         if self._shutting_down:
             return
-        if self.latest_color is None or self.latest_depth is None:
+        # Some deployments may temporarily miss depth topics; run inference with color-only
+        # and keep depth-derived fields as None instead of halting the whole metadata stream.
+        if self.latest_color is None:
             return
         if self.latest_seq == self.last_processed_seq:
             return

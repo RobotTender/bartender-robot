@@ -33,12 +33,30 @@ CLASS_COLORS = {
 }
 
 
+def _enable_legacy_model_aliases():
+    # Older segmentation checkpoints may serialize custom class names.
+    # Map them to current ultralytics module symbols for compatibility.
+    try:
+        import ultralytics.nn.modules.head as _head
+        if (not hasattr(_head, "Segment26")) and hasattr(_head, "Segment"):
+            _head.Segment26 = _head.Segment
+    except Exception:
+        pass
+    try:
+        import ultralytics.nn.modules.block as _block
+        if (not hasattr(_block, "Proto26")) and hasattr(_block, "Proto"):
+            _block.Proto26 = _block.Proto
+    except Exception:
+        pass
+
+
 class GlassFillLevelPreview(Node):
     def __init__(self):
         super().__init__("glass_fill_level_preview")
         self.depth_image = None
         self.color_image = None
         self.depth_scale = 0.001
+        _enable_legacy_model_aliases()
         self.model = YOLO(DEFAULT_WEIGHTS)
         self.bottle_class_name = "bottle"
         self.known_heights_px = np.array([0, 71, 105, 140, 180, 206, 253, 290, 338, 400, 450], dtype=np.float32)
