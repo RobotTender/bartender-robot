@@ -8,22 +8,19 @@ from .defines import (HOME_POSE, CHEERS_POSE, CONTACT_POSE, POUR_HORIZONTAL, POU
 
 def main(args=None):
     if len(sys.argv) < 2:
-        print("Usage:")
-        print("  ros2 run bartender_test action pour move [horizontal|vertical] [repeat=<n>]")
-        print("  ros2 run bartender_test action pour orbit [<start_idx>] [<end_idx>] [repeat=<n>]")
-        print("  ros2 run bartender_test action warmup [repeat=<n>]")
+        print("Usage: ros2 run bartender_test action [pour orbit | warmup] [repeat=<n>]")
         return
 
-    # Initialize ROS2
     rclpy.init(args=args)
     ROBOT_ID = "dsr01"
     ROBOT_MODEL = "e0509"
-    main_node = rclpy.create_node('action_node', namespace=ROBOT_ID)
+    
+    # Simple node for Doosan API
+    main_node = Node('action_node', namespace=ROBOT_ID)
     DR_init.__dsr__id, DR_init.__dsr__model, DR_init.__dsr__node = ROBOT_ID, ROBOT_MODEL, main_node
 
-    from DSR_ROBOT2 import (movec, movej, movel, movesx, moveb, posx, set_robot_mode, ROBOT_MODE_AUTONOMOUS, wait, 
-                            get_current_posx, fkin, ikin, get_joint_torque, read_data_rt, DR_MVS_VEL_CONST, DR_MVS_VEL_NONE)
-    from DR_common2 import posb, DR_CIRCLE, DR_LINE
+    from DSR_ROBOT2 import (movej, movel, movesx, posx, set_robot_mode, ROBOT_MODE_AUTONOMOUS, wait, 
+                            get_current_posx, fkin)
     
     try:
         set_robot_mode(ROBOT_MODE_AUTONOMOUS)
@@ -31,138 +28,144 @@ def main(args=None):
 
         cmd = sys.argv[1].lower()
         sub_cmd = sys.argv[2].lower() if len(sys.argv) > 2 else ""
-        move_type = sys.argv[3].lower() if len(sys.argv) > 3 and not sys.argv[3].startswith('repeat=') and not sys.argv[3].isdigit() else ""
         
-        def get_args_info():
-            repeat = 1
-            range_indices = None
-            nums = []
-            for arg in sys.argv[2:]:
-                if arg.startswith('repeat='):
-                    try: repeat = int(arg.split('=')[1])
-                    except: pass
-                elif arg.isdigit():
-                    nums.append(int(arg))
-            
-            if sub_cmd == 'orbit':
-                if len(nums) >= 2:
-                    range_indices = (nums[0], nums[1])
-                    if len(nums) >= 3: repeat = nums[2]
-                elif len(nums) == 1:
-                    range_indices = (1, nums[0])
-            elif len(nums) >= 1:
-                repeat = nums[0]
-            return repeat, range_indices
+        # Argument parsing
+        repeat = 1
+        nums = []
+        for arg in sys.argv[2:]:
+            if arg.startswith('repeat='):
+                try: repeat = int(arg.split('=')[1])
+                except: pass
+            elif arg.isdigit(): nums.append(int(arg))
+        
+        count = repeat
+        if not nums and not sub_cmd.isdigit() and len(sys.argv) > 2 and sys.argv[2].isdigit():
+             count = int(sys.argv[2])
+        elif nums:
+             count = nums[0]
 
-        count, orbit_range = get_args_info()
-
-        def get_trajectory_points(s):
-            # Point 1: CHEERS
-            p1_raw = [float(x) for x in fkin(CHEERS_POSE, ref=0)]
-            p1 = posx(p1_raw)
-            
-            # Point 2: POS2_XYZ position with CONTACT_POSE orientation
-            p2_raw = [float(x) for x in fkin(CONTACT_POSE, ref=0)]
-            p2 = posx(POS2_XYZ + p2_raw[3:])
-            
-            # Point 3: POUR_HORIZONTAL
-            pm_raw = [float(x) for x in fkin(POUR_HORIZONTAL, ref=0)]
-            p3 = posx(POS3_XYZ + pm_raw[3:])
-            
-            # Point 5: POUR_VERTICAL
-            p5_raw = [float(x) for x in fkin(POUR_VERTICAL, ref=0)]
-            p5 = posx(p5_raw)
-            
-            # Midpoint 2 (Point 4): POS4_XYZ with target orientation from POUR_DIAGONAL
-            pd_raw = [float(x) for x in fkin(POUR_DIAGONAL, ref=0)]
-            p4 = posx(list(POS4_XYZ) + pd_raw[3:])
-            
-            return [p1, p2, p3, p4, p5]
-
-        def do_pour_move():
-            cx_full, s = get_current_posx()
-            p = get_trajectory_points(s)
-
-            for i in range(count):
-                if count > 1: main_node.get_logger().info(f"--- Cycle {i+1}/{count} ---")
-                
-                if move_type == 'horizontal':
-                    main_node.get_logger().info("Action: POUR MOVE HORIZONTAL")
-                    movej(CHEERS_POSE, vel=60, acc=60)
-                    movec(p[1], p[2], vel=50, acc=50)
-                elif move_type == 'vertical':
-                    main_node.get_logger().info("Action: POUR MOVE VERTICAL")
-                    movej(POUR_HORIZONTAL, vel=60, acc=60)
-                    movec(p[3], p[4], vel=50, acc=50)
-                else:
-                    main_node.get_logger().info("Action: POUR MOVE FULL")
-                    movej(CHEERS_POSE, vel=60, acc=60)
-                    # Use radius for continuous motion (zero pause)
-                    movec(p[1], p[2], vel=50, acc=50, radius=20)
-                    movec(p[3], p[4], vel=50, acc=50)
-            return 0
-
-        def do_pour_orbit():
-            cx_full, s = get_current_posx()
-            full_path = get_trajectory_points(s)
-            path = full_path
-            msg_suffix = "Full"
-            if orbit_range:
-                start_idx, end_idx = orbit_range
-                s_idx = max(0, start_idx - 1)
-                e_idx = min(len(full_path), end_idx)
-                path = full_path[s_idx:e_idx]
-                msg_suffix = f"Range {start_idx}->{end_idx}"
-
-            if len(path) < 2:
-                print("Error: Path range must include at least 2 points.")
-                return
-
-            main_node.get_logger().info(f"Action: POUR ORBIT {msg_suffix} ({count} cycles)")
-            for i in range(count):
-                if count > 1: main_node.get_logger().info(f"--- Cycle {i+1}/{count} ---")
-                main_node.get_logger().info(f"Moving to start of range...")
-                if orbit_range and orbit_range[0] == 1 or not orbit_range:
-                    movej(CHEERS_POSE, vel=60, acc=60)
-                else:
-                    movel(path[0], vel=60, acc=60)
-                wait(0.2)
-                movesx(path, vel=150, acc=150, vel_opt=DR_MVS_VEL_NONE)
-            return 0
-
-        def do_warmup():
-            main_node.get_logger().info(f"Action: WARMUP ({count} cycles)")
-            gripper = GripperController(main_node, namespace=ROBOT_ID)
-            gripper.move(0)
-            wait(1.0)
+        if cmd == 'warmup':
+            main_node.get_logger().info(f"Starting WARMUP ({count} cycles)")
             poses = [("HOME", HOME_POSE), ("CHEERS", CHEERS_POSE), ("CONTACT", CONTACT_POSE), 
-                     ("POUR_HORIZONTAL", POUR_HORIZONTAL), ("POLE", POLE_POSE)]
+                     ("POUR_HORIZONTAL", POUR_HORIZONTAL), ("POUR_DIAGONAL", POUR_DIAGONAL), 
+                     ("POUR_VERTICAL", POUR_VERTICAL), ("POLE", POLE_POSE)]
             for i in range(count):
-                if count > 1: main_node.get_logger().info(f"--- Cycle {i+1}/{count} ---")
+                main_node.get_logger().info(f"--- Warmup Cycle {i+1}/{count} ---")
                 for name, pose in poses:
+                    main_node.get_logger().info(f"Moving to {name}...")
                     movej(pose, vel=60, acc=60)
+                wait(0.5)
+
+        elif cmd == 'pour' and sub_cmd == 'orbit':
+            # Setup trajectory points
+            p1 = posx([float(x) for x in fkin(CHEERS_POSE, ref=0)])
+            p2 = posx(POS2_XYZ + [float(x) for x in fkin(CONTACT_POSE, ref=0)][3:])
+            p3 = posx(POS3_XYZ + [float(x) for x in fkin(POUR_HORIZONTAL, ref=0)][3:])
+            p5 = posx([float(x) for x in fkin(POUR_VERTICAL, ref=0)])
+            p4 = posx(list(POS4_XYZ) + [float(x) for x in fkin(POUR_DIAGONAL, ref=0)][3:])
+            path = [p1, p2, p3, p4, p5]
+
+            main_node.get_logger().info(f"Starting POUR ORBIT ({count} cycles)")
+            for i in range(count):
+                main_node.get_logger().info(f"--- Pour Cycle {i+1}/{count} ---")
+                movej(CHEERS_POSE, vel=60, acc=60)
+                wait(0.2)
+                movesx(path, vel=100, acc=100)
+        
+        elif cmd == 'pour' and sub_cmd == 'auto':
+            # Target weight from argument (e.g., 'pour auto 50')
+            target_poured_g = DEFAULT_TARGET_POUR
+            if len(sys.argv) > 3 and sys.argv[3].replace('.','',1).isdigit():
+                target_poured_g = float(sys.argv[3])
+                
+            main_node.get_logger().info(f"Starting PREDICTIVE AUTO POUR: Target={target_poured_g}g")
+            
+            # 1. Weighing
+            main_node.get_logger().info("Moving to CHEERS_POSE and closing gripper (Force=250)...")
+            from .gripper_controller import GripperController
+            gripper = GripperController(main_node, namespace=ROBOT_ID)
+            gripper.move(1150, force=250) # Ensure firm grasp
+            movej(CHEERS_POSE, vel=60, acc=60)
+            wait(2.0)
+            
+            from DSR_ROBOT2 import get_workpiece_weight
+            weight_kg = get_workpiece_weight()
+            if weight_kg < 0:
+                main_node.get_logger().error("Weight sensing failed. Ensure robot is in REAL mode.")
+                return
+            
+            weight_total_g = weight_kg * 1000.0
+            from .defines import BOTTLE_EMPTY_WEIGHT
+            liquid_start_g = weight_total_g - BOTTLE_EMPTY_WEIGHT
+            
+            main_node.get_logger().info(f"Sensed TOTAL Weight: {weight_total_g:.1f} g")
+            main_node.get_logger().info(f"Calculated LIQUID Start: {liquid_start_g:.1f} g")
+            
+            # 2. Predicted Angle
+            target_ry = -0.0433 * weight_total_g + 102.3888
+            main_node.get_logger().info(f"Predicted First Impact Angle: {target_ry:.2f} deg")
+            
+            # 3. Trajectory Prep
+            p_approach_raw = [float(x) for x in fkin(CONTACT_POSE, ref=0)]
+            p_approach_raw[3] = -90.0
+            p_approach_raw[4] = target_ry - 2.0 # 2-degree buffer for safety
+            p_approach = posx(p_approach_raw)
+            
+            p_target_raw = list(p_approach_raw)
+            p_target_raw[4] = target_ry + 10.0 # Allow deep tilt for low volumes
+            p_target = posx(p_target_raw)
+            
+            # 4. Volume Monitoring Setup
+            from std_msgs.msg import Float64
+            poured_in_cup = 0.0
+            def weight_cb(msg):
+                nonlocal poured_in_cup
+                poured_in_cup = msg.data
+            
+            sub = main_node.create_subscription(Float64, 'cup_poured_weight', weight_cb, 10)
+
+            for i in range(count):
+                main_node.get_logger().info(f"--- Auto Pour Cycle {i+1}/{count} ---")
+                movej(CHEERS_POSE, vel=60, acc=60)
+                wait(0.5)
+                
+                # Fast Approach
+                movel(p_approach, vel=100, acc=100)
+                
+                # Precision Creep until first impact or volume match
+                main_node.get_logger().info("Stage B: Precision Creep. Waiting for Trigger...")
+                # We use a very slow move that we will INTERRUPT or let finish
+                # In Doosan ROS, we can poll poured_in_cup
+                
+                poured_in_cup = 0.0 # Reset
+                movel(p_target, vel=5, acc=5, asyncio=True) # Non-blocking tilt
+                
+                # Poll for volume target
+                while rclpy.ok():
+                    rclpy.spin_once(main_node, timeout_sec=0.01)
+                    if poured_in_cup > 1.0: # Impact detected
+                         main_node.get_logger().info(f"Impact detected! Flow: {poured_in_cup:.1f}g")
+                         break
+                    # If we reach the end of the tilt without impact
+                    # (Safety stop handled by movel finishing)
+                
+                # Continue tilt until target weight is reached
+                while rclpy.ok() and poured_in_cup < target_poured_g:
+                    rclpy.spin_once(main_node, timeout_sec=0.01)
+                    # We can adjust speed here if needed
+                
+                main_node.get_logger().info(f"Target {target_poured_g}g reached! Current: {poured_in_cup:.1f}g")
+                
+                # RECOVERY (Phase 5)
+                from DSR_ROBOT2 import move_stop, DR_QSTOP_STO
+                move_stop() # Stop current creep
+                movej(CHEERS_POSE, vel=150, acc=150) # Rapid tilt back
                 wait(1.0)
-                rt_data = read_data_rt()
-                temps = rt_data.joint_temperature if rt_data else [0.0]*6
-                msg = f"Cycle {i+1} Status | Temps: " + "/".join([f"{t:.1f}" for t in temps])
-                main_node.get_logger().info(msg)
-            return 0
-
-        if cmd == 'pour':
-            if sub_cmd == 'move': do_pour_move()
-            elif sub_cmd == 'orbit': do_pour_orbit()
-            else: print("Invalid pour command. Use: move [horizontal|vertical], or orbit")
-        elif cmd == 'warmup': do_warmup()
-        else: print(f"Unknown command: {cmd}")
-
+        
     except Exception as e:
         main_node.get_logger().error(f"Action Error: {e}")
-        import traceback
-        traceback.print_exc()
     finally:
-        if rclpy.ok():
-            main_node.destroy_node()
-            rclpy.shutdown()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

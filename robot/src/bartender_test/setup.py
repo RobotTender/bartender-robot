@@ -27,6 +27,9 @@ setup(
             'action = bartender_test.action:main',
             'check_tcp = bartender_test.check_tcp:main',
             'monitor = bartender_test.monitor:main',
+            'trigger = bartender_test.trigger:main',
+            'model = bartender_test.model:main',
+            'register_tool = bartender_test.register_tool:main',
         ],
     },
 )

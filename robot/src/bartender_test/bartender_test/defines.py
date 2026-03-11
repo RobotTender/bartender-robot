@@ -9,6 +9,15 @@ POUR_DIAGONAL = [45.0, -7.0, 125.0, 90.0, -90.0, -12.0]
 POUR_VERTICAL = [44.998, -35.539, 135.460, 90.0, -89.998, 10.942]
 POLE_POSE = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
+# Bottle & Grasp Parameters
+BOTTLE_HEIGHT = 240.0        # mm
+BOTTLE_FULL_LIQUID = 500.0   # g
+BOTTLE_EMPTY_WEIGHT = 0.0    # g (PET bottle is below sensor threshold)
+GRASP_Z_FROM_BOTTOM = 80.0   # mm
+
+# Target Pouring
+DEFAULT_TARGET_POUR = 50.0   # g
+
 # Cartesian Markers (mm)
 POS1_XYZ = [308.48, 64.52, 313.75]   # Red
 POS2_XYZ = [345.98, 102.02, 183.75]   # Orange (was mid_p1p2)
