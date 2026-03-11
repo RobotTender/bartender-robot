@@ -2,13 +2,31 @@ import rclpy
 import sys
 import threading
 import time
+import math
 from rclpy.node import Node
 import DR_init
 from .gripper_controller import GripperController
 from std_msgs.msg import Empty
 from dsr_msgs2.srv import MoveStop
+from sensor_msgs.msg import JointState
+from tf2_ros import TransformException
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
 from .defines import (HOME_POSE, CHEERS_POSE, CONTACT_POSE, POUR_HORIZONTAL, POUR_DIAGONAL, POUR_VERTICAL, POLE_POSE,
                             POS1_XYZ, POS2_XYZ, POS3_XYZ, POS4_XYZ, POS5_XYZ, DEFAULT_TARGET_POUR)
+
+def euler_from_quaternion(x, y, z, w):
+    t0 = +2.0 * (w * x + y * z)
+    t1 = +1.0 - 2.0 * (x * x + y * y)
+    roll_x = math.atan2(t0, t1)
+    t2 = +2.0 * (w * y - z * x)
+    t2 = +1.0 if t2 > +1.0 else t2
+    t2 = -1.0 if t2 < -1.0 else t2
+    pitch_y = math.asin(t2)
+    t3 = +2.0 * (w * z + x * y)
+    t4 = +1.0 - 2.0 * (y * y + z * z)
+    yaw_z = math.atan2(t3, t4)
+    return roll_x, pitch_y, yaw_z
 
 # Node B: Dedicated Listener Node
 class TriggerListener(Node):
@@ -17,6 +35,22 @@ class TriggerListener(Node):
         self.trigger_received = False
         self.create_subscription(Empty, 'pouring_trigger', self.trigger_cb, 10)
         self.stop_cli = self.create_client(MoveStop, 'motion/move_stop')
+        
+        # Joint state for background recording
+        self.current_posj = [0.0] * 6
+        self.sub_js = self.create_subscription(JointState, 'joint_states', self.cb_joint_states, 10)
+        
+        # TF for background recording
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.recorded_points = []
+        self.recording = False
+        self.timer = self.create_timer(0.25, self.record_cb) # 4Hz
+
+    def cb_joint_states(self, msg):
+        if len(msg.position) >= 6:
+            # ROS joint states are in Radians, but Doosan posj is in Degrees
+            self.current_posj = [math.degrees(v) for v in msg.position[:6]]
 
     def trigger_cb(self, msg):
         self.get_logger().info("!!! SPACEBAR TRIGGER DETECTED (Background Listener) !!!")
@@ -29,6 +63,27 @@ class TriggerListener(Node):
             self.get_logger().info("Sent MoveStop(DR_SSTOP) to Controller.")
         else:
             self.get_logger().error("MoveStop service not available!")
+
+    def record_cb(self):
+        if not self.recording:
+            return
+        try:
+            # We record current_posj (Degrees) which captures 100% of the posture
+            from DSR_ROBOT2 import posj
+            p = posj(self.current_posj)
+            self.recorded_points.append(p)
+        except Exception as e:
+            # Only log error occasionally to avoid spamming
+            if len(self.recorded_points) == 0 and int(time.time()) % 5 == 0:
+                self.get_logger().error(f"Path Recording Error: {e}")
+            pass
+
+    def start_recording(self):
+        self.recorded_points = []
+        self.recording = True
+
+    def stop_recording(self):
+        self.recording = False
 
 def main(args=None):
     if len(sys.argv) < 2:
@@ -52,8 +107,8 @@ def main(args=None):
     spin_thread = threading.Thread(target=executor.spin, daemon=True)
     spin_thread.start()
 
-    from DSR_ROBOT2 import (movej, movel, movesx, posx, set_robot_mode, ROBOT_MODE_AUTONOMOUS, wait, 
-                            get_current_posx, fkin, get_robot_state, get_workpiece_weight)
+    from DSR_ROBOT2 import (movej, movel, movesx, posx, posj, movesj, set_robot_mode, ROBOT_MODE_AUTONOMOUS, wait, 
+                            get_current_posx, get_current_posj, fkin, get_robot_state, get_workpiece_weight)
 
     try:
         set_robot_mode(ROBOT_MODE_AUTONOMOUS)
@@ -105,18 +160,66 @@ def main(args=None):
                 listener_node.trigger_received = False # Reset flag
                 motion_node.get_logger().info("Starting BLOCKING movesx path. Waiting for path completion or Spacebar...")
                 
+                # Start recording
+                listener_node.start_recording()
+                start_time = time.time()
+                motion_node.get_logger().info(f"Pour Orbit START at: {time.strftime('%H:%M:%S', time.localtime(start_time))}.{int((start_time%1)*1000):03d}")
+                
                 # This is a BLOCKING call. It will only return when:
                 # 1. Path is finished.
                 # 2. move_stop() is called from the listener thread.
                 movesx(path, vel=100, acc=100)
                 
+                # Stop recording
+                listener_node.stop_recording()
+                end_time = time.time()
+                duration = end_time - start_time
+                num_points = len(listener_node.recorded_points)
+                motion_node.get_logger().info(f"Pour Orbit END at: {time.strftime('%H:%M:%S', time.localtime(end_time))}.{int((end_time%1)*1000):03d}")
+                motion_node.get_logger().info(f"Motion Duration: {duration:.2f}s | Points Sampled: {num_points} (@4Hz)")
+                
                 # Check why we stopped
                 if listener_node.trigger_received:
-                    motion_node.get_logger().info("Path interrupted by Trigger. Executing SNAP RECOVERY...")
-                    # Phase 6, Step 3: High-Acceleration Return
-                    # Max safe velocity (250 deg/s) and acceleration (250 deg/s^2)
-                    movej(CHEERS_POSE, vel=250, acc=250)
-                    motion_node.get_logger().info("Snap to CHEERS_POSE complete.")
+                    motion_node.get_logger().info("Path interrupted by Trigger. Executing RECORDED REVERSE SNAP RECOVERY (Joint Space)...")
+                    
+                    # 1. Get current joint position to start the reverse move smoothly
+                    curr_j = get_current_posj()
+                    
+                    # 2. Use recorded joint positions in reverse
+                    # Adaptive Thinning: If we have > 10 points, thin it to ~10 points for maximum speed
+                    recorded_path_full = listener_node.recorded_points[::-1]
+                    num_recorded = len(recorded_path_full)
+                    
+                    if num_recorded > 10:
+                        # Calculate step to get exactly 10 points from the full path
+                        step = num_recorded // 10
+                        recorded_path = recorded_path_full[::step][:10]
+                        motion_node.get_logger().info(f"Thinned {num_recorded} points to {len(recorded_path)} key points (step={step}).")
+                    else:
+                        recorded_path = recorded_path_full
+                    
+                    # 3. Construct reverse path: [curr_j] -> [recorded points] -> [CHEERS_POSE]
+                    final_reverse_path = [curr_j]
+                    for p in recorded_path:
+                        # Avoid duplicates or very close points
+                        diff = [abs(a - b) for a, b in zip(final_reverse_path[-1], p)]
+                        if any(d > 0.1 for d in diff):
+                            final_reverse_path.append(p)
+                    
+                    # Always ensure CHEERS_POSE is the final destination
+                    cheers_j = posj(CHEERS_POSE)
+                    diff_final = [abs(a - b) for a, b in zip(final_reverse_path[-1], cheers_j)]
+                    if any(d > 0.1 for d in diff_final):
+                         final_reverse_path.append(cheers_j)
+
+                    motion_node.get_logger().info(f"Reversing through {len(final_reverse_path)} key joint states back to CHEERS_POSE.")
+                    
+                    if len(final_reverse_path) > 1:
+                        movesj(final_reverse_path, vel=250, acc=250)
+                    else:
+                        movej(CHEERS_POSE, vel=250, acc=250)
+                        
+                    motion_node.get_logger().info("Snap recovery to CHEERS_POSE complete.")
                     break
                 else:
                     motion_node.get_logger().info("Path finished naturally.")
