@@ -29,6 +29,7 @@ setup(
             'monitor = bartender_test.monitor:main',
             'trigger = bartender_test.trigger:main',
             'register_tool = bartender_test.register_tool:main',
+            'startup = bartender_test.startup:main',
         ],
     },
 )
