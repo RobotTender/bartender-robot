@@ -17,6 +17,7 @@ from std_msgs.msg import String, Bool
 import DR_init
 # TODO: import 경로 문제
 from .gripper_controller import GripperController
+from .defines import CHEERS_POSE
 
 
 ROBOT_ID = "dsr01"
@@ -122,15 +123,30 @@ class RobotControllerNode(Node):
             # Wait for result without spin_until_future_complete
             while not future.done():
                 time.sleep(0.1)
-            
             result = future.result()
             self.get_logger().info(f"Set Robot Mode Result: {result.success if result else 'Failed'}")
-            
-            # Use movej(CHEERS_POSE) to 'wake up' the task manager before DRL execution
-            from DSR_ROBOT2 import movej
-            from .defines import CHEERS_POSE
+            time.sleep(1.0)
+
+            # Use direct MoveJoint service call to 'wake up' the task manager before DRL execution
+            from dsr_msgs2.srv import MoveJoint
+            movej_cli = self.create_client(MoveJoint, '/dsr01/motion/move_joint')
+            while not movej_cli.wait_for_service(timeout_sec=1.0):
+                self.get_logger().info("Waiting for /dsr01/motion/move_joint service...")
+
             self.get_logger().info("Moving to CHEERS_POSE (Prime)...")
-            movej(CHEERS_POSE, vel=VELOCITY, acc=ACC)
+            req = MoveJoint.Request()
+            req.pos = [float(x) for x in CHEERS_POSE]
+            req.vel = float(VELOCITY)
+            req.acc = float(ACC)
+            req.time = 0.0
+            req.mode = 0 # ABS
+            req.radius = 0.0
+            req.blend_type = 0 # DUPLICATE
+            req.sync_type = 0 # SYNC
+
+            future = movej_cli.call_async(req)
+            while not future.done():
+                time.sleep(0.1)
             self.get_logger().info("Move CHEERS_POSE finished.")
 
             # Wait for robot state transition to settle
@@ -215,6 +231,44 @@ class RobotControllerNode(Node):
         if self.gripper:
             self.gripper.terminate()
 
+    def _movej(self, pos, vel=30.0, acc=30.0, mode=0, radius=0.0, blend_type=0, sync_type=0):
+        from dsr_msgs2.srv import MoveJoint
+        cli = self.create_client(MoveJoint, '/dsr01/motion/move_joint')
+        while not cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info("Waiting for MoveJoint service...")
+        req = MoveJoint.Request()
+        req.pos = [float(x) for x in pos]
+        req.vel = float(vel)
+        req.acc = float(acc)
+        req.mode = int(mode)
+        req.radius = float(radius)
+        req.blend_type = int(blend_type)
+        req.sync_type = int(sync_type)
+        future = cli.call_async(req)
+        import time
+        while not future.done():
+            time.sleep(0.01)
+        return future.result()
+
+    def _movel(self, pos, vel=[30.0, 30.0], acc=[30.0, 30.0], mode=0, radius=0.0, blend_type=0, sync_type=0):
+        from dsr_msgs2.srv import MoveLine
+        cli = self.create_client(MoveLine, '/dsr01/motion/move_line')
+        while not cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info("Waiting for MoveLine service...")
+        req = MoveLine.Request()
+        req.pos = [float(x) for x in pos]
+        req.vel = [float(x) for x in vel]
+        req.acc = [float(x) for x in acc]
+        req.mode = int(mode)
+        req.radius = float(radius)
+        req.blend_type = int(blend_type)
+        req.sync_type = int(sync_type)
+        future = cli.call_async(req)
+        import time
+        while not future.done():
+            time.sleep(0.01)
+        return future.result()
+
     def process_grip(self, items):
         # 이미 작업 중이면 무시 (중복 방지)
         # (self.state check is already done in _try_start_task)
@@ -235,23 +289,22 @@ class RobotControllerNode(Node):
         # TODO: 따라야 하는 술의 양
         volume = [y for y in items["recipe"].values()][0]
         
-        from DSR_ROBOT2 import get_current_posx, movel, wait, movej
         from DR_common2 import posx, posj
 
         try:
             # Robot mode is already set to AUTONOMOUS in _init_robot
             self.get_logger().info("Starting grip process (Robot should be in AUTONOMOUS mode)...")
-            wait(0.1)
+            time.sleep(0.1)
 
             if self.latest_cv_depth_mm is None or self.intrinsics is None:
                 self.get_logger().warn("아직 뎁스 프레임 또는 카메라 정보가 수신되지 않았습니다.")
                 return
 
             self.get_logger().info("초기 자세")
-            home_posj = posj(69.5, -43.0, 102.0, 101.0, -72.0, -213.0)
-            movej(home_posj, vel=VELOCITY, acc=ACC)
+            home_posj = [69.5, -43.0, 102.0, 101.0, -72.0, -213.0]
+            self._movej(home_posj, vel=VELOCITY, acc=ACC)
             self.gripper.move(0)
-            wait(2)
+            time.sleep(2)
 
             img_raw = self.latest_cv_color.copy()
             depth_raw = self.latest_cv_depth_mm.copy()
@@ -403,44 +456,54 @@ class RobotControllerNode(Node):
             self.state = "IDLE"
 
     def move_robot_and_control_gripper(self, x, y, z):
-        from DSR_ROBOT2 import get_current_posx, movel, wait, movej
-        from DR_common2 import posx, posj
+        import time
         try:
             # TODO: Debugging을 위해서 logger를 많이 사용함
             # 통합 과정에서 일부 생략해도 됨
             self.get_logger().info("잡기 전 자세")
-            P_ready = posj(28.0, -35.0, 100.0, 77.0, 63.0, -154.0)
-            movej(P_ready, VELOCITY, ACC)
+            P_ready = [28.0, -35.0, 100.0, 77.0, 63.0, -154.0]
+            self._movej(P_ready, VELOCITY, ACC)
 
-            current_pos = get_current_posx()[0]
+            # Get current pose via service
+            from dsr_msgs2.srv import GetCurrentPose
+            pose_cli = self.create_client(GetCurrentPose, '/dsr01/system/get_current_pose')
+            while not pose_cli.wait_for_service(timeout_sec=1.0):
+                self.get_logger().info("Waiting for GetCurrentPose service...")
+            pose_req = GetCurrentPose.Request()
+            pose_req.space_type = 1 # TASK
+            pose_future = pose_cli.call_async(pose_req)
+            while not pose_future.done():
+                time.sleep(0.01)
+            current_pos = list(pose_future.result().pos)
+
             self.get_logger().info(f"current_pos : {current_pos}")
             target_pos_list_1 = [x - 20, y - 50, z, current_pos[3], current_pos[4], current_pos[5]]
             target_pos_list_2 = [x - 20, y + 50, z -20, current_pos[3], current_pos[4], current_pos[5]]
             self.get_logger().info(f"target_pos_list_1 : {target_pos_list_1}")
             self.get_logger().info(f"target_pos_list_2 : {target_pos_list_2}")            
-            wait(2)
+            time.sleep(2)
 
             self.get_logger().info("목표 지점으로 접근합니다")
-            movel(posx(target_pos_list_1), vel=40, acc=ACC)
-            wait(2)
+            self._movel(target_pos_list_1, vel=[40.0, 40.0], acc=[ACC, ACC])
+            time.sleep(2)
 
             self.get_logger().info(f"목표 지점으로 이동합니다: {target_pos_list_2}")
-            movel(posx(target_pos_list_2), vel=40, acc=ACC)
-            wait(2)
+            self._movel(target_pos_list_2, vel=[40.0, 40.0], acc=[ACC, ACC])
+            time.sleep(2)
 
             # # gripper 주류 잡기
             self.gripper.move(550)
-            wait(3)
+            time.sleep(3)
 
             # 중간 자세
-            P_mid = posj(61.0, -20.0, 97.0, 96.0, -63.0, -195.0)
-            movej(P_mid, VELOCITY, ACC)
-            wait(1)
+            P_mid = [61.0, -20.0, 97.0, 96.0, -63.0, -195.0]
+            self._movej(P_mid, VELOCITY, ACC)
+            time.sleep(1)
 
             # 따르기 전 자세
             self.get_logger().info("따르기 위한 자세를 취합니다.")
-            last_posj = posj(45.0, 0.0, 135.0, 90.0, -90.0, -135.0)
-            movej(last_posj, VELOCITY, ACC)
+            last_posj = [45.0, 0.0, 135.0, 90.0, -90.0, -135.0]
+            self._movej(last_posj, VELOCITY, ACC)
 
         except Exception as e:
             self.get_logger().error(f"로봇 이동 및 그리퍼 제어 중 오류 발생: {e}")
