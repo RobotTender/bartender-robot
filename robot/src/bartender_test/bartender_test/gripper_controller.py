@@ -3,7 +3,7 @@ from rclpy.node import Node
 from dsr_msgs2.srv import DrlStart, GetDrlState, DrlStop, GetLastAlarm
 import time
 
-# Helper functions for Modbus communication (DRL Compatible List-based)
+# Helper functions for Modbus communication (Using DRL Native Bytes)
 DRL_HELPER_FUNCTIONS = """
 g_slaveid = 0
 def modbus_set_slaveid(slaveid):
@@ -12,42 +12,29 @@ def modbus_set_slaveid(slaveid):
 
 def modbus_fc03(address, cnt):
     global g_slaveid
-    data = [
-        g_slaveid,
-        3,
-        (address >> 8) & 0xFF,
-        address & 0xFF,
-        (cnt >> 8) & 0xFF,
-        cnt & 0xFF
-    ]
+    data = (g_slaveid).to_bytes(1, byteorder='big')
+    data += (3).to_bytes(1, byteorder='big')
+    data += (address).to_bytes(2, byteorder='big')
+    data += (cnt).to_bytes(2, byteorder='big')
     return modbus_send_make(data)
 
 def modbus_fc06(address, value):
     global g_slaveid
-    data = [
-        g_slaveid,
-        6,
-        (address >> 8) & 0xFF,
-        address & 0xFF,
-        (value >> 8) & 0xFF,
-        value & 0xFF
-    ]
+    data = (g_slaveid).to_bytes(1, byteorder='big')
+    data += (6).to_bytes(1, byteorder='big')
+    data += (address).to_bytes(2, byteorder='big')
+    data += (value).to_bytes(2, byteorder='big')
     return modbus_send_make(data)
 
 def modbus_fc16(startaddress, cnt, valuelist):
     global g_slaveid
-    data = [
-        g_slaveid,
-        16,
-        (startaddress >> 8) & 0xFF,
-        startaddress & 0xFF,
-        (cnt >> 8) & 0xFF,
-        cnt & 0xFF,
-        2 * cnt
-    ]
+    data = (g_slaveid).to_bytes(1, byteorder='big')
+    data += (16).to_bytes(1, byteorder='big')
+    data += (startaddress).to_bytes(2, byteorder='big')
+    data += (cnt).to_bytes(2, byteorder='big')
+    data += (2 * cnt).to_bytes(1, byteorder='big')
     for i in range(0, cnt):
-        data.append((valuelist[i] >> 8) & 0xFF)
-        data.append(valuelist[i] & 0xFF)
+        data += (valuelist[i]).to_bytes(2, byteorder='big')
     return modbus_send_make(data)
 
 def recv_check():
@@ -65,7 +52,7 @@ def gripper_move(stroke):
         flange_serial_write(modbus_fc03(284, 1))
         size, val = flange_serial_read(0.1)
         if size >= 5:
-            # val is a list of integers in DRL
+            # If to_bytes works, val should be indexable
             moving = val[3] * 256 + val[4]
             if moving == 0:
                 break
@@ -157,7 +144,6 @@ class GripperController:
         future = self.alarm_cli.call_async(GetLastAlarm.Request())
         res = self._wait_for_future(future, timeout=2.0)
         if res and res.success:
-            # level 2 is fatal Alarm
             if res.log_alarm.level >= 2 and res.log_alarm.index != 0:
                 self.node.get_logger().error(f"Detected Fatal Robot Alarm: [{res.log_alarm.index}] {res.log_alarm.param[1]}")
                 return True
