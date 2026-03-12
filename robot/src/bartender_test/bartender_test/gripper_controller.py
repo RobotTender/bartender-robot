@@ -132,8 +132,8 @@ class GripperController:
             rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout)
             return future.result() if future.done() else None
 
-    def wait_drl_ready(self, timeout=20.0):
-        """Waits until DRL interpreter is STOPPED or IDLE (ready for next task)."""
+    def wait_drl_ready(self, timeout=20.0, force_stop=True):
+        """Waits until DRL interpreter is STOPPED or IDLE."""
         start = time.time()
         while time.time() - start < timeout:
             if not self.state_cli.service_is_ready():
@@ -147,17 +147,21 @@ class GripperController:
                 if res.drl_state == 1 or res.drl_state == 3: # STOP or LAST (Idle)
                     return True
                 else:
-                    self.node.get_logger().warn(f"DRL Manager is BUSY (state={res.drl_state}). Attempting DrlStop...")
-                    stop_req = DrlStop.Request()
-                    stop_req.stop_mode = 1 # QUICK
-                    stop_future = self.stop_cli.call_async(stop_req)
-                    self._wait_for_future(stop_future, timeout=2.0)
+                    if force_stop:
+                        self.node.get_logger().warn(f"DRL is BUSY (state={res.drl_state}). Forcing DrlStop...")
+                        stop_req = DrlStop.Request(stop_mode=1)
+                        stop_future = self.stop_cli.call_async(stop_req)
+                        self._wait_for_future(stop_future, timeout=2.0)
+                    else:
+                        # Waiting for completion, don't stop!
+                        pass
             
             time.sleep(1.0)
         return False
 
     def _execute_drl(self, code, timeout=30.0):
-        if not self.wait_drl_ready():
+        # 1. Clear manager BEFORE starting
+        if not self.wait_drl_ready(force_stop=True):
             self.node.get_logger().error("CRITICAL: DRL Manager still busy! Attempting DrlStart anyway.")
         
         req = DrlStart.Request()
@@ -167,10 +171,9 @@ class GripperController:
         
         res = self._wait_for_future(future, timeout=5.0)
         if res and res.success:
-            # Task started! Now we MUST wait for it to finish (back to state 1 or 3)
-            # This ensures the physical movement/activation is DONE before Python continues.
-            time.sleep(0.5) # Give it a moment to transition to PLAY state
-            if self.wait_drl_ready(timeout=timeout):
+            # 2. Wait for completion WITHOUT force-stopping
+            time.sleep(0.5) 
+            if self.wait_drl_ready(timeout=timeout, force_stop=False):
                 return True
         return False
 

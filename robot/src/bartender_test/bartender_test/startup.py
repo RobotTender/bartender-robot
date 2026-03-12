@@ -30,12 +30,16 @@ class RobotStartupNode(Node):
             return None
         
         future = cli.call_async(req)
-        # Since we are using MultiThreadedExecutor, we can just wait for the future
-        # without calling spin_until_future_complete manually.
         start = time.time()
         while not future.done() and time.time() - start < timeout:
             time.sleep(0.1)
         return future.result() if future.done() else None
+
+    def ensure_auto_mode(self):
+        """Ensures robot is in AUTONOMOUS mode."""
+        self.get_logger().info("Ensuring AUTONOMOUS mode...")
+        res = self.call_srv(self.mode_cli, SetRobotMode.Request(robot_mode=1))
+        return res and res.success
 
     def wait_until_ready(self, step_name):
         self.get_logger().info(f"Checking robot readiness after: {step_name}")
@@ -44,7 +48,6 @@ class RobotStartupNode(Node):
             if res and res.success:
                 if res.robot_state == 1: # STATE_STANDBY
                     self.get_logger().info(f"  [OK] Robot is in STANDBY.")
-                    time.sleep(1.0)
                     return True
             self.get_logger().info(f"  [WAIT] Still waiting for Standby state ({i+1}/20)...")
             time.sleep(1.0)
@@ -56,19 +59,17 @@ class RobotStartupNode(Node):
             self.get_logger().info("--- STEP 1: Stabilization ---")
             time.sleep(5.0)
 
-            # STEP 2: Autonomous Mode & HARD RESET
+            # STEP 2: Robot Mode & HARD RESET
             self.get_logger().info("--- STEP 2: Robot Mode & Reset ---")
-            self.get_logger().info("Resetting Robot Mode (MANUAL -> AUTONOMOUS)...")
             self.call_srv(self.mode_cli, SetRobotMode.Request(robot_mode=0)) # MANUAL
             time.sleep(2.0)
-            self.call_srv(self.mode_cli, SetRobotMode.Request(robot_mode=1)) # AUTONOMOUS
+            if not self.ensure_auto_mode(): return False
             time.sleep(2.0)
             
             if not self.wait_until_ready("Set Mode"): return False
 
             # STEP 3: Move to Cheers Pose
             self.get_logger().info("--- STEP 3: Prime Move (Cheers Pose) ---")
-            self.get_logger().info(f"Moving to CHEERS_POSE: {CHEERS_POSE}")
             req = MoveJoint.Request()
             req.pos = [float(x) for x in CHEERS_POSE]
             req.vel = float(VELOCITY)
@@ -78,8 +79,13 @@ class RobotStartupNode(Node):
             
             if not self.wait_until_ready("Prime Move"): return False
 
-            # STEP 4: Gripper Initialization (Handles DRL Cleanup Internally)
+            # STEP 4: Gripper Initialization
             self.get_logger().info("--- STEP 4: Gripper Initialization ---")
+            
+            # Ensure mode again before DRL start
+            if not self.ensure_auto_mode(): return False
+            time.sleep(1.0)
+
             gripper = GripperController(node=self, namespace=ROBOT_ID)
             
             self.get_logger().info("Activating Gripper...")
@@ -88,6 +94,9 @@ class RobotStartupNode(Node):
                 return False
             
             time.sleep(2.0)
+            
+            # Ensure mode again before move DRL
+            if not self.ensure_auto_mode(): return False
             
             self.get_logger().info("Opening Gripper...")
             if not gripper.move(0):
@@ -111,12 +120,15 @@ def main(args=None):
     rclpy.init(args=args)
     node = RobotStartupNode()
     
-    # Use MultiThreadedExecutor to allow concurrent service processing
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     
-    # Run the logic in a separate thread so the executor can spin
-    thread = threading.Thread(target=node.run, daemon=True)
+    # Store result in a shared container
+    result = {"success": False}
+    def run_wrapper():
+        result["success"] = node.run()
+
+    thread = threading.Thread(target=run_wrapper, daemon=True)
     thread.start()
     
     try:
@@ -125,10 +137,10 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     
-    # Get the result from the thread (success/failure)
-    # Since we can't easily get result from thread, we rely on node exit status
+    success = result["success"]
     node.destroy_node()
     rclpy.shutdown()
+    sys.exit(0 if success else 1)
 
 if __name__ == "__main__":
     main()
