@@ -228,12 +228,13 @@ class RobotControllerNode(Node):
         # TODO: 따라야 하는 술의 양
         volume = [y for y in items["recipe"].values()][0]
         
-        from DSR_ROBOT2 import get_current_posx, movel, wait, movej, set_robot_mode, ROBOT_MODE_AUTONOMOUS
+        from DSR_ROBOT2 import get_current_posx, movel, wait, movej
         from DR_common2 import posx, posj
 
         try:
-            set_robot_mode(ROBOT_MODE_AUTONOMOUS)
-            wait(0.5)
+            # Robot mode is already set to AUTONOMOUS in _init_robot
+            self.get_logger().info("Starting grip process (Robot should be in AUTONOMOUS mode)...")
+            wait(0.1)
 
             if self.latest_cv_depth_mm is None or self.intrinsics is None:
                 self.get_logger().warn("아직 뎁스 프레임 또는 카메라 정보가 수신되지 않았습니다.")
