@@ -42,14 +42,19 @@ class ManagedProcess:
     process: subprocess.Popen[str] | None = None
 
 
+def _build_startup_command() -> str:
+    return (
+        f"{_build_workspace_source_prefix()} && "
+        f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
+        "python3 -m bartender_test.startup"
+    )
+
 def _build_pick_command() -> str:
     return (
         f"{_build_workspace_source_prefix()} && "
         f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
-        "python3 -m bartender_test.startup && "
         "python3 -m bartender_test.pick"
     )
-
 
 def _build_action_command() -> str:
     return (
@@ -58,15 +63,12 @@ def _build_action_command() -> str:
         "python3 -m bartender_test.action listen"
     )
 
-
 def _build_web_command(host: str, port: int) -> str:
     python_bin = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
     return f"{sh_quote(python_bin)} manage.py runserver {host}:{port}"
 
-
 def sh_quote(value: str) -> str:
     return shlex.quote(value)
-
 
 def start_process(spec: ManagedProcess) -> None:
     stdout = None
@@ -87,7 +89,6 @@ def start_process(spec: ManagedProcess) -> None:
     )
     print(f"[start] {spec.name}: {spec.cmd}")
 
-
 def stop_process(spec: ManagedProcess) -> None:
     if spec.process is None or spec.process.poll() is not None:
         return
@@ -96,7 +97,6 @@ def stop_process(spec: ManagedProcess) -> None:
         os.killpg(os.getpgid(spec.process.pid), signal.SIGINT)
     except ProcessLookupError:
         return
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Start bartender web + pick stack together.")
@@ -118,24 +118,15 @@ def main() -> int:
     parser.add_argument("--web-port", type=int, default=8000)
     args = parser.parse_args()
 
-    processes: list[ManagedProcess] = []
+    base_processes: list[ManagedProcess] = []
 
     if args.with_bringup:
-        processes.append(ManagedProcess("bringup", args.bringup_cmd, ROOT))
+        base_processes.append(ManagedProcess("bringup", args.bringup_cmd, ROOT))
 
     if args.camera_cmd:
-        processes.append(ManagedProcess("camera", args.camera_cmd, ROOT))
+        base_processes.append(ManagedProcess("camera", args.camera_cmd, ROOT))
 
-    if not args.skip_pick:
-        processes.append(ManagedProcess("pick", _build_pick_command(), ROOT))
-
-    if not args.skip_action:
-        processes.append(ManagedProcess("action", _build_action_command(), ROOT))
-
-    if not args.skip_web:
-        processes.append(ManagedProcess("web", _build_web_command(args.web_host, args.web_port), LLM_DIR))
-
-    if not processes:
+    if not base_processes and args.skip_pick and args.skip_action and args.skip_web:
         print("Nothing to start.")
         return 1
 
@@ -146,15 +137,58 @@ def main() -> int:
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
+    started_processes: list[ManagedProcess] = []
+
     try:
-        for spec in processes:
+        # 1. Start base processes (bringup, camera)
+        for spec in base_processes:
             start_process(spec)
+            started_processes.append(spec)
             time.sleep(0.3)
 
-        print("[ready] stack is running. Press Ctrl+C to stop all processes.")
+        # 2. Run startup synchronously
+        if not args.skip_pick:
+            startup_cmd = _build_startup_command()
+            print(f"\n[start] startup (blocking): {startup_cmd}")
+
+            # Wait for base processes to settle
+            if args.with_bringup:
+                print("Waiting 3s for bringup to settle...")
+                time.sleep(3.0)
+
+            startup_proc = subprocess.run(
+                ["bash", "-lc", startup_cmd],
+                cwd=str(ROOT),
+                env=os.environ.copy()
+            )
+            if startup_proc.returncode != 0:
+                raise RuntimeError(f"startup exited with code {startup_proc.returncode}")
+            print("[ok] startup completed successfully.")
+
+        # 3. Start pick node
+        if not args.skip_pick:
+            pick_spec = ManagedProcess("pick", _build_pick_command(), ROOT)
+            start_process(pick_spec)
+            started_processes.append(pick_spec)
+            time.sleep(2.0) # Wait for pick node to initialize
+
+        # 4. Start action node
+        if not args.skip_action:
+            action_spec = ManagedProcess("action", _build_action_command(), ROOT)
+            start_process(action_spec)
+            started_processes.append(action_spec)
+            time.sleep(1.0) # Wait for action node to initialize
+
+        # 5. Start web server
+        if not args.skip_web:
+            web_spec = ManagedProcess("web", _build_web_command(args.web_host, args.web_port), LLM_DIR)
+            start_process(web_spec)
+            started_processes.append(web_spec)
+
+        print("\n[ready] stack is running. Press Ctrl+C to stop all processes.")
         while True:
             time.sleep(1.0)
-            for spec in processes:
+            for spec in started_processes:
                 if spec.process is not None and spec.process.poll() is not None:
                     raise RuntimeError(f"{spec.name} exited with code {spec.process.returncode}")
     except KeyboardInterrupt:
@@ -165,9 +199,9 @@ def main() -> int:
     else:
         return_code = 0
     finally:
-        for spec in reversed(processes):
+        for spec in reversed(started_processes):
             stop_process(spec)
-        for spec in reversed(processes):
+        for spec in reversed(started_processes):
             if spec.process is not None:
                 try:
                     spec.process.wait(timeout=5)
