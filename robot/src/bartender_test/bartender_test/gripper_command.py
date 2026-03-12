@@ -36,16 +36,10 @@ def main(args=None):
             force = 800 # Maximum Safe Force for RH-P12-RN
         
         stroke = 700 # Fully closed stroke
-
-
-    # 3. Handle manual stroke (if user provides a raw number first)
+    
     else:
-        try:
-            stroke = int(cmd)
-            force = int(sys.argv[2]) if len(sys.argv) >= 3 else 400
-        except ValueError:
-            print(f"Invalid command: '{cmd}'. Use 'open' or 'close <number>'.")
-            return
+        print(f"Unknown command: {cmd}. Use 'open' or 'close'.")
+        return
 
     # ROS execution
     rclpy.init(args=args)

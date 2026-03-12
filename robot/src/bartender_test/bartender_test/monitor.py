@@ -66,7 +66,6 @@ class UnifiedMonitor(Node):
         self.sub_js = self.create_subscription(JointState, 'joint_states', self.cb_joint_states, 10)
         self.sub_mot = self.create_subscription(Float64MultiArray, self.topic_map['jts_mot'], self.cb_mot, 10)
         self.sub_force = self.create_subscription(Float64MultiArray, self.topic_map['tcp_force'], self.cb_force, 10)
-        self.sub_trigger = self.create_subscription(Empty, 'pouring_trigger', self.cb_trigger, 10)
         
         self.msg_count = 0
         self.last_msg_time = 0.0
@@ -113,16 +112,6 @@ class UnifiedMonitor(Node):
         # 2. TCP Based Weight (Raw sensor)
         net_fz = self.tcp_force_stable[2] - self.tare_force[2]
         self.weight_tcp_stable = abs(net_fz / 9.81) * 1000.0
-
-    def cb_trigger(self, msg):
-        self.capture_pour_data()
-
-    def capture_pour_data(self):
-        pose = self.get_tf_pose()
-        if pose:
-            with open('pour_data.csv', 'a', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([time.time()] + pose)
 
     def get_tf_pose(self):
         try:
@@ -177,19 +166,29 @@ class UnifiedMonitor(Node):
         # JTS Sub-section
         net_j2 = self.motor_data_stable[1] - self.tare_motor[1]
         net_j3 = self.motor_data_stable[2] - self.tare_motor[2]
-        print(f" JTS (Arm&Shoulder) | J2 Net:{net_j2:>7.3f} | J3 Net:{net_j3:>7.3f} Nm | Weight: \033[92m{self.weight_jts_stable:>7.1f} g\033[0m")
+        print(f" JTS (Arm&Shoulder) | J2 Net:{net_j2:>7.3f} | J3 Net:{net_j3:>7.3f} Nm")
         
         # TCP Sub-section
         net_fx = self.tcp_force_stable[0] - self.tare_force[0]
         net_fy = self.tcp_force_stable[1] - self.tare_force[1]
         net_fz = self.tcp_force_stable[2] - self.tare_force[2]
         
-        # If TCP is dead (all zeros), use JTS fallback for the weight field
+        # Check if TCP sensor is active
         tcp_is_dead = all(abs(v) < 0.0001 for v in [net_fx, net_fy, net_fz])
-        tcp_weight_display = self.weight_jts_stable if tcp_is_dead else self.weight_tcp_stable
-        tcp_tag = "(Fallback)" if tcp_is_dead else ""
         
-        print(f" TCP (Fingers)      | Fx:{net_fx:>7.3f} | Fy:{net_fy:>7.3f} | Fz:{net_fz:>7.3f} N  | Weight: \033[92m{tcp_weight_display:>7.1f} g\033[0m {tcp_tag}")
+        fx_str = f"{net_fx:>7.3f}" if not tcp_is_dead else "    N/A"
+        fy_str = f"{net_fy:>7.3f}" if not tcp_is_dead else "    N/A"
+        fz_str = f"{net_fz:>7.3f}" if not tcp_is_dead else "    N/A"
+        
+        print(f" TCP (Fingers)      | Fx:{fx_str} | Fy:{fy_str} | Fz:{fz_str} N")
+        
+        # Unified Weight Display
+        # Logic: If TCP is active, it's usually more precise at the hand. 
+        # Otherwise, use JTS which is always active (estimated from motor torque).
+        unified_weight = self.weight_tcp_stable if not tcp_is_dead else self.weight_jts_stable
+        source_tag = "(TCP Sensor)" if not tcp_is_dead else "(JTS Estimate)"
+        
+        print(f" UNIFIED WEIGHT     | \033[92m{unified_weight:>7.1f} g\033[0m {source_tag}")
         print("-" * 75)
 
         print(" Press 'T' to Tare | Ctrl+C to stop")
