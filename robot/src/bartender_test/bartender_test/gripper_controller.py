@@ -36,7 +36,7 @@ def recv_check():
         return False, val
 def gripper_move(stroke):
     flange_serial_write(modbus_fc16(282, 2, [stroke, 0]))
-    wait(1.0) 
+    wait(0.2) 
 
 # Initialization logic
 while True:

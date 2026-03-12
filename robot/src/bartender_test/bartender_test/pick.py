@@ -482,17 +482,15 @@ class RobotControllerNode(Node):
             self.get_logger().info(f"target_pos_list_1 : {target_pos_list_1}")
             self.get_logger().info(f"target_pos_list_2 : {target_pos_list_2}")            
             time.sleep(2)
+self.get_logger().info("목표 지점으로 접근합니다")
+self._movel(target_pos_list_1, vel=[40.0, 40.0], acc=[ACC, ACC])
 
-            self.get_logger().info("목표 지점으로 접근합니다")
-            self._movel(target_pos_list_1, vel=[40.0, 40.0], acc=[ACC, ACC])
-            time.sleep(2)
+self.get_logger().info(f"목표 지점으로 이동합니다: {target_pos_list_2}")
+self._movel(target_pos_list_2, vel=[40.0, 40.0], acc=[ACC, ACC])
 
-            self.get_logger().info(f"목표 지점으로 이동합니다: {target_pos_list_2}")
-            self._movel(target_pos_list_2, vel=[40.0, 40.0], acc=[ACC, ACC])
-            time.sleep(2)
-
-            # # gripper 주류 잡기
-            self.gripper.move(550)
+# # gripper 주류 잡기
+self.gripper.move(550)
+time.sleep(1)
             time.sleep(3)
 
             # 중간 자세
