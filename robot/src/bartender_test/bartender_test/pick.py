@@ -134,7 +134,10 @@ class RobotControllerNode(Node):
         if self.latest_cv_color is None or self.latest_cv_depth_mm is None or self.intrinsics is None:
             self.get_logger().info("카메라 입력 준비 전이라 주문을 보류합니다.")
             return
-        self.process_grip(self.items)
+        
+        import threading
+        self.state = "RUNNING"
+        threading.Thread(target=self.process_grip, args=(self.items,), daemon=True).start()
 
     def camera_to_robot(self, point_cam):
         """
@@ -178,12 +181,7 @@ class RobotControllerNode(Node):
 
     def process_grip(self, items):
         # 이미 작업 중이면 무시 (중복 방지)
-        if self.state == "RUNNING":
-            self.get_logger().warn("Item command already received. Ignoring.")
-            return
-
-        self.items = items
-        self.state = "RUNNING"
+        # (self.state check is already done in _try_start_task)
 
         self.get_logger().info(f"Received item command: {self.items}")
         
@@ -201,10 +199,13 @@ class RobotControllerNode(Node):
         # TODO: 따라야 하는 술의 양
         volume = [y for y in items["recipe"].values()][0]
         
-        from DSR_ROBOT2 import get_current_posx, movel, wait, movej
+        from DSR_ROBOT2 import get_current_posx, movel, wait, movej, set_robot_mode, ROBOT_MODE_AUTONOMOUS
         from DR_common2 import posx, posj
 
         try:
+            set_robot_mode(ROBOT_MODE_AUTONOMOUS)
+            wait(0.5)
+
             if self.latest_cv_depth_mm is None or self.intrinsics is None:
                 self.get_logger().warn("아직 뎁스 프레임 또는 카메라 정보가 수신되지 않았습니다.")
                 return
@@ -355,8 +356,9 @@ class RobotControllerNode(Node):
             self.get_logger().info(f"후속 액션 요청 발행: {action_msg.data}")
             print("=" * 50)
 
-        except Exception:
-            self.get_logger().warn("Detection Error!!")
+        except Exception as e:
+            import traceback
+            self.get_logger().error(f"Detection Error!!\n{traceback.format_exc()}")
             return
         finally:
             self.task_received = False

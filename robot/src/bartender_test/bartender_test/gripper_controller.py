@@ -70,7 +70,13 @@ class GripperController:
         req.code = f"{drl_code}\n{task_code}"
         
         future = self.cli.call_async(req)
-        rclpy.spin_until_future_complete(self.node, future, timeout_sec=10.0)
+        try:
+            rclpy.spin_until_future_complete(self.node, future, timeout_sec=10.0)
+        except RuntimeError:
+            import time
+            start = time.time()
+            while not future.done() and time.time() - start < 10.0:
+                time.sleep(0.01)
         return bool(future.result().success) if future.result() else False
 
     def move_sequence(self, sequence, current: int = 400) -> bool:
@@ -91,7 +97,13 @@ class GripperController:
         req.code = f"{drl_code}\n{task_code}"
         
         future = self.cli.call_async(req)
-        rclpy.spin_until_future_complete(self.node, future, timeout_sec=15.0)
+        try:
+            rclpy.spin_until_future_complete(self.node, future, timeout_sec=15.0)
+        except RuntimeError:
+            import time
+            start = time.time()
+            while not future.done() and time.time() - start < 15.0:
+                time.sleep(0.01)
         return bool(future.result().success) if future.result() else False
 
     def terminate(self) -> bool:
