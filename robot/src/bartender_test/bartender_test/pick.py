@@ -104,70 +104,60 @@ class RobotControllerNode(Node):
         threading.Thread(target=self._init_robot, daemon=True).start()
 
     def _init_robot(self):
-        from dsr_msgs2.srv import SetRobotMode
+        from dsr_msgs2.srv import SetRobotMode, MoveJoint, DrlStop
+        from .defines import CHEERS_POSE
         import time
         try:
-            # Wait for services to be ready
-            time.sleep(2.0)
-            
+            # FATAL CRASH PREVENTION: Wait for controller_manager to fully boot
+            self.get_logger().info("Waiting 5s for controller_manager to stabilize...")
+            time.sleep(5.0)
+
             self.get_logger().info("Setting robot to AUTONOMOUS mode...")
-            # Use direct service call to avoid deadlock with DSR_ROBOT2's internal spin
-            cli = self.create_client(SetRobotMode, '/dsr01/system/set_robot_mode')
-            while not cli.wait_for_service(timeout_sec=1.0):
-                self.get_logger().info("Waiting for /dsr01/system/set_robot_mode service...")
-            
-            req = SetRobotMode.Request()
-            req.robot_mode = 1 # ROBOT_MODE_AUTONOMOUS
-            future = cli.call_async(req)
-            
-            # Wait for result without spin_until_future_complete
-            while not future.done():
+            cli_mode = self.create_client(SetRobotMode, '/dsr01/system/set_robot_mode')
+            while not cli_mode.wait_for_service(timeout_sec=1.0):
+                self.get_logger().info("Waiting for /dsr01/system/set_robot_mode...")
+
+            req_mode = SetRobotMode.Request()
+            req_mode.robot_mode = 1 # AUTONOMOUS
+            future_mode = cli_mode.call_async(req_mode)
+            while not future_mode.done():
                 time.sleep(0.1)
-            result = future.result()
-            self.get_logger().info(f"Set Robot Mode Result: {result.success if result else 'Failed'}")
-            time.sleep(1.0)
+            self.get_logger().info(f"Mode set result: {future_mode.result().success if future_mode.result() else 'False'}")
 
-            # Use direct MoveJoint service call to 'wake up' the task manager before DRL execution
-            from dsr_msgs2.srv import MoveJoint
-            movej_cli = self.create_client(MoveJoint, '/dsr01/motion/move_joint')
-            while not movej_cli.wait_for_service(timeout_sec=1.0):
-                self.get_logger().info("Waiting for /dsr01/motion/move_joint service...")
+            time.sleep(2.0)
 
-            self.get_logger().info("Moving to CHEERS_POSE (Prime)...")
-            req = MoveJoint.Request()
-            req.pos = [float(x) for x in CHEERS_POSE]
-            req.vel = float(VELOCITY)
-            req.acc = float(ACC)
-            req.time = 0.0
-            req.mode = 0 # ABS
-            req.radius = 0.0
-            req.blend_type = 0 # DUPLICATE
-            req.sync_type = 0 # SYNC
+            # Prime with CHEERS_POSE
+            cli_move = self.create_client(MoveJoint, '/dsr01/motion/move_joint')
+            if cli_move.wait_for_service(timeout_sec=2.0):
+                self.get_logger().info("Moving to CHEERS_POSE (Prime)...")
+                req_move = MoveJoint.Request()
+                req_move.pos = [float(x) for x in CHEERS_POSE]
+                req_move.vel = float(VELOCITY)
+                req_move.acc = float(ACC)
+                req_move.mode = 0 # ABS
+                req_move.sync_type = 0 # SYNC
+                future_move = cli_move.call_async(req_move)
+                while not future_move.done():
+                    time.sleep(0.1)
+                self.get_logger().info("Prime move finished.")
 
-            future = movej_cli.call_async(req)
-            while not future.done():
-                time.sleep(0.1)
-            self.get_logger().info("Move CHEERS_POSE finished.")
+            time.sleep(2.0)
 
-            # Stop any previous DRL task to prevent conflicts (Alarm 2007)
-            from dsr_msgs2.srv import DrlStop
-            drl_stop_cli = self.create_client(DrlStop, '/dsr01/drl/drl_stop')
-            if drl_stop_cli.wait_for_service(timeout_sec=1.0):
-                self.get_logger().info("Stopping any existing DRL tasks...")
-                stop_future = drl_stop_cli.call_async(DrlStop.Request())
-                while not stop_future.done():
+            # Stop any hanging DRL tasks
+            cli_stop = self.create_client(DrlStop, '/dsr01/drl/drl_stop')
+            if cli_stop.wait_for_service(timeout_sec=2.0):
+                self.get_logger().info("Stopping existing DRL tasks...")
+                future_stop = cli_stop.call_async(DrlStop.Request())
+                while not future_stop.done():
                     time.sleep(0.1)
 
-                # Re-assert AUTONOMOUS mode after motion just in case
-                cli.call_async(req)
-                time.sleep(1.0)
+            # Final settle wait
+            self.get_logger().info("Robot ready for gripper initialization.")
+            time.sleep(2.0)
 
-                # Wait longer for robot state transition to settle
-                self.get_logger().info("Waiting for task manager to settle...")
-                time.sleep(3.0)
-
-                self.gripper = GripperController(node=self, namespace=ROBOT_ID)            self.get_logger().info("그리퍼를 활성화합니다...")
-            time.sleep(0.5)
+            self.gripper = GripperController(node=self, namespace=ROBOT_ID)
+            self.get_logger().info("그리퍼를 활성화합니다...")
+            time.sleep(1.0)
             self.gripper_is_open = True
             self.gripper.move(0)
             self.get_logger().info("그리퍼 활성화 완료.")
