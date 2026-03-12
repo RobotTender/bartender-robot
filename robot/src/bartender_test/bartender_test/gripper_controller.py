@@ -133,7 +133,7 @@ class GripperController:
             rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout)
             return future.result() if future.done() else None
 
-    def wait_drl_ready(self, timeout=8.0):
+    def wait_drl_ready(self, timeout=15.0):
         """Waits until DRL interpreter is STOPPED (ready for next task)."""
         start = time.time()
         while time.time() - start < timeout:
@@ -147,20 +147,19 @@ class GripperController:
                 if res.drl_state == 1: # DRL_PROGRAM_STATE_STOP
                     return True
                 else:
-                    # If busy for too long, attempt force stop
-                    if time.time() - start > 3.0:
-                        self.node.get_logger().warn("DRL busy, forcing DrlStop...")
-                        stop_req = DrlStop.Request()
-                        stop_req.stop_mode = 1 # QUICK
-                        stop_future = self.stop_cli.call_async(stop_req)
-                        self._wait_for_future(stop_future, timeout=2.0)
-                        time.sleep(1.0)
+                    # Persistently attempt to stop if it stays busy
+                    self.node.get_logger().warn(f"DRL busy (state={res.drl_state}), attempting DrlStop...")
+                    stop_req = DrlStop.Request()
+                    stop_req.stop_mode = 1 # QUICK
+                    stop_future = self.stop_cli.call_async(stop_req)
+                    self._wait_for_future(stop_future, timeout=2.0)
+                    time.sleep(1.0)
             time.sleep(0.5)
         return False
 
-    def _execute_drl(self, code, timeout=25.0):
+    def _execute_drl(self, code, timeout=30.0):
         if not self.wait_drl_ready():
-            self.node.get_logger().warn("DRL Manager busy after retry, attempting to proceed...")
+            self.node.get_logger().error("CRITICAL: DRL Manager still busy, execution might fail!")
         
         req = DrlStart.Request()
         req.robot_system = self.robot_system
@@ -173,7 +172,7 @@ class GripperController:
     def activate(self, force: int = 400) -> bool:
         """Initializes the gripper once."""
         self.node.get_logger().info(f"Activating Gripper with force={force}...")
-        return self._execute_drl(DRL_INIT_CODE.format(current=force), timeout=35.0)
+        return self._execute_drl(DRL_INIT_CODE.format(current=force), timeout=45.0)
 
     def move(self, stroke: int) -> bool:
         """Sends a simple movement command."""
@@ -186,7 +185,7 @@ class GripperController:
         for s in sequence:
             task_code += f"  gripper_move({s})\n"
         task_code += "  flange_serial_close()"
-        return self._execute_drl(task_code, timeout=40.0)
+        return self._execute_drl(task_code, timeout=60.0)
 
     def terminate(self) -> bool:
         req = DrlStart.Request()
