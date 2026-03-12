@@ -1,6 +1,6 @@
 import rclpy
 from rclpy.node import Node
-from dsr_msgs2.srv import DrlStart
+from dsr_msgs2.srv import DrlStart, GetDrlState
 import time
 
 # Helper functions for Modbus communication
@@ -9,6 +9,13 @@ g_slaveid = 0
 def modbus_set_slaveid(slaveid):
     global g_slaveid
     g_slaveid = slaveid
+def modbus_fc03(address, cnt):
+    global g_slaveid
+    data = (g_slaveid).to_bytes(1, byteorder='big')
+    data += (3).to_bytes(1, byteorder='big')
+    data += (address).to_bytes(2, byteorder='big')
+    data += (cnt).to_bytes(2, byteorder='big')
+    return modbus_send_make(data)
 def modbus_fc06(address, value):
     global g_slaveid
     data = (g_slaveid).to_bytes(1, byteorder='big')
@@ -34,7 +41,21 @@ def recv_check():
         return False, val
 def gripper_move(stroke):
     flange_serial_write(modbus_fc16(282, 2, [stroke, 0]))
-    wait(0.5)
+    wait(0.1)
+    fail_cnt = 0
+    while True:
+        flange_serial_write(modbus_fc03(284, 1))
+        size, val = flange_serial_read(0.1)
+        if size >= 5 and val[1] == 3:
+            moving = val[3] * 256 + val[4]
+            if moving == 0:
+                break
+            fail_cnt = 0
+        else:
+            fail_cnt += 1
+        if fail_cnt > 20:
+            break
+        wait(0.05)
 """
 
 # Initialization code
@@ -51,7 +72,9 @@ for i in range(0, 10):
         wait(0.2)
         flag, val = recv_check()
         if flag is True:
+            tp_log("Gripper Activation Success")
             break
+    tp_log("Gripper Activation Retry...")
     wait(0.5)
 flange_serial_close()
 """
@@ -68,8 +91,10 @@ flange_serial_close()
 class GripperController:
     def __init__(self, node: Node, namespace: str = "dsr01", robot_system: int = 0):
         self.node = node
+        self.namespace = namespace
         self.robot_system = robot_system
         self.cli = self.node.create_client(DrlStart, f"/{namespace}/drl/drl_start")
+        self.state_cli = self.node.create_client(GetDrlState, f"/{namespace}/drl/get_drl_state")
         
         # Safe service wait loop
         start = time.time()
@@ -80,7 +105,29 @@ class GripperController:
             self.node.get_logger().info("Waiting for DRL service...")
             time.sleep(1.0)
 
+    def wait_drl_ready(self, timeout=5.0):
+        """Waits until DRL interpreter is STOPPED (ready for next task)."""
+        start = time.time()
+        while time.time() - start < timeout:
+            if not self.state_cli.service_is_ready():
+                time.sleep(0.1)
+                continue
+            
+            future = self.state_cli.call_async(GetDrlState.Request())
+            # For simplicity, we wait for future to finish
+            # pick.py uses threads, so this is usually safe.
+            time.sleep(0.2)
+            if future.done():
+                res = future.result()
+                if res and res.success:
+                    if res.drl_state == 1: # DRL_PROGRAM_STATE_STOP
+                        return True
+            time.sleep(0.3)
+        return False
+
     def _execute_drl(self, code, timeout=10.0):
+        self.wait_drl_ready()
+        
         req = DrlStart.Request()
         req.robot_system = self.robot_system
         req.code = f"{DRL_HELPER_FUNCTIONS}\n{code}"
@@ -105,7 +152,7 @@ class GripperController:
         """Sends a sequence of strokes."""
         task_code = "wait(0.1)\nflange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)\nmodbus_set_slaveid(1)\n"
         for s in sequence:
-            task_code += f"gripper_move({s})\nwait(1.0)\n"
+            task_code += f"gripper_move({s})\n"
         task_code += "flange_serial_close()"
         return self._execute_drl(task_code, timeout=20.0)
 
