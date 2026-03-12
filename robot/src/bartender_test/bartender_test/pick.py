@@ -177,6 +177,7 @@ for i in range(0, 5):
         flange_serial_write(modbus_fc06(275, 400))
         wait(0.2)
         break
+wait(1.0)
 gripper_move(0)
 flange_serial_close()
 """
