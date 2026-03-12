@@ -134,29 +134,36 @@ class GripperController:
         else:
             rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout)
             return future.result() if future.done() else None
+def wait_drl_ready(self, timeout=20.0):
+    """Waits until DRL interpreter is STOPPED or IDLE (ready for next task)."""
+    self.node.get_logger().info(f"Checking DRL state (timeout={timeout}s)...")
+    start = time.time()
+    while time.time() - start < timeout:
+        if not self.state_cli.service_is_ready():
+            time.sleep(0.1)
+            continue
 
-    def wait_drl_ready(self, timeout=20.0):
-        """Waits until DRL interpreter is STOPPED or IDLE (ready for next task)."""
-        start = time.time()
-        while time.time() - start < timeout:
-            if not self.state_cli.service_is_ready():
-                time.sleep(0.1)
-                continue
-            
-            future = self.state_cli.call_async(GetDrlState.Request())
-            res = self._wait_for_future(future, timeout=2.0)
-            if res and res.success:
-                if res.drl_state == 1 or res.drl_state == 3: # STOP or LAST (Idle)
-                    return True
-                else:
-                    self.node.get_logger().warn(f"DRL Manager is BUSY (state={res.drl_state}). Attempting DrlStop...")
-                    stop_req = DrlStop.Request()
-                    stop_req.stop_mode = 1 # QUICK
-                    stop_future = self.stop_cli.call_async(stop_req)
-                    self._wait_for_future(stop_future, timeout=2.0)
-                    time.sleep(2.0)
-            time.sleep(1.0)
-        return False
+        future = self.state_cli.call_async(GetDrlState.Request())
+        res = self._wait_for_future(future, timeout=2.0)
+
+        if res is None:
+            self.node.get_logger().warn("  [WAIT] GetDrlState service timed out.")
+        elif not res.success:
+            self.node.get_logger().warn("  [WAIT] GetDrlState returned success=False.")
+        else:
+            if res.drl_state == 1 or res.drl_state == 3: # STOP or LAST (Idle)
+                self.node.get_logger().info(f"  [OK] DRL is ready (state={res.drl_state}).")
+                return True
+            else:
+                self.node.get_logger().warn(f"  [WAIT] DRL is BUSY (state={res.drl_state}). Attempting DrlStop...")
+                stop_req = DrlStop.Request()
+                stop_req.stop_mode = 1 # QUICK
+                stop_future = self.stop_cli.call_async(stop_req)
+                self._wait_for_future(stop_future, timeout=2.0)
+
+        time.sleep(1.0)
+    return False
+
 
     def _execute_drl(self, code, timeout=30.0):
         if not self.wait_drl_ready():

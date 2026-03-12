@@ -64,10 +64,12 @@ class RobotStartupNode(Node):
             cli_mode = self.create_client(SetRobotMode, '/dsr01/system/set_robot_mode')
             if cli_mode.wait_for_service(timeout_sec=5.0):
                 # Toggle mode to force clear simple alarms
-                self.get_logger().info("Resetting Robot Mode...")
-                cli_mode.call_async(SetRobotMode.Request(robot_mode=0)) # MANUAL
+                self.get_logger().info("Resetting Robot Mode (MANUAL -> AUTONOMOUS)...")
+                f1 = cli_mode.call_async(SetRobotMode.Request(robot_mode=0)) # MANUAL
+                rclpy.spin_until_future_complete(self, f1, timeout_sec=2.0)
                 time.sleep(1.0)
-                cli_mode.call_async(SetRobotMode.Request(robot_mode=1)) # AUTONOMOUS
+                f2 = cli_mode.call_async(SetRobotMode.Request(robot_mode=1)) # AUTONOMOUS
+                rclpy.spin_until_future_complete(self, f2, timeout_sec=2.0)
                 time.sleep(1.0)
             
             if not self.wait_until_ready("Set Mode"): return False
