@@ -61,9 +61,12 @@ def gripper_move(stroke):
 # Initialization code
 DRL_INIT_CODE = """
 wait(0.5)
-flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
-modbus_set_slaveid(1)
+success = False
 for i in range(0, 10):
+    # Re-open port in each attempt if failed
+    flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
+    modbus_set_slaveid(1)
+    
     flange_serial_write(modbus_fc06(256, 1))
     wait(0.2)
     flag, val = recv_check()
@@ -73,9 +76,15 @@ for i in range(0, 10):
         flag, val = recv_check()
         if flag is True:
             tp_log("Gripper Activation Success")
+            success = True
             break
+    
     tp_log("Gripper Activation Retry...")
+    flange_serial_close()
     wait(0.5)
+
+if success is False:
+    tp_log("Gripper Activation Failed after 10 retries")
 flange_serial_close()
 """
 
@@ -105,6 +114,19 @@ class GripperController:
             self.node.get_logger().info("Waiting for DRL service...")
             time.sleep(1.0)
 
+    def _wait_for_future(self, future, timeout):
+        """Helper to wait for future depending on whether the node is already spinning."""
+        if self.node.executor is not None:
+            # Node is assigned to an executor (likely spinning in another thread)
+            start = time.time()
+            while not future.done() and time.time() - start < timeout:
+                time.sleep(0.05)
+            return future.result() if future.done() else None
+        else:
+            # Node is not spinning, we must spin it
+            rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout)
+            return future.result() if future.done() else None
+
     def wait_drl_ready(self, timeout=5.0):
         """Waits until DRL interpreter is STOPPED (ready for next task)."""
         start = time.time()
@@ -114,34 +136,29 @@ class GripperController:
                 continue
             
             future = self.state_cli.call_async(GetDrlState.Request())
-            # For simplicity, we wait for future to finish
-            # pick.py uses threads, so this is usually safe.
-            time.sleep(0.2)
-            if future.done():
-                res = future.result()
-                if res and res.success:
-                    if res.drl_state == 1: # DRL_PROGRAM_STATE_STOP
-                        return True
+            res = self._wait_for_future(future, timeout=2.0)
+            if res and res.success:
+                if res.drl_state == 1: # DRL_PROGRAM_STATE_STOP
+                    return True
             time.sleep(0.3)
         return False
 
-    def _execute_drl(self, code, timeout=10.0):
-        self.wait_drl_ready()
+    def _execute_drl(self, code, timeout=20.0):
+        if not self.wait_drl_ready():
+            self.node.get_logger().warn("DRL Manager not ready, but proceeding anyway...")
         
         req = DrlStart.Request()
         req.robot_system = self.robot_system
         req.code = f"{DRL_HELPER_FUNCTIONS}\n{code}"
         future = self.cli.call_async(req)
         
-        start = time.time()
-        while not future.done() and time.time() - start < timeout:
-            time.sleep(0.05)
-        return bool(future.result().success) if future.result() else False
+        res = self._wait_for_future(future, timeout=timeout)
+        return bool(res.success) if res else False
 
     def activate(self, force: int = 400) -> bool:
         """Initializes the gripper once."""
         self.node.get_logger().info(f"Activating Gripper with force={force}...")
-        return self._execute_drl(DRL_INIT_CODE.format(current=force), timeout=15.0)
+        return self._execute_drl(DRL_INIT_CODE.format(current=force), timeout=25.0)
 
     def move(self, stroke: int) -> bool:
         """Sends a simple movement command."""
@@ -154,7 +171,7 @@ class GripperController:
         for s in sequence:
             task_code += f"gripper_move({s})\n"
         task_code += "flange_serial_close()"
-        return self._execute_drl(task_code, timeout=20.0)
+        return self._execute_drl(task_code, timeout=30.0)
 
     def terminate(self) -> bool:
         req = DrlStart.Request()
