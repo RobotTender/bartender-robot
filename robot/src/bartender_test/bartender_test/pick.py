@@ -23,6 +23,7 @@ ROBOT_ID = "dsr01"
 ROBOT_MODEL = "e0509"
 VELOCITY, ACC = 30, 30
 ORDER_TOPIC = "/bartender/order_detail"
+ACTION_TOPIC = "/bartender/action_request"
 
 DR_init.__dsr__id = ROBOT_ID
 DR_init.__dsr__model = ROBOT_MODEL
@@ -88,9 +89,11 @@ class RobotControllerNode(Node):
         )
         self.ts.registerCallback(self.synced_callback)
         self.order_sub = self.create_subscription(String, ORDER_TOPIC, self.order_callback, 10)
+        self.action_pub = self.create_publisher(String, ACTION_TOPIC, 10)
 
         self.get_logger().info("컬러/뎁스/카메라정보 토픽 구독 대기 중...")
         self.get_logger().info(f"주문 토픽 구독 대기 중... {ORDER_TOPIC}")
+        self.get_logger().info(f"후속 액션 토픽 발행 준비... {ACTION_TOPIC}")
         self.get_logger().info("화면이 나오지 않으면 Launch 명령어를 확인하세요.")
 
         self.gripper = None
@@ -337,6 +340,19 @@ class RobotControllerNode(Node):
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
             self.move_robot_and_control_gripper(p_robot[0], p_robot[1], p_robot[2])
+            action_msg = String()
+            action_msg.data = json.dumps(
+                {
+                    "action": "pour",
+                    "count": 1,
+                    "drinks": items.get("drinks", ""),
+                    "recipe": items.get("recipe", {}),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            self.action_pub.publish(action_msg)
+            self.get_logger().info(f"후속 액션 요청 발행: {action_msg.data}")
             print("=" * 50)
 
         except Exception:

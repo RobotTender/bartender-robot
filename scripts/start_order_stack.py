@@ -50,6 +50,14 @@ def _build_pick_command() -> str:
     )
 
 
+def _build_action_command() -> str:
+    return (
+        f"{_build_workspace_source_prefix()} && "
+        f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
+        "python3 -m bartender_test.action listen"
+    )
+
+
 def _build_web_command(host: str, port: int) -> str:
     python_bin = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
     return f"{sh_quote(python_bin)} manage.py runserver {host}:{port}"
@@ -97,6 +105,7 @@ def main() -> int:
     )
     parser.add_argument("--skip-web", action="store_true", help="Do not start Django server.")
     parser.add_argument("--skip-pick", action="store_true", help="Do not start pick.py node.")
+    parser.add_argument("--skip-action", action="store_true", help="Do not start action listener node.")
     parser.add_argument("--web-host", default="127.0.0.1")
     parser.add_argument("--web-port", type=int, default=8000)
     args = parser.parse_args()
@@ -111,6 +120,9 @@ def main() -> int:
 
     if not args.skip_pick:
         processes.append(ManagedProcess("pick", _build_pick_command(), ROOT))
+
+    if not args.skip_action:
+        processes.append(ManagedProcess("action", _build_action_command(), ROOT))
 
     if not args.skip_web:
         processes.append(ManagedProcess("web", _build_web_command(args.web_host, args.web_port), LLM_DIR))
