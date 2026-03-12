@@ -187,6 +187,8 @@ def generate_launch_description(overrides=None):
         DeclareLaunchArgument('run_user_frontend', default_value='true'),
         DeclareLaunchArgument('webui_host', default_value='0.0.0.0'),
         DeclareLaunchArgument('webui_port', default_value='8000'),
+        DeclareLaunchArgument('sequence_api_host', default_value='127.0.0.1'),
+        DeclareLaunchArgument('sequence_api_port', default_value='8765'),
     ]
 
     robot_launch = IncludeLaunchDescription(
@@ -216,8 +218,12 @@ def generate_launch_description(overrides=None):
             'BARTENDER_ROBOT_MODE_HINT': LaunchConfiguration('robot_mode'),
             'BARTENDER_ROBOT_MODEL_HINT': LaunchConfiguration('robot_model'),
             'BARTENDER_ROBOT_HOST_HINT': LaunchConfiguration('robot_host'),
+            'USER_FRONTEND_HOST': LaunchConfiguration('webui_host'),
+            'USER_FRONTEND_PORT': LaunchConfiguration('webui_port'),
             'VOICE_ORDER_WEBUI_HOST': LaunchConfiguration('webui_host'),
             'VOICE_ORDER_WEBUI_PORT': LaunchConfiguration('webui_port'),
+            'BARTENDER_SEQUENCE_API_HOST': LaunchConfiguration('sequence_api_host'),
+            'BARTENDER_SEQUENCE_API_PORT': LaunchConfiguration('sequence_api_port'),
         },
         condition=IfCondition(LaunchConfiguration('run_frontend')),
     )
@@ -233,6 +239,14 @@ def generate_launch_description(overrides=None):
         ],
         output='screen',
         emulate_tty=True,
+        additional_env={
+            'USER_FRONTEND_HOST': LaunchConfiguration('webui_host'),
+            'USER_FRONTEND_PORT': LaunchConfiguration('webui_port'),
+            'VOICE_ORDER_WEBUI_HOST': LaunchConfiguration('webui_host'),
+            'VOICE_ORDER_WEBUI_PORT': LaunchConfiguration('webui_port'),
+            'BARTENDER_SEQUENCE_API_HOST': LaunchConfiguration('sequence_api_host'),
+            'BARTENDER_SEQUENCE_API_PORT': LaunchConfiguration('sequence_api_port'),
+        },
         condition=IfCondition(LaunchConfiguration('run_user_frontend')),
     )
 

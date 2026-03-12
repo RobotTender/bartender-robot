@@ -6,6 +6,7 @@ home_posj,95.590000,-56.940000,107.090000,-3.340000,35.860000,-85.580000
 top_status_robot_enabled,0
 top_status_vision2_enabled,0
 top_status_vision_enabled,0
+top_status_voice_enabled,1
 vision1_calib_seq_p10_enabled,1
 vision1_calib_seq_p10_j,288.690000,312.020000,821.700000,40.630000,106.920000,-97.720000
 vision1_calib_seq_p10_pose6,0.078000,499.593000,829.339000,43.502000,87.997000,-90.001000

@@ -66,17 +66,19 @@
 ### `src/` (실제 애플리케이션 코드)
 
 - `src/backend/`
-  - `task_backend_node.py`: 로봇 상태/명령, 음성주문 워커 호출, 상태 스냅샷 제공
+  - `task_backend_node.py`: 로봇 상태/명령, 음성주문 워커 호출, 바텐더 시퀀스 API 제공
   - `gripper_drl_controller.py`: 그리퍼 제어 유틸
+- `src/bartender_action/`
+  - `bartender_sequence_manager.py`: 오토/메뉴얼 공용 시퀀스 실행 및 안전판정/정지
+  - `robot_action_planner.py`: 레시피/비전 기반 로봇 동작 시퀀스 플래너
 - `src/frontend/`
   - `developer_frontend.py`: 개발자 UI 메인
-  - `user_frontend.py`: 사용자 Web UI 프로세스 엔트리
+  - `user_frontend.py`: 사용자 Web UI 서버(최종 사용자 UI)
 - `src/order_integration/`
   - `gemini_stt_pipeline.py`: Gemini STT
-  - `voice_order_pipeline.py`: 메뉴 분류/레시피 도출
-  - `voice_order_runtime.py`: stage/result payload 조합
-  - `voice_order_test_worker.py`: 백엔드가 실행하는 음성 워커
-  - `voice_order_webui.py`: 최종 사용자 Web UI 서버
+  - `voice_order_pipeline.py`: 메뉴 분류/레시피 도출 + stage/result payload 조합
+  - `voice_order_worker.py`: 백엔드가 실행하는 음성 워커
+  - `voice_order_route.py`: 백엔드↔워커 subprocess 호출 래퍼
 - `src/vision/`
   - `drink_detection.py`: 비전1 객체 메타 발행
   - `glass_fill_level.py`: 비전2 용량 메타 발행
@@ -96,8 +98,8 @@
 - `src/frontend/developer_frontend.py`
 - `src/frontend/user_frontend.py`
 - `src/backend/task_backend_node.py`
-- `src/order_integration/voice_order_test_worker.py`
-- `src/order_integration/voice_order_webui.py`
+- `src/order_integration/voice_order_worker.py`
+- `src/frontend/user_frontend.py`
 - `src/vision/drink_detection.py`
 - `src/vision/glass_fill_level.py`
 - `src/vision/camera_eye_to_hand_robot_calibration.py` (캘리브레이션 실행 시)

@@ -555,7 +555,7 @@ selection-color: #ffffff;</string>
       <string notr="true">font-size: 14pt; font-weight: 700; color: #202020;</string>
      </property>
      <property name="text">
-      <string>음성주문 LLM: 비활성화</string>
+      <string>음성주문: 비활성화</string>
      </property>
      <property name="alignment">
       <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
@@ -583,7 +583,7 @@ selection-color: #ffffff;</string>
        <x>10</x>
        <y>112</y>
        <width>511</width>
-       <height>90</height>
+       <height>78</height>
       </rect>
      </property>
      <property name="styleSheet">
@@ -593,11 +593,43 @@ selection-color: #ffffff;</string>
       <string>노트북 마이크 입력 대기중...</string>
      </property>
     </widget>
+    <widget class="QLabel" name="voice_order_llm_label">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>198</y>
+       <width>511</width>
+       <height>20</height>
+      </rect>
+     </property>
+     <property name="styleSheet">
+      <string notr="true">font-size: 10pt; font-weight: 600; color: #1f2937;</string>
+     </property>
+     <property name="text">
+      <string>LLM 응답(TTS)</string>
+     </property>
+    </widget>
+    <widget class="QPlainTextEdit" name="voice_order_llm_edit">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>220</y>
+       <width>511</width>
+       <height>60</height>
+      </rect>
+     </property>
+     <property name="styleSheet">
+      <string notr="true">QPlainTextEdit { background: #f8fafc; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 4px; padding: 6px; }</string>
+     </property>
+     <property name="placeholderText">
+      <string>음성주문 응답 대기중...</string>
+     </property>
+    </widget>
     <widget class="QPushButton" name="voice_order_mic_button">
      <property name="geometry">
       <rect>
        <x>10</x>
-       <y>210</y>
+       <y>288</y>
        <width>511</width>
        <height>28</height>
       </rect>
@@ -609,14 +641,36 @@ selection-color: #ffffff;</string>
       <string>마이크 입력 시작</string>
      </property>
     </widget>
+    <widget class="QLabel" name="voice_order_mic_state_label">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>322</y>
+       <width>511</width>
+       <height>18</height>
+      </rect>
+     </property>
+     <property name="styleSheet">
+      <string notr="true">font-size: 9.2pt; font-weight: 700; color: #1f2937;</string>
+     </property>
+     <property name="text">
+      <string>마이크 상태: 대기</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
+     </property>
+    </widget>
     <widget class="QLabel" name="voice_order_log_label">
      <property name="geometry">
       <rect>
        <x>10</x>
-       <y>246</y>
+       <y>324</y>
        <width>511</width>
        <height>20</height>
       </rect>
+     </property>
+     <property name="visible">
+      <bool>false</bool>
      </property>
      <property name="styleSheet">
       <string notr="true">font-size: 10pt; font-weight: 600; color: #1f2937;</string>
@@ -629,10 +683,13 @@ selection-color: #ffffff;</string>
      <property name="geometry">
       <rect>
        <x>10</x>
-       <y>268</y>
+       <y>346</y>
        <width>511</width>
        <height>180</height>
       </rect>
+     </property>
+     <property name="visible">
+      <bool>false</bool>
      </property>
      <property name="styleSheet">
       <string notr="true">QPlainTextEdit { background: #0f172a; color: #dbeafe; border: 1px solid #334155; border-radius: 4px; }</string>
@@ -642,7 +699,7 @@ selection-color: #ffffff;</string>
      <property name="geometry">
       <rect>
        <x>10</x>
-       <y>456</y>
+       <y>324</y>
        <width>511</width>
        <height>20</height>
       </rect>
@@ -658,9 +715,9 @@ selection-color: #ffffff;</string>
      <property name="geometry">
       <rect>
        <x>10</x>
-       <y>478</y>
+       <y>346</y>
        <width>511</width>
-       <height>72</height>
+       <height>178</height>
       </rect>
      </property>
      <property name="styleSheet">
@@ -671,7 +728,7 @@ selection-color: #ffffff;</string>
      <property name="geometry">
       <rect>
        <x>10</x>
-       <y>520</y>
+       <y>530</y>
        <width>511</width>
        <height>24</height>
       </rect>
@@ -687,7 +744,7 @@ selection-color: #ffffff;</string>
      <property name="geometry">
       <rect>
        <x>10</x>
-       <y>548</y>
+       <y>558</y>
        <width>511</width>
        <height>24</height>
       </rect>

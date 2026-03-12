@@ -10,9 +10,12 @@
   - 로봇/비전/음성주문 상태 확인, 테스트 실행, 로그 디버깅을 담당합니다.
 - 사용자 Web UI
   - 최종 사용자 주문 진입 화면을 제공합니다.
-  - 현재는 `VOICE_ORDER_WEBUI_ENABLED` 플래그로 진입 허용/차단을 제어합니다.
+  - 현재는 `USER_FRONTEND_ENABLED`(하위호환: `VOICE_ORDER_WEBUI_ENABLED`) 플래그로 진입 허용/차단을 제어합니다.
 - 음성주문 통합
   - 백엔드 요청 -> 음성처리 워커 -> Gemini STT -> 주문 분류(LLM 보조) -> 레시피 결과를 반환합니다.
+- 바텐더 시퀀스 매니저(백엔드)
+  - `BartenderSequenceManager`가 오토/메뉴얼 공용 시퀀스를 실행합니다.
+  - 안전 판정/정지 권한은 백엔드만 보유하고, 프론트엔드는 시작/중지 요청과 상태 표시만 수행합니다.
 - 비전 메타 파이프라인
   - 비전1 객체 메타, 비전2 용량 메타를 발행하고 UI에서 오버레이합니다.
 - 캘리브레이션
@@ -46,6 +49,8 @@ run_frontend:=true
 run_user_frontend:=true
 webui_host:=0.0.0.0
 webui_port:=8000
+sequence_api_host:=127.0.0.1
+sequence_api_port:=8765
 ```
 
 ### 3) 자주 쓰는 실행 예시
@@ -83,9 +88,11 @@ python3 run_bartender.py run_user_frontend:=false
 - `VOICE_ORDER_MODEL`
 - `VOICE_ORDER_STT_MODEL`
 - `VOICE_ORDER_STT_RETRIES`
-- `VOICE_ORDER_WEBUI_ENABLED`
-- `VOICE_ORDER_WEBUI_HOST`
-- `VOICE_ORDER_WEBUI_PORT`
+- `USER_FRONTEND_ENABLED` (또는 `VOICE_ORDER_WEBUI_ENABLED`)
+- `USER_FRONTEND_HOST` (또는 `VOICE_ORDER_WEBUI_HOST`)
+- `USER_FRONTEND_PORT` (또는 `VOICE_ORDER_WEBUI_PORT`)
+- `BARTENDER_SEQUENCE_API_HOST`
+- `BARTENDER_SEQUENCE_API_PORT`
 - `VOICE_ORDER_CYCLE_INTERVAL_MS`
 
 ## 프로그램 구조(요약)
@@ -96,14 +103,21 @@ run_bartender.py
      -> doosan bringup
      -> realsense launch
      -> developer_frontend.py
-     -> user_frontend.py (voice_order_webui.py)
+     -> user_frontend.py (최종 사용자 Web UI)
 
 developer_frontend.py
   -> backend(task_backend_node.py).run_voice_order_runtime(...)
-     -> subprocess: voice_order_test_worker.py
+     -> subprocess: voice_order_worker.py
         -> gemini_stt_pipeline.py
         -> voice_order_pipeline.py
         -> recipe result
+  -> backend(task_backend_node.py).BartenderSequenceManager
+     -> 시퀀스 상태/로그/안전정지 권한 단일화
+
+백엔드 시퀀스 제어 API:
+- `GET /api/sequence/state`
+- `POST /api/sequence/start`
+- `POST /api/sequence/stop`
 ```
 
 상세 구조/상태:
@@ -117,6 +131,6 @@ developer_frontend.py
 ## 현재 주의사항
 
 - Doosan 동작에는 vendor patch 적용이 필요합니다.
-- Web UI는 기본값이 비활성화(`VOICE_ORDER_WEBUI_ENABLED=0`)라서 접근해도 주문은 차단될 수 있습니다.
+- Web UI는 기본값이 비활성화(`USER_FRONTEND_ENABLED=0`, 하위호환 `VOICE_ORDER_WEBUI_ENABLED=0`)라서 접근해도 주문은 차단될 수 있습니다.
 - 사용자 Web UI의 `/api/control/start`는 현재 백엔드 로봇 실행과 직접 연결되지 않은 상태입니다.
 - 음성주문 결과는 현재 백엔드 메모리 스냅샷과 UI 이벤트 기반이며, ROS 토픽/서비스 표준 인터페이스는 아직 확정 전입니다.

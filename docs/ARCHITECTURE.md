@@ -11,7 +11,7 @@ run_bartender.py
      -> (선택) realsense_launch.py
      -> (선택) src/frontend/developer_frontend.py
      -> (선택) src/frontend/user_frontend.py
-                -> src/order_integration/voice_order_webui.py
+                -> src/frontend/user_frontend.py
 ```
 
 `system_launch.py` 주요 플래그:
@@ -22,6 +22,8 @@ run_bartender.py
 - `run_user_frontend`
 - `webui_host`
 - `webui_port`
+- `sequence_api_host`
+- `sequence_api_port`
 
 구형 인자 호환:
 
@@ -32,22 +34,25 @@ run_bartender.py
 ### 개발자 UI (`src/frontend/developer_frontend.py`)
 
 - 로봇 상태, 비전 상태, 음성주문 디버그 패널 표시
-- 백엔드 API 직접 호출로 음성주문 테스트 실행
+- 백엔드 `BartenderSequenceManager` start/stop 요청
+- 시퀀스 상태/로그 스냅샷 표시(모니터링 중심)
 - UI 타이머/워커로 업데이트 주기 표시
 
-### 사용자 Web UI (`src/order_integration/voice_order_webui.py`)
+### 사용자 Web UI (`src/frontend/user_frontend.py`)
 
 - 최종 사용자 주문 진입용 HTTP 서버
-- STT/LLM 기반 주문 처리 endpoint 제공
+- 백엔드 시퀀스 API(`/api/sequence/*`) 연동으로 start/stop 전달
 - `VOICE_ORDER_WEBUI_ENABLED`가 꺼져 있으면 주문 진입 차단
 
 ### 백엔드 (`src/backend/task_backend_node.py`)
 
 - 로봇 상태 구독 및 로봇 명령 처리
 - 음성주문 요청을 워커 subprocess로 위임
-- 마지막 음성주문 payload 스냅샷 저장/제공
+- `BartenderSequenceManager`로 오토/메뉴얼 공용 시퀀스 실행
+- 안전 판정/중지 권한 단일화(백엔드만 보유)
+- 시퀀스 제어 HTTP API 서버(`/api/sequence/start|stop|state`) 제공
 
-### 음성처리 워커 (`src/order_integration/voice_order_test_worker.py`)
+### 음성처리 워커 (`src/order_integration/voice_order_worker.py`)
 
 - 입력 요청 수신
 - 필요 시 마이크 캡처 + Gemini STT
@@ -67,10 +72,10 @@ run_bartender.py
 ```text
 Developer UI 버튼
   -> backend.run_voice_order_runtime(...)
-     -> subprocess(voice_order_test_worker.py)
+     -> subprocess(voice_order_worker.py)
         -> (옵션) microphone capture
         -> gemini_stt_pipeline.transcribe_audio_bytes()
-        -> voice_order_pipeline.classify_voice_order()
+        -> voice_order_pipeline.build_voice_order_runtime()
      -> payload(events/result/ok) 반환
   -> UI 패널 로그/결과 반영
 ```
@@ -80,17 +85,21 @@ Developer UI 버튼
 - 현재 ROS 토픽/서비스를 통하지 않고 프로세스 호출+메모리 스냅샷 방식
 - 로봇 모션 트리거는 음성 워커에서 수행하지 않음
 
-### B. 사용자 Web UI 경로
+### B. 공용 시퀀스 경로(Developer UI / User Web UI 공통)
 
 ```text
-Browser audio upload
-  -> /stt/transcribe/
-     -> gemini_stt_pipeline
-     -> voice_order_runtime
-     -> JSON response(status/menu/recipe/tts_text)
+Frontend start/stop 요청
+  -> backend sequence API (/api/sequence/*)
+     -> BartenderSequenceManager
+        -> run_voice_order_runtime(...)
+           -> voice_order_worker.py
+           -> gemini_stt_pipeline / voice_order_pipeline
+        -> run_bartender_first_ingredient_action(...)
+     -> sequence snapshot/log 반환
 ```
 
-`/api/control/start`는 현재 진행 이벤트 표시에 가깝고, 백엔드 로봇 실행과 직접 연동되어 있지 않습니다.
+참고:
+- `user_frontend`의 `/api/control/start|stop`는 내부적으로 백엔드 `/api/sequence/*`를 호출합니다.
 
 ## 4) 상태/주기 업데이트
 
