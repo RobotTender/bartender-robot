@@ -158,7 +158,11 @@ class RobotControllerNode(Node):
             self.gripper = GripperController(node=self, namespace=ROBOT_ID)
             self.get_logger().info("그리퍼를 활성화합니다...")
             self.gripper.activate(400)
-            time.sleep(0.5)
+            
+            # CRITICAL: Wait long enough for the activation retry loop to finish
+            self.get_logger().info("Waiting for gripper initialization to finalize...")
+            time.sleep(5.0)
+            
             self.gripper_is_open = True
             self.gripper.move(0)
             self.get_logger().info("그리퍼 활성화 완료.")
