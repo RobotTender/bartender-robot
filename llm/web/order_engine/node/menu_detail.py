@@ -10,7 +10,10 @@ def menu_detail_node(state: GraphState) -> GraphState:
         recipe = {"beer":200}
     elif menu == "somaek":
         recipe = {"soju": 60, "beer":140}
+    else:
+        recipe = {}
     return {
         **state,
-        "recipe" : recipe
+        "drinks": menu,
+        "recipe": recipe,
     }

@@ -3,6 +3,7 @@ import time
 import json
 import numpy as np
 from ultralytics import YOLO
+from pathlib import Path
 
 import rclpy
 import pyrealsense2 as rs
@@ -21,6 +22,7 @@ from .gripper_controller import GripperController
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "e0509"
 VELOCITY, ACC = 30, 30
+ORDER_TOPIC = "/bartender/order_detail"
 
 DR_init.__dsr__id = ROBOT_ID
 DR_init.__dsr__model = ROBOT_MODEL
@@ -36,8 +38,8 @@ CLASS_COLORS = {
 }
 
 # Load YOLO model
-# TODO: 통합 과정 시 절대 경로 -> 상대 경로
-model = YOLO("/home/been/bartender-robot-version2/src/bartender_test/weights/cam_1.pt")
+MODEL_PATH = Path(__file__).resolve().parents[4] / "detection" / "weights" / "cam_1.pt"
+model = YOLO(str(MODEL_PATH))
 
 
 class RobotControllerNode(Node):
@@ -57,21 +59,6 @@ class RobotControllerNode(Node):
         self.state = 'IDLE'  # IDLE, RUNNING, STOPPED
         self.task_received = False
         self.items = None
-
-        # TODO: topic으로 받아야 함
-        # --------------------
-        # json 형식으로 주종과 레시피가 넘어와야 함
-        # 예시:
-        # {
-        #     "drinks": "Somaek",
-        #     "recipe": {"beer": 150, "soju": 50}
-        # }
-        # --------------------
-        self.items = {
-            "drinks": "beer",
-            "recipe": {"beer": 150}
-        }
-        self.test_started = False
 
         self.depth_scale = 0.001
 
@@ -100,8 +87,10 @@ class RobotControllerNode(Node):
             slop=0.1
         )
         self.ts.registerCallback(self.synced_callback)
+        self.order_sub = self.create_subscription(String, ORDER_TOPIC, self.order_callback, 10)
 
         self.get_logger().info("컬러/뎁스/카메라정보 토픽 구독 대기 중...")
+        self.get_logger().info(f"주문 토픽 구독 대기 중... {ORDER_TOPIC}")
         self.get_logger().info("화면이 나오지 않으면 Launch 명령어를 확인하세요.")
 
         self.gripper = None
@@ -117,6 +106,32 @@ class RobotControllerNode(Node):
             # rclpy.shutdown()
 
         self.get_logger().info("RealSense ROS2 구독자와 로봇 컨트롤러가 초기화되었습니다.")
+
+    def order_callback(self, msg: String):
+        try:
+            items = json.loads(msg.data)
+        except json.JSONDecodeError as exc:
+            self.get_logger().error(f"주문 JSON 파싱 실패: {exc}")
+            return
+
+        if not isinstance(items, dict) or "recipe" not in items:
+            self.get_logger().error(f"주문 형식이 올바르지 않습니다: {msg.data}")
+            return
+
+        self.items = items
+        self.task_received = True
+        self.get_logger().info(f"주문 수신: {self.items}")
+        self._try_start_task()
+
+    def _try_start_task(self):
+        if self.state == "RUNNING":
+            return
+        if not self.task_received or self.items is None:
+            return
+        if self.latest_cv_color is None or self.latest_cv_depth_mm is None or self.intrinsics is None:
+            self.get_logger().info("카메라 입력 준비 전이라 주문을 보류합니다.")
+            return
+        self.process_grip(self.items)
 
     def camera_to_robot(self, point_cam):
         """
@@ -152,13 +167,7 @@ class RobotControllerNode(Node):
             self.intrinsics.coeffs = list(info_msg.d)
             self.get_logger().info("카메라 내장 파라미터(Intrinsics) 수신 완료.")
 
-        # TODO: topic으로 msg를 받아서 실행 시 제거해야 함
-        if (not self.test_started
-            and self.latest_cv_color is not None
-            and self.latest_cv_depth_mm is not None
-            and self.intrinsics is not None):
-            self.test_started = True
-            self.process_grip(self.items)
+        self._try_start_task()
 
     def terminate_gripper(self):
         if self.gripper:
@@ -166,11 +175,11 @@ class RobotControllerNode(Node):
 
     def process_grip(self, items):
         # 이미 작업 중이면 무시 (중복 방지)
-        if self.task_received:
+        if self.state == "RUNNING":
             self.get_logger().warn("Item command already received. Ignoring.")
+            return
 
         self.items = items
-        self.task_received = True
         self.state = "RUNNING"
 
         self.get_logger().info(f"Received item command: {self.items}")
@@ -192,17 +201,17 @@ class RobotControllerNode(Node):
         from DSR_ROBOT2 import get_current_posx, movel, wait, movej
         from DR_common2 import posx, posj
 
-        if self.latest_cv_depth_mm is None or self.intrinsics is None:
-            self.get_logger().warn("아직 뎁스 프레임 또는 카메라 정보가 수신되지 않았습니다.")
-            return
-        
-        self.get_logger().info("초기 자세")
-        home_posj = posj(69.5, -43.0, 102.0, 101.0, -72.0, -213.0)
-        movej(home_posj, vel=VELOCITY, acc=ACC)
-        self.gripper.move(0)
-        wait(2)
-
         try:
+            if self.latest_cv_depth_mm is None or self.intrinsics is None:
+                self.get_logger().warn("아직 뎁스 프레임 또는 카메라 정보가 수신되지 않았습니다.")
+                return
+
+            self.get_logger().info("초기 자세")
+            home_posj = posj(69.5, -43.0, 102.0, 101.0, -72.0, -213.0)
+            movej(home_posj, vel=VELOCITY, acc=ACC)
+            self.gripper.move(0)
+            wait(2)
+
             img_raw = self.latest_cv_color.copy()
             depth_raw = self.latest_cv_depth_mm.copy()
 
@@ -269,74 +278,74 @@ class RobotControllerNode(Node):
                     cv2.putText(self.latest_cv_vis, label, (x1, y1-10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
-        except:
+            target = object_loc_dict[class_id]
+            depth_mm = target["depth_mm"]
+
+            if depth_mm == 0:
+                print(f"해당 {model.names[class_id]}의 깊이를 측정할 수 없습니다 (값: 0)")
+                return
+
+            depth_m = float(depth_mm) / 1000.0
+
+            # deproject는 반드시 raw 좌표 사용
+            u_raw = target["u_raw"]
+            v_raw = target["v_raw"]
+
+            # 시각화는 flip 좌표 사용
+            u_vis = target["u_flip"]
+            v_vis = target["v_flip"]
+
+            # 카메라 calibration 시 좌표계를 새로 만들었기 때문에
+            # deproject 대신 아래 코드를 사용
+            cx = self.intrinsics.ppx
+            cy = self.intrinsics.ppy
+            fx = self.intrinsics.fx
+            fy = self.intrinsics.fy
+
+            # 중심 원점 기준 정규화
+            x_cam = (u_raw - cx) * depth_m / fx
+            y_cam = (v_raw - cy) * depth_m / fy
+            z_cam = depth_m
+
+            # RealSense raw camera coordinates
+            x_mm = x_cam * 1000
+            y_mm = y_cam * 1000
+            z_mm = z_cam * 1000
+
+            p_cam = np.array([x_mm, y_mm, z_mm], dtype=np.float64)
+            p_robot = self.camera_to_robot(p_cam)
+
+            print("--- 변환된 최종 3D 좌표 ---")
+            print(f"flip 픽셀 좌표: (u_vis={u_vis}, v_vis={v_vis})")
+            print(f"raw 픽셀 좌표 : (u_raw={u_raw}, v_raw={v_raw}), Depth: {depth_m*1000:.1f} mm")
+            print(f"로봇 목표 좌표: X={p_robot[0]:.1f}, Y={p_robot[1]:.1f}, Z={p_robot[2]:.1f}\n")
+
+            if self.latest_cv_vis is not None:
+                vis = self.latest_cv_vis.copy()
+
+                # 좌표 계산에 사용한 중심점 표시
+                cv2.circle(vis, (u_vis, v_vis), 6, (0, 255, 255), -1)
+
+                # 픽셀 좌표 표시
+                cv2.putText(vis, f"flip center: ({u_vis}, {v_vis})", (u_vis + 10, v_vis + 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                cv2.putText(vis, f"raw center: ({u_raw}, {v_raw})", (20, 70),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+
+                # 로봇 좌표 표시
+                cv2.putText(vis, f"Robot XYZ: ({p_robot[0]:.1f}, {p_robot[1]:.1f}, {p_robot[2]:.1f})", (20, 40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+            self.move_robot_and_control_gripper(p_robot[0], p_robot[1], p_robot[2])
+            print("=" * 50)
+
+        except Exception:
             self.get_logger().warn("Detection Error!!")
             return
-        
-        target = object_loc_dict[class_id]
-        depth_mm = target["depth_mm"]
-        
-        if depth_mm == 0:
-            print(f"해당 {model.names[class_id]}의 깊이를 측정할 수 없습니다 (값: 0)")
-            return
-        
-        depth_m = float(depth_mm) / 1000.0
-
-        # deproject는 반드시 raw 좌표 사용
-        u_raw = target["u_raw"]
-        v_raw = target["v_raw"]
-
-        # 시각화는 flip 좌표 사용
-        u_vis = target["u_flip"]
-        v_vis = target["v_flip"]
-
-        # 카메라 calibration 시 좌표계를 새로 만들었기 때문에
-        # deproject 대신 아래 코드를 사용
-        cx = self.intrinsics.ppx
-        cy = self.intrinsics.ppy
-        fx = self.intrinsics.fx
-        fy = self.intrinsics.fy
-
-        # 중심 원점 기준 정규화
-        x_cam = (u_raw - cx) * depth_m / fx
-        y_cam = (v_raw - cy) * depth_m / fy
-        z_cam = depth_m
-
-        # RealSense raw camera coordinates
-        x_mm = x_cam * 1000
-        y_mm = y_cam * 1000
-        z_mm = z_cam * 1000
-
-        p_cam = np.array([x_mm, y_mm, z_mm], dtype=np.float64)
-
-        p_robot = self.camera_to_robot(p_cam)
-
-        print("--- 변환된 최종 3D 좌표 ---")
-        print(f"flip 픽셀 좌표: (u_vis={u_vis}, v_vis={v_vis})")
-        print(f"raw 픽셀 좌표 : (u_raw={u_raw}, v_raw={v_raw}), Depth: {depth_m*1000:.1f} mm")
-        print(f"로봇 목표 좌표: X={p_robot[0]:.1f}, Y={p_robot[1]:.1f}, Z={p_robot[2]:.1f}\n")
-
-        if self.latest_cv_vis is not None:
-            vis = self.latest_cv_vis.copy()
-
-            # 좌표 계산에 사용한 중심점 표시
-            cv2.circle(vis, (u_vis, v_vis), 6, (0, 255, 255), -1)
-
-            # 픽셀 좌표 표시
-            cv2.putText(vis, f"flip center: ({u_vis}, {v_vis})", (u_vis + 10, v_vis + 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            cv2.putText(vis, f"raw center: ({u_raw}, {v_raw})", (20, 70),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            
-            # 로봇 좌표 표시
-            cv2.putText(vis, f"Robot XYZ: ({p_robot[0]:.1f}, {p_robot[1]:.1f}, {p_robot[2]:.1f})", (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            
-            # TODO: 현재 카메라에서 YOLO 결과를 저장하는 코드로 통합 시 제거해야 함
-            # cv2.imwrite("/home/been/jaehwan/test_after_cal_center.jpg", vis)
-
-        self.move_robot_and_control_gripper(p_robot[0], p_robot[1], p_robot[2])
-        print("=" * 50)
+        finally:
+            self.task_received = False
+            self.items = None
+            self.state = "IDLE"
 
     def move_robot_and_control_gripper(self, x, y, z):
         from DSR_ROBOT2 import get_current_posx, movel, wait, movej

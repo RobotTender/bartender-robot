@@ -8,6 +8,7 @@ class GraphState(TypedDict, total=False):
     reason: str # 이유
     retry: bool # 반복횟수
     selected_menu: str # 주문 메뉴
+    drinks: str
     tts_text: str
     recipe: dict[str]
     

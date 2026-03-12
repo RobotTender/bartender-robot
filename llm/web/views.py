@@ -10,7 +10,7 @@ from django.views import View
 from web.order_engine.common import MENU_LABELS
 from web.order_engine.stt_pipeline import transcribe_audio_bytes
 from web.order_engine.tts_pipeline import synthesize_speech
-from web.order_engine.robot_command import _start_robot_job
+from web.order_engine.robot_topic import _start_robot_topic_publish
 
 ORDER_ENGINE_DIR = Path(__file__).resolve().parent / "order_engine"
 if str(ORDER_ENGINE_DIR) not in sys.path:
@@ -113,11 +113,11 @@ def stt_transcribe(request):
             new_status,
         )
         command_payload = {
-            "selected_menu": selected_menu,
+            "drinks": graph_result.get("drinks", selected_menu),
             "recipe": recipe,
             "status": new_status,
         }
-        _start_robot_job(command_payload)
+        _start_robot_topic_publish(command_payload)
 
     return JsonResponse({
         "tts_text": tts_text,
