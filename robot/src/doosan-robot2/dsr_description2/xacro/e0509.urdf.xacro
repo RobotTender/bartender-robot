@@ -54,7 +54,7 @@
 
   <!-- Target Shapes -->
   <xacro:include filename="$(find dsr_description2)/xacro/target_shapes.xacro"/>
-  <xacro:cup x="0.30" y="-0.10" z="0.13" r="0.05" h="0.26" color="0.5 0.5 0.5 0.8"/>
+  <xacro:cup x="0.35" y="-0.10" z="0.13" r="0.05" h="0.26" color="0.5 0.5 0.5 0.8"/>
 
   <!-- Target Markers (pos1-pos5) -->
   <xacro:include filename="$(find dsr_description2)/xacro/target_marker.xacro"/>
