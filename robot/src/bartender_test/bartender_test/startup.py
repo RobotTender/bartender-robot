@@ -86,11 +86,11 @@ class RobotStartupNode(Node):
             # STEP 5: Activate and Open Gripper
             self.get_logger().info("--- STEP 5: Gripper Initialization ---")
             
-            # Explicitly stop any lingering DRL from Step 4
-            cli_stop = self.create_client(DrlStop, '/dsr01/drl/drl_stop')
+            # Explicitly stop and WAIT for response
             if cli_stop.wait_for_service(timeout_sec=2.0):
                 self.get_logger().info("Clearing Task Manager before Gripper Init...")
-                cli_stop.call_async(DrlStop.Request())
+                future = cli_stop.call_async(DrlStop.Request())
+                rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
             time.sleep(2.0)
 
             gripper = GripperController(node=self, namespace=ROBOT_ID)
