@@ -76,7 +76,7 @@ class GripperController:
         """Sends a single stroke command to the gripper."""
         self.node.get_logger().info(f"Gripper Move: stroke={stroke}, force={force}")
         drl_code = DRL_BASE_CODE_TEMPLATE.format(current=force)
-        task_code = f"gripper_move({stroke})"
+        task_code = f"gripper_move({stroke})\nflange_serial_close()"
         
         req = DrlStart.Request()
         req.robot_system = self.robot_system
@@ -104,6 +104,7 @@ class GripperController:
         for stroke in sequence:
             task_code += f"gripper_move({stroke})\n"
             task_code += "wait(1.0)\n"
+        task_code += "flange_serial_close()"
             
         req = DrlStart.Request()
         req.robot_system = self.robot_system

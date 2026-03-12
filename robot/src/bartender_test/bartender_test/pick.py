@@ -153,7 +153,10 @@ class RobotControllerNode(Node):
             from dsr_msgs2.srv import DrlStop
             drl_stop_cli = self.create_client(DrlStop, '/dsr01/drl/drl_stop')
             if drl_stop_cli.wait_for_service(timeout_sec=1.0):
-                drl_stop_cli.call_async(DrlStop.Request())
+                self.get_logger().info("Stopping any existing DRL tasks...")
+                stop_future = drl_stop_cli.call_async(DrlStop.Request())
+                while not stop_future.done():
+                    time.sleep(0.1)
             
             # Wait for robot state transition to settle
             time.sleep(2.0)
