@@ -59,10 +59,10 @@ class GripperController:
         while not self.cli.wait_for_service(timeout_sec=2.0):
             self.node.get_logger().info("Waiting for DRL service...")
 
-    def move(self, stroke: int, current: int = 400) -> bool:
+    def move(self, stroke: int, force: int = 400) -> bool:
         """Sends a single stroke command to the gripper."""
-        self.node.get_logger().info(f"Gripper Move: stroke={stroke}, force={current}")
-        drl_code = DRL_BASE_CODE_TEMPLATE.format(current=current)
+        self.node.get_logger().info(f"Gripper Move: stroke={stroke}, force={force}")
+        drl_code = DRL_BASE_CODE_TEMPLATE.format(current=force)
         task_code = f"gripper_move({stroke})"
         
         req = DrlStart.Request()

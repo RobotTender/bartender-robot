@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="orange_marker" params="parent:='world' prefix:='' x:=0.0 y:=0.0 z:=0.0">
+
+    <link name="${prefix}orange_marker_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <sphere radius="0.01"/>
+        </geometry>
+        <material name="orange_marker_mat">
+          <color rgba="1.0 0.5 0.0 0.8"/>
+        </material>
+      </visual>
+      <inertial>
+        <mass value="0.001"/>
+        <inertia ixx="1e-8" ixy="0" ixz="0" iyy="1e-8" iyz="0" izz="1e-8"/>
+      </inertial>
+    </link>
+
+    <joint name="${prefix}orange_marker_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child  link="${prefix}orange_marker_link"/>
+      <origin xyz="${x} ${y} ${z}" rpy="0 0 0"/>
+    </joint>
+
+  </xacro:macro>
+
+</robot>

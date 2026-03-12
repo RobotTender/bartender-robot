@@ -1,0 +1,72 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="bottle_object" params="parent prefix:='' radius:=0.04 height:=0.24 mouth_radius:=0.0125 mouth_height:=0.03 grasp_height:=0.1 rpy:='0 0 0'">
+
+    <!-- Bottle Body -->
+    <link name="${prefix}bottle_link">
+      <visual>
+        <!-- Origin is at the center of the cylinder -->
+        <!-- Center relative to link origin (grasp point) is (height/2) - grasp_height -->
+        <origin xyz="0 0 ${(height/2) - grasp_height}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${radius}" length="${height}"/>
+        </geometry>
+        <material name="grey_transparent">
+          <color rgba="0.5 0.5 0.5 0.6"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${(height/2) - grasp_height}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${radius}" length="${height}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <origin xyz="0 0 ${(height/2) - grasp_height}" rpy="0 0 0"/>
+        <mass value="0.5"/>
+        <inertia ixx="0.003" ixy="0" ixz="0" iyy="0.003" iyz="0" izz="0.0004"/>
+      </inertial>
+    </link>
+
+    <joint name="${prefix}bottle_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child  link="${prefix}bottle_link"/>
+      <origin xyz="0 0 0" rpy="${rpy}"/>
+    </joint>
+
+    <!-- Bottle Mouth -->
+    <link name="${prefix}mouth_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${mouth_radius}" length="${mouth_height}"/>
+        </geometry>
+        <material name="grey_color"><color rgba="0.5 0.5 0.5 1.0"/></material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${mouth_radius}" length="${mouth_height}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="0.05"/>
+        <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.00001"/>
+      </inertial>
+    </link>
+
+    <joint name="${prefix}mouth_joint" type="fixed">
+      <parent link="${prefix}bottle_link"/>
+      <child  link="${prefix}mouth_link"/>
+      <!-- Bottle Top is at height - grasp_height relative to bottle_link origin. -->
+      <!-- We want the mouth's bottom surface to be at the bottle's top. -->
+      <!-- Mouth center relative to mouth's bottom surface is mouth_height/2. -->
+      <!-- So joint origin is (height - grasp_height) + (mouth_height/2) -->
+      <origin xyz="0 0 ${(height - grasp_height) + (mouth_height/2)}" rpy="0 0 0"/>
+    </joint>
+
+  </xacro:macro>
+
+</robot>
