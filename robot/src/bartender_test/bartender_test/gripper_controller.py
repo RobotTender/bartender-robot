@@ -39,17 +39,21 @@ def gripper_move(stroke):
     wait(0.2) 
 
 # Initialization logic
-while True:
-    flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
-    modbus_set_slaveid(1)
+flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
+modbus_set_slaveid(1)
+
+for i in range(0, 10):
     flange_serial_write(modbus_fc06(256, 1))   # torque enable
     flag, val = recv_check()
-    flange_serial_write(modbus_fc06(275, {current})) # goal current (Force)
-    flag, val = recv_check()
     if flag is True:
-        break
-    flange_serial_close()
-    wait(0.1)
+        flange_serial_write(modbus_fc06(275, {current})) # goal current (Force)
+        flag, val = recv_check()
+        if flag is True:
+            break
+    wait(0.2)
+
+if flag is False:
+    tp_log("Gripper Init Failed")
 """
 
 class GripperController:

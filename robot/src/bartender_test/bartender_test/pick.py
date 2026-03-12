@@ -149,8 +149,14 @@ class RobotControllerNode(Node):
                 time.sleep(0.1)
             self.get_logger().info("Move CHEERS_POSE finished.")
 
+            # Stop any previous DRL task to prevent conflicts (Alarm 2007)
+            from dsr_msgs2.srv import DrlStop
+            drl_stop_cli = self.create_client(DrlStop, '/dsr01/drl/drl_stop')
+            if drl_stop_cli.wait_for_service(timeout_sec=1.0):
+                drl_stop_cli.call_async(DrlStop.Request())
+            
             # Wait for robot state transition to settle
-            time.sleep(1.0)
+            time.sleep(2.0)
             
             self.gripper = GripperController(node=self, namespace=ROBOT_ID)
             self.get_logger().info("그리퍼를 활성화합니다...")
