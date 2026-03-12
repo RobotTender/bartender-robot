@@ -66,7 +66,6 @@ class UnifiedMonitor(Node):
         self.sub_js = self.create_subscription(JointState, 'joint_states', self.cb_joint_states, 10)
         self.sub_mot = self.create_subscription(Float64MultiArray, self.topic_map['jts_mot'], self.cb_mot, 10)
         self.sub_force = self.create_subscription(Float64MultiArray, self.topic_map['tcp_force'], self.cb_force, 10)
-        self.sub_trigger = self.create_subscription(Empty, 'pouring_trigger', self.cb_trigger, 10)
         
         self.msg_count = 0
         self.last_msg_time = 0.0
@@ -113,16 +112,6 @@ class UnifiedMonitor(Node):
         # 2. TCP Based Weight (Raw sensor)
         net_fz = self.tcp_force_stable[2] - self.tare_force[2]
         self.weight_tcp_stable = abs(net_fz / 9.81) * 1000.0
-
-    def cb_trigger(self, msg):
-        self.capture_pour_data()
-
-    def capture_pour_data(self):
-        pose = self.get_tf_pose()
-        if pose:
-            with open('pour_data.csv', 'a', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([time.time()] + pose)
 
     def get_tf_pose(self):
         try:

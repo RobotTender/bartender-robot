@@ -87,7 +87,7 @@ class TriggerListener(Node):
 
 def main(args=None):
     if len(sys.argv) < 2:
-        print("Usage: ros2 run bartender_test action [pour orbit | warmup] [repeat=<n>]")
+        print("Usage: ros2 run bartender_test action [pour | warmup] [repeat=<n>]")
         return
 
     rclpy.init(args=args)
@@ -115,7 +115,6 @@ def main(args=None):
         wait(0.5)
 
         cmd = sys.argv[1].lower()
-        sub_cmd = sys.argv[2].lower() if len(sys.argv) > 2 else ""
         
         # Argument parsing
         repeat = 1
@@ -127,7 +126,7 @@ def main(args=None):
             elif arg.isdigit(): nums.append(int(arg))
         
         count = repeat
-        if not nums and not sub_cmd.isdigit() and len(sys.argv) > 2 and sys.argv[2].isdigit():
+        if not nums and len(sys.argv) > 2 and sys.argv[2].isdigit():
              count = int(sys.argv[2])
         elif nums:
              count = nums[0]
@@ -142,7 +141,7 @@ def main(args=None):
                     movej(pose, vel=60, acc=60)
                 wait(0.5)
 
-        elif cmd == 'pour' and sub_cmd == 'orbit':
+        elif cmd == 'pour':
             # Setup trajectory points
             p1 = posx([float(x) for x in fkin(CHEERS_POSE, ref=0)])
             p2 = posx(POS2_XYZ + [float(x) for x in fkin(CONTACT_POSE, ref=0)][3:])
@@ -153,7 +152,7 @@ def main(args=None):
             approach_path = [p1, p2]
             pour_path = [p2, p3, p4, p5]
 
-            motion_node.get_logger().info(f"Starting POUR ORBIT ({count} cycles)")
+            motion_node.get_logger().info(f"Starting POUR ({count} cycles)")
             for i in range(count):
                 motion_node.get_logger().info(f"--- Pour Cycle {i+1}/{count} ---")
                 movej(CHEERS_POSE, vel=60, acc=60)
@@ -184,7 +183,7 @@ def main(args=None):
 
                 duration = end_time - start_time
                 num_points = len(listener_node.pouring_point_buffer)
-                motion_node.get_logger().info(f"Pour Orbit END at: {time.strftime('%H:%M:%S', time.localtime(end_time))}.{int((end_time%1)*1000):03d}")
+                motion_node.get_logger().info(f"Pour END at: {time.strftime('%H:%M:%S', time.localtime(end_time))}.{int((end_time%1)*1000):03d}")
                 motion_node.get_logger().info(f"Motion Duration: {duration:.2f}s | Raw Points: {num_points} (@3Hz)")
 
                 # Check why we stopped
@@ -228,7 +227,9 @@ def main(args=None):
 
                         motion_node.get_logger().info(f"Tiered Thinning: {num_recorded} raw -> {len(thinning_buffer)} backtrack points (Total Path: {len(thinning_buffer)+1}).")
                     else:
-                        thinning_buffer = recorded_path_full                    # 3. Final Execution Path: [Trigger Point] + [Thinning Buffer Points] + [CHEERS_POSE]
+                        thinning_buffer = recorded_path_full
+
+                    # 3. Final Execution Path: [Trigger Point] + [Thinning Buffer Points] + [CHEERS_POSE]
                     final_reverse_path = [curr_j] # Point 1: Trigger Point
                     for p in thinning_buffer:
                         # Avoid duplicates or very close points
@@ -254,45 +255,8 @@ def main(args=None):
                 else:
                     motion_node.get_logger().info("Path finished naturally.")
         
-        elif cmd == 'pour' and sub_cmd == 'auto':
-            # Simplified auto-pour for now
-            target_poured_g = DEFAULT_TARGET_POUR
-            if len(sys.argv) > 3 and sys.argv[3].replace('.','',1).isdigit():
-                target_poured_g = float(sys.argv[3])
-                
-            motion_node.get_logger().info(f"Starting PREDICTIVE AUTO POUR: Target={target_poured_g}g")
-            
-            # Weighing
-            gripper = GripperController(motion_node, namespace=ROBOT_ID)
-            gripper.move(1150, force=250)
-            movej(CHEERS_POSE, vel=60, acc=60)
-            wait(2.0)
-            
-            weight_kg = get_workpiece_weight()
-            weight_total_g = weight_kg * 1000.0
-            target_ry = -0.0433 * weight_total_g + 102.3888
-            
-            p_approach_raw = [float(x) for x in fkin(CONTACT_POSE, ref=0)]
-            p_approach_raw[3] = -90.0
-            p_approach_raw[4] = target_ry - 2.0
-            p_approach = posx(p_approach_raw)
-            
-            p_target_raw = list(p_approach_raw)
-            p_target_raw[4] = target_ry + 10.0
-            p_target = posx(p_target_raw)
-            
-            for i in range(count):
-                motion_node.get_logger().info(f"--- Auto Pour Cycle {i+1}/{count} ---")
-                movej(CHEERS_POSE, vel=60, acc=60)
-                wait(0.5)
-                movel(p_approach, vel=100, acc=100)
-                
-                # Precision Creep - using movesx/movel blocking is tricky here because 
-                # weight updates need spinning. We'll use our listener node for weights too.
-                # (Skipping full auto-pour refactor for now to focus on 'snap' success)
-                movel(p_target, vel=5, acc=5)
-                movej(CHEERS_POSE, vel=150, acc=150)
-                wait(1.0)
+        else:
+            motion_node.get_logger().error(f"Unknown command: {cmd}")
         
     except Exception as e:
         motion_node.get_logger().error(f"Action Error: {e}")
