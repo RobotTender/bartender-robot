@@ -43,8 +43,8 @@ class RobotStartupNode(Node):
                 rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
                 res = future.result()
                 if res and res.success:
-                    if res.drl_state == 1: # STOP
-                        self.get_logger().info("  [OK] DRL Manager is STOPPED.")
+                    if res.drl_state == 1 or res.drl_state == 3: # STOP or LAST (Idle)
+                        self.get_logger().info(f"  [OK] DRL Manager is ready (state={res.drl_state}).")
                         return True
                     else:
                         self.get_logger().warn(f"  [WAIT] DRL state is {res.drl_state}. Forcing DrlStop...")

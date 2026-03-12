@@ -136,7 +136,7 @@ class GripperController:
             return future.result() if future.done() else None
 
     def wait_drl_ready(self, timeout=20.0):
-        """Waits until DRL interpreter is STOPPED (ready for next task)."""
+        """Waits until DRL interpreter is STOPPED or IDLE (ready for next task)."""
         start = time.time()
         while time.time() - start < timeout:
             if not self.state_cli.service_is_ready():
@@ -146,7 +146,7 @@ class GripperController:
             future = self.state_cli.call_async(GetDrlState.Request())
             res = self._wait_for_future(future, timeout=2.0)
             if res and res.success:
-                if res.drl_state == 1: # DRL_PROGRAM_STATE_STOP
+                if res.drl_state == 1 or res.drl_state == 3: # STOP or LAST (Idle)
                     return True
                 else:
                     self.node.get_logger().warn(f"DRL Manager is BUSY (state={res.drl_state}). Attempting DrlStop...")
