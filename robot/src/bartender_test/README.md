@@ -4,6 +4,25 @@ A ROS 2 package for the Doosan Robotics dsr01 e0509 robot and Robotis RH-P12-RN 
 
 ---
 
+## Getting Started
+
+### 1. Execution Modes
+
+The project can be run in either a simulated environment or on the physical hardware.
+
+#### **Virtual Mode (Simulation)**
+```bash
+ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=virtual model:=e0509 gripper:=rh_p12_rn object:=bottle
+```
+
+#### **Real Mode (Hardware)**
+Ensure the robot controller is on the network and replace `xx` with the specific ID of your robot (e.g., `110.120.1.59`).
+```bash
+ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.xx model:=e0509
+```
+
+---
+
 ## Command Reference
 
 | Command | Subcommand | Description |
@@ -13,7 +32,10 @@ A ROS 2 package for the Doosan Robotics dsr01 e0509 robot and Robotis RH-P12-RN 
 | `monitor` | *(None)* | **Telemetry:** Real-time dashboard showing Joint/TCP positions, Net Forces, and Unified Weight. |
 | `trigger` | *(None)* | **Listener:** Required for snapping. Listens for the Spacebar to trigger the recovery motion. |
 | `gripper` | `open / close` | Manual control of the Robotis gripper. |
-| `pose` | *(None)* | Prints current Joint and Cartesian coordinates. |
+| `pose` | `<pose_name>` | **Movement:** Moves the robot to a named pose (e.g., `home`, `cheers`, `contact`, `pour_horizontal`). |
+| `movej` | *(None)* | Basic point-to-point Joint-space movement test script. |
+| `check_tcp` | *(None)* | Verifies the current Tool Center Point configuration. |
+| `register_tool` | *(None)* | Registers the bottle dimensions and weight on the robot controller. |
 
 ---
 
@@ -44,4 +66,4 @@ The "Snap" is a high-speed backtrack triggered when the user (or future weight s
 | `trigger.py` | Non-blocking keyboard listener. |
 | `defines.py` | Centralized hardware offsets and pose constants. |
 | `gripper_command.py` | Manual control of the Robotis gripper. |
-| `pose.py` | Utility to print coordinates. |
+| `pose.py` | Movement utility for named target poses. |
