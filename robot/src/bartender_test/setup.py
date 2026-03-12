@@ -23,6 +23,7 @@ setup(
             'gripper = bartender_test.gripper_command:main',
             'pose = bartender_test.pose:main',
             'movej = bartender_test.movej:main',
+            'movel = bartender_test.movel:main',
             'action = bartender_test.action:main',
             'check_tcp = bartender_test.check_tcp:main',
             'monitor = bartender_test.monitor:main',

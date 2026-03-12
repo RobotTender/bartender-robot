@@ -58,12 +58,12 @@
 
   <!-- Target Markers (pos1-pos5) -->
   <xacro:include filename="$(find dsr_description2)/xacro/target_marker.xacro"/>
-  <xacro:target_marker name="marker_pos1" parent="world" x="0.30848" y="0.06452" z="0.31375" r="0.015" color="1.0 0.0 0.0 0.8"/>
-  <xacro:target_marker name="marker_pos2" parent="world" x="0.34598" y="0.10202" z="0.18375" r="0.015" color="1.0 0.5 0.0 0.8"/>
-  <xacro:target_marker name="marker_pos3" parent="world" x="0.35948" y="0.11552" z="0.28" r="0.015" color="1.0 1.0 0.0 0.8"/>
-  <xacro:target_marker name="marker_pos4" parent="world" x="0.32098" y="0.07702" z="0.39875" r="0.015" color="0.0 1.0 0.0 0.8"/>
-  <xacro:target_marker name="marker_pos5" parent="world" x="0.22848" y="-0.01548" z="0.44375" r="0.015" color="0.0 0.0 1.0 0.8"/>
-
+  <!-- Target Markers (pos1-pos5) -->
+  <xacro:target_marker name="marker_pos1" parent="world" x="0.27848" y="0.03452" z="0.31375" r="0.015" color="1.0 0.0 0.0 0.8"/>
+  <xacro:target_marker name="marker_pos2" parent="world" x="0.30404" y="0.06008" z="0.15699" r="0.015" color="1.0 0.5 0.0 0.8"/>
+  <xacro:target_marker name="marker_pos3" parent="world" x="0.30978" y="0.06583" z="0.23906" r="0.015" color="1.0 1.0 0.0 0.8"/>
+  <xacro:target_marker name="marker_pos4" parent="world" x="0.27268" y="0.02872" z="0.29958" r="0.015" color="0.0 1.0 0.0 0.8"/>
+  <xacro:target_marker name="marker_pos5" parent="world" x="0.22348" y="-0.02048" z="0.33375" r="0.015" color="0.0 0.0 1.0 0.8"/>
   <!-- Gazebo -->
   <xacro:if value="${gz}">
     <xacro:include filename="$(find dsr_description2)/ros2_control/e0509.gz_ros2_control.xacro"/>

@@ -10,9 +10,9 @@ def main(args=None):
         print("  ros2 run bartender_test pose home")
         print("  ros2 run bartender_test pose cheers")
         print("  ros2 run bartender_test pose contact")
-        print("  ros2 run bartender_test pose pour_horizontal")
-        print("  ros2 run bartender_test pose pour_diagonal")
-        print("  ros2 run bartender_test pose pour_vertical")
+        print("  ros2 run bartender_test pose horizontal")
+        print("  ros2 run bartender_test pose diagonal")
+        print("  ros2 run bartender_test pose vertical")
         print("  ros2 run bartender_test pose pole")
         return
 
@@ -36,11 +36,11 @@ def main(args=None):
             target_pose = CHEERS_POSE
         elif cmd == 'contact':
             target_pose = CONTACT_POSE
-        elif cmd in ['pour_mid', 'pour_horizontal']:
+        elif cmd in ['horizontal', 'pour_horizontal', 'pour_mid']:
             target_pose = POUR_HORIZONTAL
-        elif cmd == 'pour_diagonal':
+        elif cmd in ['diagonal', 'pour_diagonal']:
             target_pose = POUR_DIAGONAL
-        elif cmd in ['pour_end', 'pour_vertical']:
+        elif cmd in ['vertical', 'pour_vertical', 'pour_end']:
             target_pose = POUR_VERTICAL
         elif cmd == 'pole':
             target_pose = POLE_POSE

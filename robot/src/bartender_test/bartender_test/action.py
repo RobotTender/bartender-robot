@@ -102,17 +102,22 @@ def execute_action(cmd: str, count: int, motion_node: Node, listener_node: Trigg
                  ("POUR_HORIZONTAL", POUR_HORIZONTAL), ("POUR_DIAGONAL", POUR_DIAGONAL),
                  ("POUR_VERTICAL", POUR_VERTICAL), ("POLE", POLE_POSE)]
         for _ in range(count):
-            for _, pose in poses:
+            for name, pose in poses:
+                motion_node.get_logger().info(f"Moving to {name}...")
                 movej(pose, vel=60, acc=60)
             wait(0.5)
 
     elif cmd == 'pour':
-        p1 = posx([float(x) for x in fkin(CHEERS_POSE, ref=0)])
+        # Create hybrid Cartesian poses: exact POS_XYZ + orientation from corresponding Joint Pose
+        p1 = posx(POS1_XYZ + [float(x) for x in fkin(CHEERS_POSE, ref=0)][3:])
         p2 = posx(POS2_XYZ + [float(x) for x in fkin(CONTACT_POSE, ref=0)][3:])
         p3 = posx(POS3_XYZ + [float(x) for x in fkin(POUR_HORIZONTAL, ref=0)][3:])
-        p5 = posx([float(x) for x in fkin(POUR_VERTICAL, ref=0)])
-        p4 = posx(list(POS4_XYZ) + [float(x) for x in fkin(POUR_DIAGONAL, ref=0)][3:])
-        approach_path = [p1, p2]
+        p4 = posx(POS4_XYZ + [float(x) for x in fkin(POUR_DIAGONAL, ref=0)][3:])
+        p5 = posx(POS5_XYZ + [float(x) for x in fkin(POUR_VERTICAL, ref=0)][3:])
+
+        # Approach: Move directly using Joint Space to avoid spline weirdness
+        # We know p2 corresponds exactly to CONTACT_POSE
+        # Pouring orbit: Contact -> Horizontal -> Diagonal -> Vertical
         pour_path = [p2, p3, p4, p5]
 
         motion_node.get_logger().info(f"Starting POUR ({count} cycles)")
@@ -122,8 +127,8 @@ def execute_action(cmd: str, count: int, motion_node: Node, listener_node: Trigg
             wait(0.2)
 
             listener_node.trigger_received = False
-            motion_node.get_logger().info("Moving to CONTACT_POSE (Approach)...")
-            movesx(approach_path, vel=100, acc=100)
+            motion_node.get_logger().info("Moving to CONTACT_POSE (Approach via movej)...")
+            movej(CONTACT_POSE, vel=60, acc=60)
 
             if listener_node.trigger_received:
                 motion_node.get_logger().info("Trigger detected during approach. Aborting.")
