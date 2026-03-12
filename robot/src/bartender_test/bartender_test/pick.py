@@ -157,12 +157,16 @@ class RobotControllerNode(Node):
                 stop_future = drl_stop_cli.call_async(DrlStop.Request())
                 while not stop_future.done():
                     time.sleep(0.1)
-            
-            # Wait for robot state transition to settle
-            time.sleep(2.0)
-            
-            self.gripper = GripperController(node=self, namespace=ROBOT_ID)
-            self.get_logger().info("그리퍼를 활성화합니다...")
+
+                # Re-assert AUTONOMOUS mode after motion just in case
+                cli.call_async(req)
+                time.sleep(1.0)
+
+                # Wait longer for robot state transition to settle
+                self.get_logger().info("Waiting for task manager to settle...")
+                time.sleep(3.0)
+
+                self.gripper = GripperController(node=self, namespace=ROBOT_ID)            self.get_logger().info("그리퍼를 활성화합니다...")
             time.sleep(0.5)
             self.gripper_is_open = True
             self.gripper.move(0)

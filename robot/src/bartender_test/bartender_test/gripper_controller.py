@@ -5,6 +5,7 @@ import textwrap
 
 # Base DRL code template for Modbus communication with the Robotis RH-12-RN gripper
 DRL_BASE_CODE_TEMPLATE = """
+wait(0.5)
 g_slaveid = 0
 flag = 0
 def modbus_set_slaveid(slaveid):
