@@ -61,3 +61,5 @@ robot/log/
 robot/src/**/build/
 robot/src/**/install/
 robot/src/**/log/
+deploy
+logs

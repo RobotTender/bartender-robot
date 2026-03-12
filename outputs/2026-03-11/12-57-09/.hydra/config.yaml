@@ -1,0 +1,700 @@
+env:
+  viewer:
+    eye:
+    - 1.5
+    - -1.0
+    - 1.5
+    lookat:
+    - 0.4
+    - 0.65
+    - 1.3
+    cam_prim_path: /OmniverseKit_Persp
+    resolution:
+    - 1280
+    - 720
+    origin_type: env
+    env_index: 0
+    asset_name: null
+    body_name: null
+  sim:
+    physics_prim_path: /physicsScene
+    device: cuda:0
+    dt: 0.008333333333333333
+    render_interval: 2
+    gravity:
+    - 0.0
+    - 0.0
+    - -9.81
+    enable_scene_query_support: false
+    use_fabric: true
+    physx:
+      solver_type: 1
+      min_position_iteration_count: 1
+      max_position_iteration_count: 255
+      min_velocity_iteration_count: 0
+      max_velocity_iteration_count: 255
+      enable_ccd: false
+      enable_stabilization: false
+      enable_enhanced_determinism: false
+      bounce_threshold_velocity: 0.5
+      friction_offset_threshold: 0.04
+      friction_correlation_distance: 0.025
+      gpu_max_rigid_contact_count: 8388608
+      gpu_max_rigid_patch_count: 163840
+      gpu_found_lost_pairs_capacity: 2097152
+      gpu_found_lost_aggregate_pairs_capacity: 33554432
+      gpu_total_aggregate_pairs_capacity: 2097152
+      gpu_collision_stack_size: 67108864
+      gpu_heap_capacity: 67108864
+      gpu_temp_buffer_capacity: 16777216
+      gpu_max_num_partitions: 8
+      gpu_max_soft_body_contacts: 1048576
+      gpu_max_particle_contacts: 1048576
+      solve_articulation_contact_last: false
+    physics_material:
+      func: isaaclab.sim.spawners.materials.physics_materials:spawn_rigid_body_material
+      static_friction: 1.0
+      dynamic_friction: 1.0
+      restitution: 0.0
+      friction_combine_mode: multiply
+      restitution_combine_mode: multiply
+      compliant_contact_stiffness: 0.0
+      compliant_contact_damping: 0.0
+    render:
+      enable_translucency: null
+      enable_reflections: null
+      enable_global_illumination: null
+      antialiasing_mode: null
+      enable_dlssg: null
+      enable_dl_denoiser: null
+      dlss_mode: null
+      enable_direct_lighting: null
+      samples_per_pixel: null
+      enable_shadows: null
+      enable_ambient_occlusion: null
+      dome_light_upper_lower_strategy: null
+      carb_settings: null
+      rendering_mode: null
+    create_stage_in_memory: false
+    logging_level: WARNING
+    save_logs_to_file: true
+  ui_window_class_type: isaaclab.envs.ui.base_env_window:BaseEnvWindow
+  seed: null
+  decimation: 2
+  is_finite_horizon: false
+  episode_length_s: 8.3333
+  scene:
+    num_envs: 128
+    env_spacing: 2.2
+    lazy_sensor_update: true
+    replicate_physics: true
+    filter_collisions: true
+    clone_in_fabric: false
+  events: null
+  observation_space: '{"type": "python", "space": "Box", "value": 29}'
+  num_observations: null
+  state_space: '{"type": "python", "space": "Box", "value": 0}'
+  num_states: null
+  observation_noise_model: null
+  action_space: '{"type": "python", "space": "Box", "value": 6}'
+  num_actions: null
+  action_noise_model: null
+  rerender_on_reset: false
+  num_rerenders_on_reset: 0
+  wait_for_textures: true
+  xr: null
+  log_dir: null
+  obs_joint_dim: 10
+  robot_base_z_offset: 0.73
+  robot:
+    class_type: isaaclab.assets.articulation.articulation:Articulation
+    prim_path: /World/envs/env_.*/Robot
+    spawn:
+      func: isaaclab.sim.spawners.from_files.from_files:spawn_from_usd
+      visible: true
+      semantic_tags: null
+      copy_from_source: true
+      mass_props: null
+      deformable_props: null
+      rigid_props:
+        rigid_body_enabled: null
+        kinematic_enabled: null
+        disable_gravity: false
+        linear_damping: null
+        angular_damping: null
+        max_linear_velocity: null
+        max_angular_velocity: null
+        max_depenetration_velocity: 5.0
+        max_contact_impulse: null
+        enable_gyroscopic_forces: null
+        retain_accelerations: null
+        solver_position_iteration_count: null
+        solver_velocity_iteration_count: null
+        sleep_threshold: null
+        stabilization_threshold: null
+      collision_props: null
+      activate_contact_sensors: true
+      scale: null
+      articulation_props:
+        articulation_enabled: null
+        enabled_self_collisions: true
+        solver_position_iteration_count: 12
+        solver_velocity_iteration_count: 1
+        sleep_threshold: null
+        stabilization_threshold: null
+        fix_root_link: false
+      fixed_tendons_props: null
+      spatial_tendons_props: null
+      joint_drive_props: null
+      visual_material_path: material
+      visual_material: null
+      usd_path: /home/jiwoo/ros2_ws/src/bartender-robot/robot/usd_files/e0509_model.usd
+      variants: null
+    init_state:
+      pos:
+      - 0.0
+      - 0.0
+      - 0.73
+      rot:
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      lin_vel:
+      - 0.0
+      - 0.0
+      - 0.0
+      ang_vel:
+      - 0.0
+      - 0.0
+      - 0.0
+      joint_pos:
+        joint_1: 1.57079632679
+        joint_2: -0.78539816339
+        joint_3: 1.57079632679
+        joint_4: 0.0
+        joint_5: 0.78539816339
+        joint_6: -1.57079632679
+        rh_l1: 0.02
+        rh_r1_joint: 0.02
+        rh_l2: 0.02
+        rh_r2: 0.02
+      joint_vel:
+        .*: 0.0
+    collision_group: 0
+    debug_vis: false
+    articulation_root_prim_path: null
+    soft_joint_pos_limit_factor: 1.0
+    actuators:
+      robot:
+        class_type: isaaclab.actuators.actuator_pd:ImplicitActuator
+        joint_names_expr:
+        - .*
+        effort_limit: null
+        velocity_limit: null
+        effort_limit_sim: 250.0
+        velocity_limit_sim: null
+        stiffness: 90.0
+        damping: 8.0
+        armature: null
+        friction: null
+        dynamic_friction: null
+        viscous_friction: null
+    actuator_value_resolution_debug_print: false
+  table_usd_paths:
+  - /home/jiwoo/ros2_ws/src/bartender-robot/robot/usd_files/tables_3.usd
+  - /home/jiwoo/ros2_ws/src/bartender-robot/robot/usd_files/table_hole.usd
+  workspace_contains_robot: false
+  workspace_robot_prim_path: /World/envs/env_.*/Table/e0509
+  table_top_center_xy:
+  - 0.0
+  - 0.65
+  table_top_size_xy:
+  - 0.724
+  - 0.3
+  table_top_z: 1.3
+  use_table_collision_proxy: true
+  table_collision_size:
+  - 0.724
+  - 0.3
+  - 0.04
+  table_collision_center_xy:
+  - 0.0
+  - 0.65
+  table_collision_center_z: 1.28
+  table_collision:
+    class_type: isaaclab.assets.rigid_object.rigid_object:RigidObject
+    prim_path: /World/envs/env_.*/TableCollision
+    spawn:
+      func: isaaclab.sim.spawners.shapes.shapes:spawn_cuboid
+      visible: false
+      semantic_tags: null
+      copy_from_source: true
+      mass_props: null
+      rigid_props:
+        rigid_body_enabled: null
+        kinematic_enabled: true
+        disable_gravity: true
+        linear_damping: null
+        angular_damping: null
+        max_linear_velocity: null
+        max_angular_velocity: null
+        max_depenetration_velocity: null
+        max_contact_impulse: null
+        enable_gyroscopic_forces: null
+        retain_accelerations: null
+        solver_position_iteration_count: null
+        solver_velocity_iteration_count: null
+        sleep_threshold: null
+        stabilization_threshold: null
+      collision_props:
+        collision_enabled: null
+        contact_offset: 0.002
+        rest_offset: 0.0
+        torsional_patch_radius: null
+        min_torsional_patch_radius: null
+      activate_contact_sensors: false
+      visual_material_path: material
+      visual_material: null
+      physics_material_path: material
+      physics_material: null
+      size:
+      - 0.724
+      - 0.3
+      - 0.04
+    init_state:
+      pos:
+      - 0.0
+      - 0.65
+      - 1.28
+      rot:
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      lin_vel:
+      - 0.0
+      - 0.0
+      - 0.0
+      ang_vel:
+      - 0.0
+      - 0.0
+      - 0.0
+    collision_group: 0
+    debug_vis: false
+  table_spawn_edge_margin: 0.03
+  object_spawn_z: 1.302
+  object_spawn_x_range:
+  - -0.33199999999999996
+  - 0.33199999999999996
+  object_spawn_y_range:
+  - 0.53
+  - 0.77
+  object_spawn_yaw_range:
+  - -3.141592653589793
+  - 3.141592653589793
+  object_slot_x:
+  - -0.18
+  - 0.0
+  - 0.18
+  object_slot_y: 0.65
+  object_slot_x_jitter: 0.02
+  object_slot_y_jitter: 0.02
+  parked_object_x: -0.45
+  parked_object_y:
+  - -0.28
+  - 0.0
+  - 0.28
+  parked_object_z: -1.0
+  bottle_soju:
+    class_type: isaaclab.assets.rigid_object.rigid_object:RigidObject
+    prim_path: /World/envs/env_.*/SojuBottle
+    spawn:
+      func: isaaclab.sim.spawners.from_files.from_files:spawn_from_usd
+      visible: true
+      semantic_tags: null
+      copy_from_source: true
+      mass_props:
+        mass: 0.28
+        density: null
+      deformable_props: null
+      rigid_props:
+        rigid_body_enabled: null
+        kinematic_enabled: false
+        disable_gravity: false
+        linear_damping: null
+        angular_damping: null
+        max_linear_velocity: null
+        max_angular_velocity: null
+        max_depenetration_velocity: null
+        max_contact_impulse: null
+        enable_gyroscopic_forces: null
+        retain_accelerations: null
+        solver_position_iteration_count: null
+        solver_velocity_iteration_count: null
+        sleep_threshold: null
+        stabilization_threshold: null
+      collision_props:
+        collision_enabled: null
+        contact_offset: 0.002
+        rest_offset: 0.0
+        torsional_patch_radius: null
+        min_torsional_patch_radius: null
+      activate_contact_sensors: false
+      scale: null
+      articulation_props: null
+      fixed_tendons_props: null
+      spatial_tendons_props: null
+      joint_drive_props: null
+      visual_material_path: material
+      visual_material: null
+      usd_path: /home/jiwoo/ros2_ws/src/bartender-robot/robot/usd_files/soju.usd
+      variants: null
+    init_state:
+      pos:
+      - 0.5
+      - 0.0
+      - 1.302
+      rot:
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      lin_vel:
+      - 0.0
+      - 0.0
+      - 0.0
+      ang_vel:
+      - 0.0
+      - 0.0
+      - 0.0
+    collision_group: 0
+    debug_vis: false
+  bottle_orange:
+    class_type: isaaclab.assets.rigid_object.rigid_object:RigidObject
+    prim_path: /World/envs/env_.*/OrangeBottle
+    spawn:
+      func: isaaclab.sim.spawners.from_files.from_files:spawn_from_usd
+      visible: true
+      semantic_tags: null
+      copy_from_source: true
+      mass_props:
+        mass: 0.3
+        density: null
+      deformable_props: null
+      rigid_props:
+        rigid_body_enabled: null
+        kinematic_enabled: false
+        disable_gravity: false
+        linear_damping: null
+        angular_damping: null
+        max_linear_velocity: null
+        max_angular_velocity: null
+        max_depenetration_velocity: null
+        max_contact_impulse: null
+        enable_gyroscopic_forces: null
+        retain_accelerations: null
+        solver_position_iteration_count: null
+        solver_velocity_iteration_count: null
+        sleep_threshold: null
+        stabilization_threshold: null
+      collision_props:
+        collision_enabled: null
+        contact_offset: 0.002
+        rest_offset: 0.0
+        torsional_patch_radius: null
+        min_torsional_patch_radius: null
+      activate_contact_sensors: false
+      scale: null
+      articulation_props: null
+      fixed_tendons_props: null
+      spatial_tendons_props: null
+      joint_drive_props: null
+      visual_material_path: material
+      visual_material: null
+      usd_path: /home/jiwoo/ros2_ws/src/bartender-robot/robot/usd_files/orange.usd
+      variants: null
+    init_state:
+      pos:
+      - 0.5
+      - 0.0
+      - 1.302
+      rot:
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      lin_vel:
+      - 0.0
+      - 0.0
+      - 0.0
+      ang_vel:
+      - 0.0
+      - 0.0
+      - 0.0
+    collision_group: 0
+    debug_vis: false
+  bottle_beer:
+    class_type: isaaclab.assets.rigid_object.rigid_object:RigidObject
+    prim_path: /World/envs/env_.*/BeerBottle
+    spawn:
+      func: isaaclab.sim.spawners.from_files.from_files:spawn_from_usd
+      visible: true
+      semantic_tags: null
+      copy_from_source: true
+      mass_props:
+        mass: 0.33
+        density: null
+      deformable_props: null
+      rigid_props:
+        rigid_body_enabled: null
+        kinematic_enabled: false
+        disable_gravity: false
+        linear_damping: null
+        angular_damping: null
+        max_linear_velocity: null
+        max_angular_velocity: null
+        max_depenetration_velocity: null
+        max_contact_impulse: null
+        enable_gyroscopic_forces: null
+        retain_accelerations: null
+        solver_position_iteration_count: null
+        solver_velocity_iteration_count: null
+        sleep_threshold: null
+        stabilization_threshold: null
+      collision_props:
+        collision_enabled: null
+        contact_offset: 0.002
+        rest_offset: 0.0
+        torsional_patch_radius: null
+        min_torsional_patch_radius: null
+      activate_contact_sensors: false
+      scale: null
+      articulation_props: null
+      fixed_tendons_props: null
+      spatial_tendons_props: null
+      joint_drive_props: null
+      visual_material_path: material
+      visual_material: null
+      usd_path: /home/jiwoo/ros2_ws/src/bartender-robot/robot/usd_files/beer.usd
+      variants: null
+    init_state:
+      pos:
+      - 0.5
+      - 0.0
+      - 1.302
+      rot:
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      lin_vel:
+      - 0.0
+      - 0.0
+      - 0.0
+      ang_vel:
+      - 0.0
+      - 0.0
+      - 0.0
+    collision_group: 0
+    debug_vis: false
+  contact_sensor:
+    class_type: isaaclab.sensors.contact_sensor.contact_sensor:ContactSensor
+    prim_path: /World/envs/env_.*/Robot/e0509/.*
+    update_period: 0.0
+    history_length: 3
+    debug_vis: false
+    track_pose: false
+    track_contact_points: false
+    max_contact_data_count_per_prim: 4
+    track_air_time: false
+    force_threshold: 1.0
+    filter_prim_paths_expr: []
+    visualizer_cfg:
+      prim_path: /Visuals/ContactSensor
+      markers:
+        contact:
+          func: isaaclab.sim.spawners.shapes.shapes:spawn_sphere
+          visible: true
+          semantic_tags: null
+          copy_from_source: true
+          mass_props: null
+          rigid_props: null
+          collision_props: null
+          activate_contact_sensors: false
+          visual_material_path: material
+          visual_material:
+            func: isaaclab.sim.spawners.materials.visual_materials:spawn_preview_surface
+            diffuse_color:
+            - 1.0
+            - 0.0
+            - 0.0
+            emissive_color:
+            - 0.0
+            - 0.0
+            - 0.0
+            roughness: 0.5
+            metallic: 0.0
+            opacity: 1.0
+          physics_material_path: material
+          physics_material: null
+          radius: 0.02
+        no_contact:
+          func: isaaclab.sim.spawners.shapes.shapes:spawn_sphere
+          visible: false
+          semantic_tags: null
+          copy_from_source: true
+          mass_props: null
+          rigid_props: null
+          collision_props: null
+          activate_contact_sensors: false
+          visual_material_path: material
+          visual_material:
+            func: isaaclab.sim.spawners.materials.visual_materials:spawn_preview_surface
+            diffuse_color:
+            - 0.0
+            - 1.0
+            - 0.0
+            emissive_color:
+            - 0.0
+            - 0.0
+            - 0.0
+            roughness: 0.5
+            metallic: 0.0
+            opacity: 1.0
+          physics_material_path: material
+          physics_material: null
+          radius: 0.02
+  terrain:
+    class_type: isaaclab.terrains.terrain_importer:TerrainImporter
+    collision_group: -1
+    prim_path: /World/ground
+    num_envs: 1
+    terrain_type: plane
+    terrain_generator: null
+    usd_path: null
+    env_spacing: null
+    use_terrain_origins: true
+    visual_material:
+      func: isaaclab.sim.spawners.materials.visual_materials:spawn_preview_surface
+      diffuse_color:
+      - 0.0
+      - 0.0
+      - 0.0
+      emissive_color:
+      - 0.0
+      - 0.0
+      - 0.0
+      roughness: 0.5
+      metallic: 0.0
+      opacity: 1.0
+    physics_material:
+      func: isaaclab.sim.spawners.materials.physics_materials:spawn_rigid_body_material
+      static_friction: 1.0
+      dynamic_friction: 1.0
+      restitution: 0.0
+      friction_combine_mode: multiply
+      restitution_combine_mode: multiply
+      compliant_contact_stiffness: 0.0
+      compliant_contact_damping: 0.0
+    max_init_terrain_level: null
+    debug_vis: false
+  action_scale: 2.5
+  dof_velocity_scale: 0.1
+  gripper_joint_names:
+  - rh_r1_joint
+  gripper_open_joint_pos: 0.02
+  gripper_close_joint_pos: 1.0
+  gripper_target_smoothing: 0.35
+  arm_reset_noise_rad: 0.0
+  use_manual_joint_limits: true
+  joint_1_abs_limit_deg: 115.0
+  tcp_center_offset_m: 0.0895
+  tcp_axis_local:
+  - 0.0
+  - 0.0
+  - 1.0
+  gripper_axis_local:
+  - 0.0
+  - 1.0
+  - 0.0
+  object_axis_local:
+  - 0.0
+  - 0.0
+  - 1.0
+  success_ee_to_object: 0.08
+  object_grasp_offset_z_range:
+  - 0.06
+  - 0.11
+  success_xy_alignment: 0.05
+  success_z_alignment: 0.025
+  success_axis_alignment: 0.75
+  object_movement_tolerance: 0.02
+  contact_force_threshold: 1.0
+  terminate_contact_force: 6.0
+  reach_reward_scale: 8.0
+  xy_align_reward_scale: 20.0
+  z_align_reward_scale: 6.0
+  axis_align_reward_scale: 4.0
+  still_reward_scale: 2.0
+  success_bonus: 12.0
+  object_collision_penalty_scale: 12.0
+  collision_penalty_scale: 2.0
+  action_penalty_scale: 0.005
+  singularity_joint_3_threshold_deg: 8.0
+  singularity_joint_5_threshold_deg: 8.0
+  singularity_penalty_scale: 0.2
+  reach_dist_decay: 3.0
+  xy_align_tolerance: 0.04
+  z_align_tolerance: 0.035
+  axis_align_power: 1.0
+agent:
+  seed: 42
+  device: cuda:0
+  num_steps_per_env: 16
+  max_iterations: 5000
+  empirical_normalization: null
+  obs_groups: {}
+  clip_actions: null
+  save_interval: 500
+  experiment_name: grip_bottle_direct
+  run_name: ''
+  logger: tensorboard
+  neptune_project: isaaclab
+  wandb_project: isaaclab
+  resume: false
+  load_run: .*
+  load_checkpoint: model_.*.pt
+  class_name: OnPolicyRunner
+  policy:
+    class_name: ActorCritic
+    init_noise_std: 1.0
+    noise_std_type: scalar
+    actor_obs_normalization: true
+    critic_obs_normalization: true
+    actor_hidden_dims:
+    - 256
+    - 128
+    - 64
+    critic_hidden_dims:
+    - 256
+    - 128
+    - 64
+    activation: elu
+  algorithm:
+    class_name: PPO
+    num_learning_epochs: 8
+    num_mini_batches: 8
+    learning_rate: 0.0005
+    schedule: adaptive
+    gamma: 0.99
+    lam: 0.95
+    entropy_coef: 0.0
+    desired_kl: 0.008
+    max_grad_norm: 1.0
+    value_loss_coef: 1.0
+    use_clipped_value_loss: true
+    clip_param: 0.2
+    normalize_advantage_per_mini_batch: false
+    rnd_cfg: null
+    symmetry_cfg: null
