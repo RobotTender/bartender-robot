@@ -69,31 +69,50 @@ class RobotStartupNode(Node):
             else:
                 self.get_logger().error("MoveJoint service not available!")
                 return False
-            
-            if not self.wait_until_ready("Prime Move"): return False
+            def wait_drl_stop(self, timeout=10.0):
+                state_cli = self.create_client(GetDrlState, '/dsr01/drl/get_drl_state')
+                self.get_logger().info("Waiting for DRL Manager to reach STOP state...")
+                start = time.time()
+                while time.time() - start < timeout:
+                    if state_cli.wait_for_service(timeout_sec=1.0):
+                        future = state_cli.call_async(GetDrlState.Request())
+                        rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
+                        res = future.result()
+                        if res and res.success:
+                            if res.drl_state == 1: # STOP
+                                self.get_logger().info("  [OK] DRL Manager is STOPPED.")
+                                return True
+                            else:
+                                self.get_logger().warn(f"  [WAIT] DRL state is {res.drl_state}, waiting for stop...")
+                    time.sleep(1.0)
+                return False
 
-            # STEP 4: Cleanup
-            self.get_logger().info("--- STEP 4: DRL Cleanup ---")
-            cli_stop = self.create_client(DrlStop, '/dsr01/drl/drl_stop')
-            if cli_stop.wait_for_service(timeout_sec=5.0):
-                self.get_logger().info("Stopping any existing DRL tasks...")
-                future = cli_stop.call_async(DrlStop.Request())
-                rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
-            
-            time.sleep(2.0)
-            if not self.wait_until_ready("DrlStop"): return False
+            def run(self):
+                try:
+                    # ... rest of steps ...
+                    # STEP 4: Cleanup
+                    self.get_logger().info("--- STEP 4: DRL Cleanup ---")
+                    cli_stop = self.create_client(DrlStop, '/dsr01/drl/drl_stop')
+                    if cli_stop.wait_for_service(timeout_sec=5.0):
+                        self.get_logger().info("Stopping any existing DRL tasks...")
+                        future = cli_stop.call_async(DrlStop.Request())
+                        rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
 
-            # STEP 5: Activate and Open Gripper
-            self.get_logger().info("--- STEP 5: Gripper Initialization ---")
-            
-            # Explicitly stop and WAIT for response
-            if cli_stop.wait_for_service(timeout_sec=2.0):
-                self.get_logger().info("Clearing Task Manager before Gripper Init...")
-                future = cli_stop.call_async(DrlStop.Request())
-                rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
-            time.sleep(2.0)
+                    if not self.wait_drl_stop(): 
+                        self.get_logger().error("DRL Manager failed to stop!")
+                        return False
 
-            gripper = GripperController(node=self, namespace=ROBOT_ID)
+                    if not self.wait_until_ready("DrlStop"): return False
+
+                    # STEP 5: Activate and Open Gripper
+                    self.get_logger().info("--- STEP 5: Gripper Initialization ---")
+
+                    # Final check to be absolutely sure
+                    if not self.wait_drl_stop(): return False
+                    time.sleep(1.0)
+
+                    gripper = GripperController(node=self, namespace=ROBOT_ID)
+
             
             self.get_logger().info("Activating Gripper...")
             if not gripper.activate(force=400):
