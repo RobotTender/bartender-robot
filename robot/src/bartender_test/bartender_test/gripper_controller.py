@@ -1,44 +1,56 @@
 import rclpy
 from rclpy.node import Node
-from dsr_msgs2.srv import DrlStart, GetDrlState, DrlStop
+from dsr_msgs2.srv import DrlStart, GetDrlState, DrlStop, GetLastAlarm
 import time
 
-# Helper functions for Modbus communication
+# Helper functions for Modbus communication (DRL Compatible)
 DRL_HELPER_FUNCTIONS = """
 g_slaveid = 0
 def modbus_set_slaveid(slaveid):
     global g_slaveid
     g_slaveid = slaveid
+
 def modbus_fc03(address, cnt):
     global g_slaveid
-    data = (g_slaveid).to_bytes(1, byteorder='big')
-    data += (3).to_bytes(1, byteorder='big')
-    data += (address).to_bytes(2, byteorder='big')
-    data += (cnt).to_bytes(2, byteorder='big')
+    data = chr(g_slaveid)
+    data += chr(3)
+    data += chr((address >> 8) & 0xFF)
+    data += chr(address & 0xFF)
+    data += chr((cnt >> 8) & 0xFF)
+    data += chr(cnt & 0xFF)
     return modbus_send_make(data)
+
 def modbus_fc06(address, value):
     global g_slaveid
-    data = (g_slaveid).to_bytes(1, byteorder='big')
-    data += (6).to_bytes(1, byteorder='big')
-    data += (address).to_bytes(2, byteorder='big')
-    data += (value).to_bytes(2, byteorder='big')
+    data = chr(g_slaveid)
+    data += chr(6)
+    data += chr((address >> 8) & 0xFF)
+    data += chr(address & 0xFF)
+    data += chr((value >> 8) & 0xFF)
+    data += chr(value & 0xFF)
     return modbus_send_make(data)
+
 def modbus_fc16(startaddress, cnt, valuelist):
     global g_slaveid
-    data = (g_slaveid).to_bytes(1, byteorder='big')
-    data += (16).to_bytes(1, byteorder='big')
-    data += (startaddress).to_bytes(2, byteorder='big')
-    data += (cnt).to_bytes(2, byteorder='big')
-    data += (2 * cnt).to_bytes(1, byteorder='big')
+    data = chr(g_slaveid)
+    data += chr(16)
+    data += chr((startaddress >> 8) & 0xFF)
+    data += chr(startaddress & 0xFF)
+    data += chr((cnt >> 8) & 0xFF)
+    data += chr(cnt & 0xFF)
+    data += chr(2 * cnt)
     for i in range(0, cnt):
-        data += (valuelist[i]).to_bytes(2, byteorder='big')
+        data += chr((valuelist[i] >> 8) & 0xFF)
+        data += chr(valuelist[i] & 0xFF)
     return modbus_send_make(data)
+
 def recv_check():
     size, val = flange_serial_read(0.1)
     if size > 0:
         return True, val
     else:
         return False, val
+
 def gripper_move(stroke):
     flange_serial_write(modbus_fc16(282, 2, [stroke, 0]))
     wait(0.2)
@@ -46,8 +58,10 @@ def gripper_move(stroke):
     while True:
         flange_serial_write(modbus_fc03(284, 1))
         size, val = flange_serial_read(0.1)
-        if size >= 5 and val[1] == 3:
-            moving = val[3] * 256 + val[4]
+        if size >= 5:
+            # Simple Modbus response parsing for FC03
+            # [ID][FC][LEN][D_HI][D_LO][CRC][CRC]
+            moving = ord(val[3]) * 256 + ord(val[4])
             if moving == 0:
                 break
             fail_cnt = 0
@@ -111,6 +125,7 @@ class GripperController:
         self.cli = self.node.create_client(DrlStart, f"/{namespace}/drl/drl_start")
         self.state_cli = self.node.create_client(GetDrlState, f"/{namespace}/drl/get_drl_state")
         self.stop_cli = self.node.create_client(DrlStop, f"/{namespace}/drl/drl_stop")
+        self.alarm_cli = self.node.create_client(GetLastAlarm, f"/{namespace}/system/get_last_alarm")
         
         # Safe service wait loop
         start = time.time()
@@ -132,6 +147,17 @@ class GripperController:
             rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout)
             return future.result() if future.done() else None
 
+    def check_alarm(self):
+        """Returns True if there is a fatal active alarm."""
+        future = self.alarm_cli.call_async(GetLastAlarm.Request())
+        res = self._wait_for_future(future, timeout=2.0)
+        if res and res.success:
+            # level 2 is usually Alarm (fatal), level 1 is Warning
+            if res.log_alarm.level >= 1 and res.log_alarm.index != 0:
+                self.node.get_logger().error(f"Detected Robot Alarm: [{res.log_alarm.index}] {res.log_alarm.param[0]}")
+                return True
+        return False
+
     def wait_drl_ready(self, timeout=20.0, force_stop=True):
         """Waits until DRL interpreter is STOPPED or IDLE."""
         start = time.time()
@@ -152,9 +178,6 @@ class GripperController:
                         stop_req = DrlStop.Request(stop_mode=1)
                         stop_future = self.stop_cli.call_async(stop_req)
                         self._wait_for_future(stop_future, timeout=2.0)
-                    else:
-                        # Waiting for completion, don't stop!
-                        pass
             
             time.sleep(1.0)
         return False
@@ -171,9 +194,12 @@ class GripperController:
         
         res = self._wait_for_future(future, timeout=5.0)
         if res and res.success:
-            # 2. Wait for completion WITHOUT force-stopping
+            # 2. Wait for completion
             time.sleep(0.5) 
             if self.wait_drl_ready(timeout=timeout, force_stop=False):
+                # 3. Final check: was there an alarm during execution?
+                if self.check_alarm():
+                    return False
                 return True
         return False
 
