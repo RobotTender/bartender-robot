@@ -126,8 +126,23 @@ class RobotControllerNode(Node):
             result = future.result()
             self.get_logger().info(f"Set Robot Mode Result: {result.success if result else 'Failed'}")
             
-            # Wait longer for robot state transition to settle
-            time.sleep(2.0)
+            # Use move_home to 'wake up' the task manager before DRL execution
+            from dsr_msgs2.srv import MoveHome
+            home_cli = self.create_client(MoveHome, '/dsr01/motion/move_home')
+            while not home_cli.wait_for_service(timeout_sec=1.0):
+                self.get_logger().info("Waiting for move_home service...")
+            
+            self.get_logger().info("Moving to Home...")
+            home_req = MoveHome.Request()
+            home_req.target = 0 # DR_HOME_TARGET_USER
+            home_future = home_cli.call_async(home_req)
+            
+            while not home_future.done():
+                time.sleep(0.1)
+            self.get_logger().info("Move Home finished.")
+
+            # Wait for robot state transition to settle
+            time.sleep(1.0)
             
             self.gripper = GripperController(node=self, namespace=ROBOT_ID)
             self.get_logger().info("그리퍼를 활성화합니다...")
