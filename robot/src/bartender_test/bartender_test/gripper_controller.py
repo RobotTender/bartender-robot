@@ -77,17 +77,16 @@ for i in range(0, 5):
             if flag is True:
                 tp_log("Gripper Activation Success")
                 success = True
+                flange_serial_close()
                 break
+        flange_serial_close()
     else:
-        tp_log("flange_serial_open failed with code: " + str(res))
+        tp_log("flange_serial_open failed code: " + str(res))
     
     tp_log("Gripper Activation Retry...")
-    flange_serial_close()
     wait(1.0)
 
-if success is True:
-    flange_serial_close()
-else:
+if success is False:
     tp_log("Gripper Activation Failed")
 """
 
@@ -101,7 +100,7 @@ if res == 0:
     gripper_move({stroke})
     flange_serial_close()
 else:
-    tp_log("flange_serial_open failed with code: " + str(res))
+    tp_log("flange_serial_open failed code: " + str(res))
 """
 
 class GripperController:
@@ -135,7 +134,6 @@ class GripperController:
 
     def wait_drl_ready(self, timeout=20.0):
         """Waits until DRL interpreter is STOPPED or IDLE (ready for next task)."""
-        self.node.get_logger().info(f"Checking DRL state (timeout={timeout}s)...")
         start = time.time()
         while time.time() - start < timeout:
             if not self.state_cli.service_is_ready():
@@ -145,16 +143,11 @@ class GripperController:
             future = self.state_cli.call_async(GetDrlState.Request())
             res = self._wait_for_future(future, timeout=2.0)
             
-            if res is None:
-                self.node.get_logger().warn("  [WAIT] GetDrlState service timed out.")
-            elif not res.success:
-                self.node.get_logger().warn("  [WAIT] GetDrlState returned success=False.")
-            else:
+            if res and res.success:
                 if res.drl_state == 1 or res.drl_state == 3: # STOP or LAST (Idle)
-                    self.node.get_logger().info(f"  [OK] DRL is ready (state={res.drl_state}).")
                     return True
                 else:
-                    self.node.get_logger().warn(f"  [WAIT] DRL is BUSY (state={res.drl_state}). Attempting DrlStop...")
+                    self.node.get_logger().warn(f"DRL Manager is BUSY (state={res.drl_state}). Attempting DrlStop...")
                     stop_req = DrlStop.Request()
                     stop_req.stop_mode = 1 # QUICK
                     stop_future = self.stop_cli.call_async(stop_req)
@@ -172,8 +165,14 @@ class GripperController:
         req.code = f"{DRL_HELPER_FUNCTIONS}\n{code}"
         future = self.cli.call_async(req)
         
-        res = self._wait_for_future(future, timeout=timeout)
-        return bool(res.success) if res else False
+        res = self._wait_for_future(future, timeout=5.0)
+        if res and res.success:
+            # Task started! Now we MUST wait for it to finish (back to state 1 or 3)
+            # This ensures the physical movement/activation is DONE before Python continues.
+            time.sleep(0.5) # Give it a moment to transition to PLAY state
+            if self.wait_drl_ready(timeout=timeout):
+                return True
+        return False
 
     def activate(self, force: int = 400) -> bool:
         """Initializes the gripper once."""
