@@ -1,13 +1,11 @@
 import rclpy
 from rclpy.node import Node
 from dsr_msgs2.srv import DrlStart
-import textwrap
+import time
 
-# Base DRL code template for Modbus communication with the Robotis RH-12-RN gripper
-DRL_BASE_CODE_TEMPLATE = """
-wait(0.5)
+# Helper functions for Modbus communication
+DRL_HELPER_FUNCTIONS = """
 g_slaveid = 0
-flag = 0
 def modbus_set_slaveid(slaveid):
     global g_slaveid
     g_slaveid = slaveid
@@ -33,28 +31,38 @@ def recv_check():
     if size > 0:
         return True, val
     else:
-        tp_log("CRC Check Fail")
         return False, val
 def gripper_move(stroke):
     flange_serial_write(modbus_fc16(282, 2, [stroke, 0]))
-    wait(0.2) 
+    wait(0.5)
+"""
 
-# Initialization logic
+# Initialization code
+DRL_INIT_CODE = """
+wait(0.5)
 flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
 modbus_set_slaveid(1)
-
 for i in range(0, 10):
-    flange_serial_write(modbus_fc06(256, 1))   # torque enable
+    flange_serial_write(modbus_fc06(256, 1))
+    wait(0.2)
     flag, val = recv_check()
     if flag is True:
-        flange_serial_write(modbus_fc06(275, {current})) # goal current (Force)
+        flange_serial_write(modbus_fc06(275, {current}))
+        wait(0.2)
         flag, val = recv_check()
         if flag is True:
             break
-    wait(0.2)
+    wait(0.5)
+flange_serial_close()
+"""
 
-if flag is False:
-    tp_log("Gripper Init Failed")
+# Simple movement code
+DRL_MOVE_CODE = """
+wait(0.1)
+flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
+modbus_set_slaveid(1)
+gripper_move({stroke})
+flange_serial_close()
 """
 
 class GripperController:
@@ -64,7 +72,6 @@ class GripperController:
         self.cli = self.node.create_client(DrlStart, f"/{namespace}/drl/drl_start")
         
         # Safe service wait loop
-        import time
         start = time.time()
         while not self.cli.service_is_ready():
             if time.time() - start > 10.0:
@@ -73,53 +80,34 @@ class GripperController:
             self.node.get_logger().info("Waiting for DRL service...")
             time.sleep(1.0)
 
-    def move(self, stroke: int, force: int = 400) -> bool:
-        """Sends a single stroke command to the gripper."""
-        self.node.get_logger().info(f"Gripper Move: stroke={stroke}, force={force}")
-        drl_code = DRL_BASE_CODE_TEMPLATE.format(current=force)
-        task_code = f"gripper_move({stroke})\nflange_serial_close()"
-        
+    def _execute_drl(self, code, timeout=10.0):
         req = DrlStart.Request()
         req.robot_system = self.robot_system
-        req.code = f"{drl_code}\n{task_code}"
-        
+        req.code = f"{DRL_HELPER_FUNCTIONS}\n{code}"
         future = self.cli.call_async(req)
-        try:
-            rclpy.spin_until_future_complete(self.node, future, timeout_sec=10.0)
-        except RuntimeError:
-            import time
-            start = time.time()
-            while not future.done() and time.time() - start < 10.0:
-                time.sleep(0.01)
+        
+        start = time.time()
+        while not future.done() and time.time() - start < timeout:
+            time.sleep(0.05)
         return bool(future.result().success) if future.result() else False
 
-    def move_sequence(self, sequence, current: int = 400) -> bool:
-        """
-        Sends a sequence of stroke commands in a single DRL script.
-        sequence: list of strokes [s1, s2, ...]
-        """
-        self.node.get_logger().info(f"Gripper Sequence: {sequence}, force={current}")
-        drl_code = DRL_BASE_CODE_TEMPLATE.format(current=current)
-        
-        task_code = ""
-        for stroke in sequence:
-            task_code += f"gripper_move({stroke})\n"
-            task_code += "wait(1.0)\n"
+    def activate(self, force: int = 400) -> bool:
+        """Initializes the gripper once."""
+        self.node.get_logger().info(f"Activating Gripper with force={force}...")
+        return self._execute_drl(DRL_INIT_CODE.format(current=force), timeout=15.0)
+
+    def move(self, stroke: int) -> bool:
+        """Sends a simple movement command."""
+        self.node.get_logger().info(f"Gripper Move: stroke={stroke}")
+        return self._execute_drl(DRL_MOVE_CODE.format(stroke=stroke))
+
+    def move_sequence(self, sequence, force: int = 400) -> bool:
+        """Sends a sequence of strokes."""
+        task_code = "wait(0.1)\nflange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)\nmodbus_set_slaveid(1)\n"
+        for s in sequence:
+            task_code += f"gripper_move({s})\nwait(1.0)\n"
         task_code += "flange_serial_close()"
-            
-        req = DrlStart.Request()
-        req.robot_system = self.robot_system
-        req.code = f"{drl_code}\n{task_code}"
-        
-        future = self.cli.call_async(req)
-        try:
-            rclpy.spin_until_future_complete(self.node, future, timeout_sec=15.0)
-        except RuntimeError:
-            import time
-            start = time.time()
-            while not future.done() and time.time() - start < 15.0:
-                time.sleep(0.01)
-        return bool(future.result().success) if future.result() else False
+        return self._execute_drl(task_code, timeout=20.0)
 
     def terminate(self) -> bool:
         req = DrlStart.Request()

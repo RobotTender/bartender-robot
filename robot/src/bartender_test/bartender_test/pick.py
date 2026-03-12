@@ -157,7 +157,8 @@ class RobotControllerNode(Node):
 
             self.gripper = GripperController(node=self, namespace=ROBOT_ID)
             self.get_logger().info("그리퍼를 활성화합니다...")
-            time.sleep(1.0)
+            self.gripper.activate(400)
+            time.sleep(0.5)
             self.gripper_is_open = True
             self.gripper.move(0)
             self.get_logger().info("그리퍼 활성화 완료.")
