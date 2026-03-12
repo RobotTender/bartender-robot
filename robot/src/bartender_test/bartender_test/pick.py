@@ -100,7 +100,8 @@ class RobotControllerNode(Node):
         self.get_logger().info("RealSense ROS2 구독자와 로봇 컨트롤러가 초기화되었습니다.")
         self.gripper = None
 
-        def order_callback(self, msg: String):        try:
+    def order_callback(self, msg: String):
+        try:
             items = json.loads(msg.data)
         except json.JSONDecodeError as exc:
             self.get_logger().error(f"주문 JSON 파싱 실패: {exc}")
@@ -124,6 +125,17 @@ class RobotControllerNode(Node):
             self.get_logger().info("카메라 입력 준비 전이라 주문을 보류합니다.")
             return
         
+        # Ensure gripper is initialized if not already
+        if self.gripper is None:
+            self.get_logger().info("Initializing gripper for task...")
+            from dsr_msgs2.srv import SetRobotMode
+            mode_cli = self.create_client(SetRobotMode, '/dsr01/system/set_robot_mode')
+            if mode_cli.wait_for_service(timeout_sec=2.0):
+                req = SetRobotMode.Request()
+                req.robot_mode = 1 # AUTONOMOUS
+                mode_cli.call_async(req)
+            self.gripper = GripperController(node=self, namespace=ROBOT_ID)
+
         import threading
         self.state = "RUNNING"
         threading.Thread(target=self.process_grip, args=(self.items,), daemon=True).start()
