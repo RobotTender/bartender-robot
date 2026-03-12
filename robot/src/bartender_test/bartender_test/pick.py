@@ -96,19 +96,48 @@ class RobotControllerNode(Node):
         self.get_logger().info(f"후속 액션 토픽 발행 준비... {ACTION_TOPIC}")
         self.get_logger().info("화면이 나오지 않으면 Launch 명령어를 확인하세요.")
 
-        self.gripper = None
+        self.get_logger().info("RealSense ROS2 구독자와 로봇 컨트롤러가 초기화되었습니다.")
+
+        # Initialize robot mode and gripper in a background thread to avoid deadlock during spin
+        import threading
+        threading.Thread(target=self._init_robot, daemon=True).start()
+
+    def _init_robot(self):
+        from dsr_msgs2.srv import SetRobotMode
+        import time
         try:
-            from DSR_ROBOT2 import wait
+            # Wait for services to be ready
+            time.sleep(2.0)
+            
+            self.get_logger().info("Setting robot to AUTONOMOUS mode...")
+            # Use direct service call to avoid deadlock with DSR_ROBOT2's internal spin
+            cli = self.create_client(SetRobotMode, '/dsr01/system/set_robot_mode')
+            while not cli.wait_for_service(timeout_sec=1.0):
+                self.get_logger().info("Waiting for /dsr01/system/set_robot_mode service...")
+            
+            req = SetRobotMode.Request()
+            req.robot_mode = 1 # ROBOT_MODE_AUTONOMOUS
+            future = cli.call_async(req)
+            
+            # Wait for result without spin_until_future_complete
+            while not future.done():
+                time.sleep(0.1)
+            
+            result = future.result()
+            self.get_logger().info(f"Set Robot Mode Result: {result.success if result else 'Failed'}")
+            
+            # Wait longer for robot state transition to settle
+            time.sleep(2.0)
+            
             self.gripper = GripperController(node=self, namespace=ROBOT_ID)
             self.get_logger().info("그리퍼를 활성화합니다...")
+            time.sleep(0.5)
             self.gripper_is_open = True
             self.gripper.move(0)
-            
+            self.get_logger().info("그리퍼 활성화 완료.")
         except Exception as e:
-            self.get_logger().error(f"An error occurred during gripper setup: {e}")
-            # rclpy.shutdown()
-
-        self.get_logger().info("RealSense ROS2 구독자와 로봇 컨트롤러가 초기화되었습니다.")
+            import traceback
+            self.get_logger().error(f"Robot Initialization Error: {e}\n{traceback.format_exc()}")
 
     def order_callback(self, msg: String):
         try:

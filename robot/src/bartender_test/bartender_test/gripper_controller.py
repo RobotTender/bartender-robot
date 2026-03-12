@@ -49,6 +49,7 @@ while True:
     if flag is True:
         break
     flange_serial_close()
+    wait(0.1)
 """
 
 class GripperController:
@@ -56,8 +57,16 @@ class GripperController:
         self.node = node
         self.robot_system = robot_system
         self.cli = self.node.create_client(DrlStart, f"/{namespace}/drl/drl_start")
-        while not self.cli.wait_for_service(timeout_sec=2.0):
+        
+        # Safe service wait loop
+        import time
+        start = time.time()
+        while not self.cli.service_is_ready():
+            if time.time() - start > 10.0:
+                self.node.get_logger().error("Gripper service not available after 10s!")
+                break
             self.node.get_logger().info("Waiting for DRL service...")
+            time.sleep(1.0)
 
     def move(self, stroke: int, force: int = 400) -> bool:
         """Sends a single stroke command to the gripper."""
