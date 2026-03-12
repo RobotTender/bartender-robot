@@ -1,6 +1,6 @@
 import rclpy
 from rclpy.node import Node
-from dsr_msgs2.srv import DrlStart, GetDrlState
+from dsr_msgs2.srv import DrlStart, GetDrlState, DrlStop
 import time
 
 # Helper functions for Modbus communication
@@ -64,9 +64,12 @@ wait(0.5)
 success = False
 for i in range(0, 10):
     # Re-open port in each attempt if failed
-    flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
+    res = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
+    if res != 0:
+        wait(0.5)
+        continue
+
     modbus_set_slaveid(1)
-    
     flange_serial_write(modbus_fc06(256, 1))
     wait(0.2)
     flag, val = recv_check()
@@ -83,18 +86,20 @@ for i in range(0, 10):
     flange_serial_close()
     wait(0.5)
 
-if success is False:
+if success is True:
+    flange_serial_close()
+else:
     tp_log("Gripper Activation Failed after 10 retries")
-flange_serial_close()
 """
 
 # Simple movement code
 DRL_MOVE_CODE = """
 wait(0.1)
-flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
-modbus_set_slaveid(1)
-gripper_move({stroke})
-flange_serial_close()
+res = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
+if res == 0:
+    modbus_set_slaveid(1)
+    gripper_move({stroke})
+    flange_serial_close()
 """
 
 class GripperController:
@@ -104,6 +109,7 @@ class GripperController:
         self.robot_system = robot_system
         self.cli = self.node.create_client(DrlStart, f"/{namespace}/drl/drl_start")
         self.state_cli = self.node.create_client(GetDrlState, f"/{namespace}/drl/get_drl_state")
+        self.stop_cli = self.node.create_client(DrlStop, f"/{namespace}/drl/drl_stop")
         
         # Safe service wait loop
         start = time.time()
@@ -127,7 +133,7 @@ class GripperController:
             rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout)
             return future.result() if future.done() else None
 
-    def wait_drl_ready(self, timeout=5.0):
+    def wait_drl_ready(self, timeout=8.0):
         """Waits until DRL interpreter is STOPPED (ready for next task)."""
         start = time.time()
         while time.time() - start < timeout:
@@ -140,12 +146,21 @@ class GripperController:
             if res and res.success:
                 if res.drl_state == 1: # DRL_PROGRAM_STATE_STOP
                     return True
-            time.sleep(0.3)
+                else:
+                    # If busy for too long, attempt force stop
+                    if time.time() - start > 3.0:
+                        self.node.get_logger().warn("DRL busy, forcing DrlStop...")
+                        stop_req = DrlStop.Request()
+                        stop_req.stop_mode = 1 # QUICK
+                        stop_future = self.stop_cli.call_async(stop_req)
+                        self._wait_for_future(stop_future, timeout=2.0)
+                        time.sleep(1.0)
+            time.sleep(0.5)
         return False
 
-    def _execute_drl(self, code, timeout=20.0):
+    def _execute_drl(self, code, timeout=25.0):
         if not self.wait_drl_ready():
-            self.node.get_logger().warn("DRL Manager not ready, but proceeding anyway...")
+            self.node.get_logger().warn("DRL Manager busy after retry, attempting to proceed...")
         
         req = DrlStart.Request()
         req.robot_system = self.robot_system
@@ -158,7 +173,7 @@ class GripperController:
     def activate(self, force: int = 400) -> bool:
         """Initializes the gripper once."""
         self.node.get_logger().info(f"Activating Gripper with force={force}...")
-        return self._execute_drl(DRL_INIT_CODE.format(current=force), timeout=25.0)
+        return self._execute_drl(DRL_INIT_CODE.format(current=force), timeout=35.0)
 
     def move(self, stroke: int) -> bool:
         """Sends a simple movement command."""
@@ -167,11 +182,11 @@ class GripperController:
 
     def move_sequence(self, sequence, force: int = 400) -> bool:
         """Sends a sequence of strokes."""
-        task_code = "wait(0.1)\nflange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)\nmodbus_set_slaveid(1)\n"
+        task_code = "wait(0.1)\nres = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)\nif res == 0:\n  modbus_set_slaveid(1)\n"
         for s in sequence:
-            task_code += f"gripper_move({s})\n"
-        task_code += "flange_serial_close()"
-        return self._execute_drl(task_code, timeout=30.0)
+            task_code += f"  gripper_move({s})\n"
+        task_code += "  flange_serial_close()"
+        return self._execute_drl(task_code, timeout=40.0)
 
     def terminate(self) -> bool:
         req = DrlStart.Request()
