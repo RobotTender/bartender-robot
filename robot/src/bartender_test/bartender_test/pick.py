@@ -494,7 +494,10 @@ class RobotControllerNode(Node):
             self.get_logger().info(f"목표 지점으로 이동합니다: {target_pos_list_2}")
             self._movel(target_pos_list_2, vel=[40.0, 40.0], acc=[ACC, ACC])
 
-            # gripper 주류 잡기
+            # Wait for motion to settle and controller to be ready for DRL
+            time.sleep(0.5)
+
+            # # gripper 주류 잡기
             self.gripper.move(550)
             time.sleep(1)
 
