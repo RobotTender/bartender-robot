@@ -64,10 +64,10 @@ wait(0.5)
 success = False
 for i in range(0, 5):
     res = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
-    # Hardware Handshake Delay
-    wait(1.0)
-    
     if res == 0:
+        # We still need a small wait for the physical chip/buffers to settle 
+        # but we can make it shorter if we are sure res == 0
+        wait(0.2)
         modbus_set_slaveid(1)
         flange_serial_write(modbus_fc06(256, 1))
         wait(0.5)
@@ -80,6 +80,8 @@ for i in range(0, 5):
                 tp_log("Gripper Activation Success")
                 success = True
                 break
+    else:
+        tp_log("flange_serial_open failed with code: " + str(res))
     
     tp_log("Gripper Activation Retry...")
     flange_serial_close()
@@ -95,11 +97,13 @@ else:
 DRL_MOVE_CODE = """
 wait(0.1)
 res = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
-wait(1.0)
 if res == 0:
+    wait(0.2)
     modbus_set_slaveid(1)
     gripper_move({stroke})
     flange_serial_close()
+else:
+    tp_log("flange_serial_open failed with code: " + str(res))
 """
 
 class GripperController:
@@ -147,8 +151,7 @@ class GripperController:
                 else:
                     self.node.get_logger().warn(f"DRL Manager is BUSY (state={res.drl_state}). Attempting DrlStop...")
                     stop_req = DrlStop.Request()
-                    # Try different stop modes for better chance of clearing
-                    stop_req.stop_mode = 0 if (int(time.time()) % 2 == 0) else 1 
+                    stop_req.stop_mode = 1 # QUICK
                     stop_future = self.stop_cli.call_async(stop_req)
                     self._wait_for_future(stop_future, timeout=2.0)
                     time.sleep(2.0)
@@ -157,7 +160,7 @@ class GripperController:
 
     def _execute_drl(self, code, timeout=30.0):
         if not self.wait_drl_ready():
-            self.node.get_logger().error("CRITICAL: DRL Manager still busy! Attempting DrlStart anyway (Risk of Alarm 2007).")
+            self.node.get_logger().error("CRITICAL: DRL Manager still busy! Attempting DrlStart anyway.")
         
         req = DrlStart.Request()
         req.robot_system = self.robot_system
@@ -179,10 +182,10 @@ class GripperController:
 
     def move_sequence(self, sequence, force: int = 400) -> bool:
         """Sends a sequence of strokes."""
-        task_code = "wait(0.1)\nres = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)\nwait(1.0)\nif res == 0:\n  modbus_set_slaveid(1)\n"
+        task_code = "wait(0.1)\nres = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)\nif res == 0:\n  wait(0.2)\n  modbus_set_slaveid(1)\n"
         for s in sequence:
             task_code += f"  gripper_move({s})\n"
-        task_code += "  flange_serial_close()"
+        task_code += "  flange_serial_close()\nelse:\n  tp_log('open failed')"
         return self._execute_drl(task_code, timeout=60.0)
 
     def terminate(self) -> bool:
