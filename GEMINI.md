@@ -9,3 +9,4 @@
 - **Gripper Control**: Use `GripperController` class for all gripper operations.
 - **Task Manager Stability**: Always use `wait_drl_ready()` or a 1.0s delay when switching between DRL tasks to avoid Alarm 2007.
 - **Modbus Polling**: Always poll Register 284 (Moving) for physical gripper movement confirmation.
+- **Camera Logs**: Camera logs are intentionally hidden (redirected to DEVNULL) to focus on robot debugging. At the beginning of every new session, you MUST ask the user if they want to re-enable camera logs.
