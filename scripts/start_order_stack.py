@@ -46,6 +46,7 @@ def _build_pick_command() -> str:
     return (
         f"{_build_workspace_source_prefix()} && "
         f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
+        "python3 -m bartender_test.startup && "
         "python3 -m bartender_test.pick"
     )
 
