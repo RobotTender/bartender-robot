@@ -1355,6 +1355,19 @@ class VoiceOrderWebHandler(BaseHTTPRequestHandler):
             self._write_json(self._state_payload())
             return
 
+        if path == "/api/control/order_start_enabled":
+            enabled = bool(_is_true_text(payload.get("enabled", None), default=False))
+            with self.server.state_lock:
+                self.server.order_start_enabled = bool(enabled)
+                self.server.updated_at = _now_text()
+            _append_progress(
+                self.server,
+                "system",
+                f"주문 시작 잠금 {'해제' if enabled else '설정'}",
+            )
+            self._write_json(self._state_payload())
+            return
+
         if path == "/api/control/start":
             if not can_start_order:
                 self._write_json(
@@ -1450,7 +1463,7 @@ def parse_args(argv=None):
         default=str(
             os.environ.get(
                 "USER_FRONTEND_ORDER_START_ENABLED",
-                os.environ.get("VOICE_ORDER_WEBUI_ORDER_START_ENABLED", "0"),
+                os.environ.get("VOICE_ORDER_WEBUI_ORDER_START_ENABLED", "1"),
             )
         ),
     )
@@ -1466,7 +1479,7 @@ def main(argv=None):
     host = str(args.host or "0.0.0.0")
     port = max(1, int(args.port))
     enabled = bool(_is_true_text(args.enabled, default=False))
-    order_start_enabled = bool(_is_true_text(args.order_start_enabled, default=False))
+    order_start_enabled = bool(_is_true_text(args.order_start_enabled, default=True))
     server = ThreadingHTTPServer((host, port), VoiceOrderWebHandler)
     server.webui_enabled = enabled
     server.order_start_enabled = order_start_enabled

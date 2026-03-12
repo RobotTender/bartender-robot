@@ -347,14 +347,18 @@ class BartenderSequenceManager:
         backend = self._backend
         try:
             voice_only = bool(request.get("voice_only", False))
+            robot_action_only = bool(request.get("robot_action_only", False))
             self._set_active_step("boot")
             if not self._guard_or_stop(run_id, mode):
                 return
             self._set_step_done_if_pending("boot")
 
             self._set_active_step("mode")
-            if voice_only:
-                self._append_log("mode", "voice_only 실행: 로봇모드 전환 생략")
+            if voice_only or robot_action_only:
+                if voice_only:
+                    self._append_log("mode", "voice_only 실행: 로봇모드 전환 생략")
+                else:
+                    self._append_log("mode", "robot_action_only 실행: 로봇모드 전환 생략")
             else:
                 # 전체 시퀀스 동작은 오토모드 기준으로 동일 루트를 유지한다.
                 try:
@@ -367,6 +371,46 @@ class BartenderSequenceManager:
                 self._append_log("mode", f"오토모드 전환: {msg_mode}")
             self._set_step_done_if_pending("mode")
             if not self._guard_or_stop(run_id, mode):
+                return
+
+            if robot_action_only:
+                manual_mode = (_normalize_mode(mode) == "manual")
+                if not manual_mode:
+                    self._fail(run_id, "로봇동작 단독 테스트는 메뉴얼모드에서만 실행할 수 있습니다.")
+                    return
+                order_result = request.get("order_result", {})
+                if not isinstance(order_result, dict):
+                    order_result = {}
+                order_result = dict(order_result)
+                if str(order_result.get("status", "") or "").strip().lower() != "success":
+                    self._fail(run_id, "로봇동작 단독 테스트에 사용할 주문 결과가 없습니다.")
+                    return
+                if not self._guard_or_stop(run_id, mode, require_vision=True):
+                    return
+
+                self._set_step_done_if_pending("voice_request")
+                self._set_step_done_if_pending("stt")
+                self._set_step_done_if_pending("llm")
+                self._set_step_done_if_pending("recipe")
+
+                self._set_active_step("robot_action")
+                menu_offsets = request.get("menu_offsets")
+                motion_speed_percent = request.get("motion_speed_percent")
+                ok_action, action_msg = backend.run_bartender_first_ingredient_action(
+                    order_result,
+                    menu_offsets=menu_offsets,
+                    motion_speed_percent=motion_speed_percent,
+                )
+                if not ok_action:
+                    self._fail(run_id, f"로봇동작 실패: {action_msg}")
+                    return
+                self._append_log("robot_action", str(action_msg or "로봇동작 완료"))
+                self._set_step_done_if_pending("robot_action")
+
+                self._set_active_step("vision_check")
+                self._set_step_done_if_pending("vision_check")
+                self._set_active_step("done")
+                self._succeed(run_id, "로봇동작 단독 테스트 완료")
                 return
 
             self._set_active_step("voice_request")

@@ -12,6 +12,8 @@ import traceback
 import warnings
 import io
 import wave
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 from datetime import datetime
 
 from PyQt5.QtCore import QTimer, QObject, pyqtSignal, pyqtSlot, Qt, QThread, QEvent, QUrl
@@ -565,6 +567,7 @@ class App(QMainWindow, form):
         self._voice_order_mic_state_text = "대기"
         self._voice_order_webui_button = None
         self._voice_order_html_badge = None
+        self._webui_order_start_enabled_cached = None
         self._voice_order_cycle_ms = None
         self._voice_prev_update_at = None
         self._voice_backend_last_seen_at = None
@@ -600,6 +603,7 @@ class App(QMainWindow, form):
         self._bartender_speed_slider = None
         self._bartender_speed_value_label = None
         self._bartender_start_button = None
+        self._bartender_robot_action_test_button = None
         self._bartender_mode_hint_label = None
         self._bartender_status_label = None
         self._bartender_sequence_area = None
@@ -1222,6 +1226,15 @@ class App(QMainWindow, form):
         start_btn.clicked.connect(self._run_bartender_manual_sequence)
         self._bartender_start_button = start_btn
 
+        robot_action_test_btn = QPushButton("7. 로봇 동작만 테스트", panel)
+        robot_action_test_btn.setStyleSheet(
+            "QPushButton { background: #0f766e; color: #ffffff; border: 1px solid #0f766e; border-radius: 4px; font-size: 8.8pt; font-weight: 800; }"
+            "QPushButton:hover { background: #115e59; }"
+            "QPushButton:disabled { background: #94a3b8; border-color: #94a3b8; color: #f8fafc; }"
+        )
+        robot_action_test_btn.clicked.connect(self._run_bartender_robot_action_only_sequence)
+        self._bartender_robot_action_test_button = robot_action_test_btn
+
         status_label = QLabel("상태: 대기", panel)
         status_label.setStyleSheet("font-size: 10pt; font-weight: 800; color: #1f2937;")
         status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -1317,9 +1330,18 @@ class App(QMainWindow, form):
 
     def _update_bartender_mode_ui(self):
         self._bartender_auto_ready = self._is_bartender_auto_ready()
+        # 오토모드가 실제 활성 조건(모드=auto + 준비완료)일 때만 WEB UI 주문 시작 잠금을 해제한다.
+        # 그 외(메뉴얼/오토 비활성/실행중)에는 잠금 상태를 유지한다.
+        auto_unlock = bool(
+            (str(self._bartender_mode or "").strip().lower() == "auto")
+            and bool(self._bartender_auto_ready)
+            and (not bool(getattr(self, "_bartender_sequence_running", False)))
+        )
+        self._set_webui_order_start_enabled(auto_unlock)
         status_label = getattr(self, "_bartender_status_label", None)
         hint_label = getattr(self, "_bartender_mode_hint_label", None)
         start_btn = getattr(self, "_bartender_start_button", None)
+        robot_action_test_btn = getattr(self, "_bartender_robot_action_test_button", None)
         lock_status = bool(getattr(self, "_bartender_status_lock", False))
         mode_text = "오토모드" if self._bartender_mode == "auto" else "메뉴얼모드"
         if bool(self._bartender_sequence_running):
@@ -1327,6 +1349,8 @@ class App(QMainWindow, form):
             if start_btn is not None:
                 start_btn.setEnabled(True)
                 start_btn.setText("시퀀스 중지")
+            if robot_action_test_btn is not None:
+                robot_action_test_btn.setEnabled(False)
             # 실행 중 상세 문구/단계 표시는 시퀀스 스냅샷 처리(_apply_bartender_sequence_snapshot)에서 단일 소스로 갱신한다.
             # 여기서 다시 덮어쓰면 문구가 번갈아 깜박이는 현상이 발생한다.
             return
@@ -1334,6 +1358,8 @@ class App(QMainWindow, form):
             if start_btn is not None:
                 start_btn.setEnabled(True)
                 start_btn.setText("메뉴얼 시퀀스 시작")
+            if robot_action_test_btn is not None:
+                robot_action_test_btn.setEnabled(True)
             if hint_label is not None and (not lock_status):
                 hint_label.setText("메뉴얼모드: 주변장치 상태 확인 없이 개발자 UI에서 동일 시퀀스를 테스트합니다.")
             if status_label is not None and (not self._bartender_sequence_running) and (not lock_status):
@@ -1344,6 +1370,8 @@ class App(QMainWindow, form):
         if start_btn is not None:
             start_btn.setEnabled(False)
             start_btn.setText("오토모드: WEB UI 실행")
+        if robot_action_test_btn is not None:
+            robot_action_test_btn.setEnabled(False)
         if self._bartender_auto_ready:
             if hint_label is not None and (not lock_status):
                 hint_label.setText("오토모드: 모든 장치 정상. WEB UI 시작 플래그를 기다리는 모니터링 상태입니다.")
@@ -1608,7 +1636,11 @@ class App(QMainWindow, form):
         last_error_step_label = str(snapshot.get("last_error_step_label", "") or "").strip()
         last_error_stage = str(snapshot.get("last_error_stage", "") or "").strip()
         last_error_message = str(snapshot.get("last_error_message", "") or "").strip()
-        if (not is_voice_only) and mode in ("manual", "auto"):
+        # 백엔드 idle 스냅샷(mode=manual 기본값)이 사용자 선택 모드를 덮어쓰지 않도록
+        # 실행/종료 상태의 실제 시퀀스 스냅샷에서만 모드를 동기화한다.
+        if (not is_voice_only) and mode in ("manual", "auto") and (
+            bool(running) or status in ("success", "error", "stopped", "stopping")
+        ):
             self._bartender_mode = mode
 
         prev_active_step = str(getattr(self, "_bartender_active_step", "") or "").strip()
@@ -2003,6 +2035,56 @@ class App(QMainWindow, form):
         self._apply_bartender_sequence_snapshot(dict(snap or {}))
         self._update_bartender_mode_ui()
 
+    def _run_bartender_robot_action_only_sequence(self):
+        backend = getattr(self, "backend", None)
+        if backend is None:
+            self._append_voice_order_log("백엔드가 준비되지 않아 로봇동작 테스트를 실행할 수 없습니다.", level="warning")
+            return
+        if not hasattr(backend, "start_bartender_sequence") or not hasattr(backend, "stop_bartender_sequence"):
+            self._append_voice_order_log("백엔드 시퀀스 API를 찾지 못했습니다.", level="error")
+            return
+        if bool(self._bartender_sequence_running):
+            self._append_voice_order_log("시퀀스 실행 중에는 로봇동작 단독 테스트를 시작할 수 없습니다.", level="warning")
+            return
+        if str(self._bartender_mode or "").strip().lower() != "manual":
+            self._append_voice_order_log("로봇동작 단독 테스트는 메뉴얼모드에서만 실행할 수 있습니다.", level="warning")
+            return
+
+        result = {
+            "status": "success",
+            "selected_menu": "beer",
+            "selected_menu_label": "맥주",
+            "recipe": {"beer": 200},
+        }
+        menu_name = "맥주(고정 레시피)"
+        reply = QMessageBox.question(
+            self,
+            "로봇동작 단독 테스트",
+            f"메뉴얼모드에서 7번 로봇 동작만 실행합니다.\n선택 메뉴: {menu_name}\n실행하시겠습니까?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        request_payload = {
+            "robot_action_only": True,
+            "order_result": result,
+            "request_stt": False,
+            "allow_llm": False,
+            "motion_speed_percent": float(self._motion_speed_for_command()),
+            "menu_offsets": self._load_menu_xyz_offsets(),
+        }
+        self._bartender_status_lock = False
+        self._reset_bartender_sequence(log=False)
+        ok_start, msg_start, snap = backend.start_bartender_sequence(mode="manual", request=request_payload)
+        if not ok_start:
+            self._append_voice_order_log(f"로봇동작 단독 테스트 시작 실패: {msg_start}", level="error")
+            return
+        self._append_voice_order_log(f"로봇동작 단독 테스트 시작: {msg_start}")
+        self._apply_bartender_sequence_snapshot(dict(snap or {}))
+        self._update_bartender_mode_ui()
+
     def _advance_bartender_manual_sequence(self):
         if not self._bartender_sequence_running:
             return
@@ -2104,7 +2186,9 @@ class App(QMainWindow, form):
         seq_area = getattr(self, "_bartender_sequence_area", None)
         if seq_area is None:
             return
-        seq_h = max(120, h - y0 - margin)
+        action_btn_h = 30
+        action_btn_gap = 6
+        seq_h = max(120, h - y0 - margin - action_btn_gap - action_btn_h)
         seq_area.setGeometry(margin, y0, max(120, w - (margin * 2)), seq_h)
 
         inner_margin = 8
@@ -2122,6 +2206,12 @@ class App(QMainWindow, form):
                 continue
             lbl.setGeometry(inner_margin, py, max(80, seq_area.width() - (inner_margin * 2)), step_h)
             py += step_h + step_gap
+
+        if self._bartender_robot_action_test_button is not None:
+            btn_y = seq_area.y() + seq_h + action_btn_gap
+            self._bartender_robot_action_test_button.setGeometry(
+                margin, btn_y, max(120, w - (margin * 2)), action_btn_h
+            )
 
     def _refresh_bartender_sequence_styles(self):
         if not self._bartender_sequence_widgets:
@@ -2855,6 +2945,30 @@ class App(QMainWindow, form):
             host = "127.0.0.1"
         port = str(VOICE_ORDER_WEBUI_PORT or "").strip() or "8000"
         return f"http://{host}:{port}"
+
+    def _set_webui_order_start_enabled(self, enabled: bool, force: bool = False):
+        target = bool(enabled)
+        cached = getattr(self, "_webui_order_start_enabled_cached", None)
+        if (not force) and (cached is not None) and (bool(cached) == target):
+            return
+        url = f"{self._voice_order_webui_url()}/api/control/order_start_enabled"
+        payload = json.dumps({"enabled": target}, ensure_ascii=False).encode("utf-8")
+        req = urllib_request.Request(
+            url=url,
+            data=payload,
+            method="POST",
+            headers={"Content-Type": "application/json; charset=utf-8"},
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=0.8) as resp:
+                if int(getattr(resp, "status", 200)) >= 400:
+                    raise RuntimeError(f"http_{getattr(resp, 'status', '-')}")
+            self._webui_order_start_enabled_cached = target
+        except urllib_error.URLError:
+            # Web UI 미실행 상태에서는 로그 스팸을 피하기 위해 무시.
+            return
+        except Exception as exc:
+            self._append_voice_order_log(f"WEB UI 주문시작 잠금 동기화 실패: {exc}", level="warning")
 
     def _refresh_voice_order_webui_badge(self):
         label = getattr(self, "_voice_order_html_badge", None)
