@@ -104,7 +104,7 @@ class RobotControllerNode(Node):
         threading.Thread(target=self._init_robot, daemon=True).start()
 
     def _init_robot(self):
-        from dsr_msgs2.srv import SetRobotMode, MoveJoint, DrlStop
+        from dsr_msgs2.srv import SetRobotMode, MoveJoint, DrlStop, GetRobotState
         from .defines import CHEERS_POSE
         import time
         try:
@@ -112,19 +112,27 @@ class RobotControllerNode(Node):
             self.get_logger().info("Waiting 5s for controller_manager to stabilize...")
             time.sleep(5.0)
 
+            # Helper to wait for Standby state
+            def wait_for_standby():
+                state_cli = self.create_client(GetRobotState, '/dsr01/system/get_robot_state')
+                for _ in range(10):
+                    if state_cli.wait_for_service(timeout_sec=1.0):
+                        future = state_cli.call_async(GetRobotState.Request())
+                        while not future.done(): time.sleep(0.1)
+                        if future.result() and future.result().robot_state == 1: # STATE_STANDBY
+                            return True
+                    time.sleep(1.0)
+                return False
+
             self.get_logger().info("Setting robot to AUTONOMOUS mode...")
             cli_mode = self.create_client(SetRobotMode, '/dsr01/system/set_robot_mode')
-            while not cli_mode.wait_for_service(timeout_sec=1.0):
-                self.get_logger().info("Waiting for /dsr01/system/set_robot_mode...")
-
-            req_mode = SetRobotMode.Request()
-            req_mode.robot_mode = 1 # AUTONOMOUS
-            future_mode = cli_mode.call_async(req_mode)
-            while not future_mode.done():
-                time.sleep(0.1)
-            self.get_logger().info(f"Mode set result: {future_mode.result().success if future_mode.result() else 'False'}")
+            if cli_mode.wait_for_service(timeout_sec=2.0):
+                req_mode = SetRobotMode.Request()
+                req_mode.robot_mode = 1 # AUTONOMOUS
+                cli_mode.call_async(req_mode)
 
             time.sleep(2.0)
+            wait_for_standby()
 
             # Prime with CHEERS_POSE
             cli_move = self.create_client(MoveJoint, '/dsr01/motion/move_joint')
@@ -135,36 +143,45 @@ class RobotControllerNode(Node):
                 req_move.vel = float(VELOCITY)
                 req_move.acc = float(ACC)
                 req_move.mode = 0 # ABS
-                req_move.sync_type = 0 # SYNC
                 future_move = cli_move.call_async(req_move)
-                while not future_move.done():
-                    time.sleep(0.1)
+                while not future_move.done(): time.sleep(0.1)
                 self.get_logger().info("Prime move finished.")
 
             time.sleep(2.0)
+            wait_for_standby()
 
             # Stop any hanging DRL tasks
             cli_stop = self.create_client(DrlStop, '/dsr01/drl/drl_stop')
             if cli_stop.wait_for_service(timeout_sec=2.0):
                 self.get_logger().info("Stopping existing DRL tasks...")
                 future_stop = cli_stop.call_async(DrlStop.Request())
-                while not future_stop.done():
-                    time.sleep(0.1)
+                while not future_stop.done(): time.sleep(0.1)
 
-            # Final settle wait
-            self.get_logger().info("Robot ready for gripper initialization.")
             time.sleep(2.0)
+            wait_for_standby()
 
+            # Initialize Gripper
             self.gripper = GripperController(node=self, namespace=ROBOT_ID)
-            self.get_logger().info("그리퍼를 활성화합니다...")
-            self.gripper.activate(400)
-            
-            # CRITICAL: Wait long enough for the activation retry loop to finish
-            self.get_logger().info("Waiting for gripper initialization to finalize...")
-            time.sleep(5.0)
-            
+            self.get_logger().info("그리퍼를 활성화 및 초기 위치로 이동합니다...")
+
+            # Consolidated DRL: Init + Move(0) in one go to avoid 2007 transition
+            init_and_move_code = """
+wait(0.5)
+flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
+modbus_set_slaveid(1)
+for i in range(0, 5):
+    flange_serial_write(modbus_fc06(256, 1))
+    wait(0.2)
+    flag, val = recv_check()
+    if flag is True:
+        flange_serial_write(modbus_fc06(275, 400))
+        wait(0.2)
+        break
+gripper_move(0)
+flange_serial_close()
+"""
+            self.gripper._execute_drl(init_and_move_code, timeout=15.0)
             self.gripper_is_open = True
-            self.gripper.move(0)
             self.get_logger().info("그리퍼 활성화 완료.")
         except Exception as e:
             import traceback
