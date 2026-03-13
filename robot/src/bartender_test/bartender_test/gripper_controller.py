@@ -5,17 +5,40 @@ import time
 
 # Robust, Single-Task DRL for Gripper Control (Python 3 Compatible)
 DRL_HELPER_FUNCTIONS = """
+g_slaveid = 1
+def modbus_set_slaveid(slaveid):
+    global g_slaveid
+    g_slaveid = slaveid
+
+def modbus_fc06(address, value):
+    global g_slaveid
+    data = (g_slaveid).to_bytes(1, byteorder='big')
+    data += (6).to_bytes(1, byteorder='big')
+    data += (address).to_bytes(2, byteorder='big')
+    data += (value).to_bytes(2, byteorder='big')
+    return modbus_send_make(data)
+
+def modbus_fc16(startaddress, cnt, valuelist):
+    global g_slaveid
+    data = (g_slaveid).to_bytes(1, byteorder='big')
+    data += (16).to_bytes(1, byteorder='big')
+    data += (startaddress).to_bytes(2, byteorder='big')
+    data += (cnt).to_bytes(2, byteorder='big')
+    data += (2 * cnt).to_bytes(1, byteorder='big')
+    for i in range(0, cnt):
+        data += (valuelist[i]).to_bytes(2, byteorder='big')
+    return modbus_send_make(data)
+
 def gripper_init(force):
     res = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
     wait(0.5)
     if res == 0:
-        # Torque enable (ID=1, FC=6, Addr=256, Val=1)
-        flange_serial_write(bytes(modbus_send_make([1, 6, 1, 0, 0, 1])))
+        modbus_set_slaveid(1)
+        # Torque enable (Address 256, Value 1)
+        flange_serial_write(modbus_fc06(256, 1))
         wait(0.5)
-        # Set Force (ID=1, FC=6, Addr=275, Val=force)
-        f_hi = (force >> 8) & 0xFF
-        f_lo = force & 0xFF
-        flange_serial_write(bytes(modbus_send_make([1, 6, 1, 19, f_hi, f_lo])))
+        # Set Current/Force (Address 275, Value force)
+        flange_serial_write(modbus_fc06(275, force))
         wait(0.5)
         flange_serial_close()
         return True
@@ -25,15 +48,15 @@ def gripper_move_and_wait(stroke):
     res = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
     wait(0.2)
     if res == 0:
-        # Send Position command (ID=1, FC=16, Addr=282, Cnt=2, Len=4, Pos_Hi, Pos_Lo, 0, 0)
-        s_hi = (stroke >> 8) & 0xFF
-        s_lo = stroke & 0xFF
-        flange_serial_write(bytes(modbus_send_make([1, 16, 1, 26, 0, 2, 4, s_hi, s_lo, 0, 0])))
+        modbus_set_slaveid(1)
+        # Send Position command (Address 282, Count 2, [stroke, 0])
+        flange_serial_write(modbus_fc16(282, 2, [stroke, 0]))
         wait(0.5)
         
         # Internal Polling for "Moving" (Reg 284)
         for i in range(0, 50):
-            flange_serial_write(bytes(modbus_send_make([1, 3, 1, 28, 0, 1])))
+            # FC03 Read (ID=1, FC=3, Addr=284, Cnt=1)
+            flange_serial_write(modbus_send_make(bytes([1, 3, 1, 28, 0, 1])))
             size, val = flange_serial_read(0.1)
             if size >= 5:
                 # val is bytes in Python 3, indexable as ints
@@ -46,6 +69,7 @@ def gripper_move_and_wait(stroke):
         return True
     return False
 """
+
 
 class GripperController:
     def __init__(self, node: Node, namespace: str = "dsr01", robot_system: int = 0):
