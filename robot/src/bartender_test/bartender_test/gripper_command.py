@@ -56,10 +56,14 @@ def main(args=None):
     try:
         gripper = GripperController(node=node, namespace=ROBOT_ID, robot_system=0)
         node.get_logger().info(f"Executing: stroke={stroke}, force={force}")
-        if gripper.move(stroke, force=force):
+        
+        # New API requires activating with the desired force first, then moving
+        if not gripper.activate(force=force):
+            node.get_logger().error("Failed to activate gripper.")
+        elif gripper.move(stroke):
             node.get_logger().info("Success.")
         else:
-            node.get_logger().error("Failed.")
+            node.get_logger().error("Failed to move gripper.")
     except Exception as e:
         node.get_logger().error(f"Error: {e}")
     finally:
