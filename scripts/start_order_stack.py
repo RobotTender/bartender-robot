@@ -46,26 +46,26 @@ def _build_startup_command() -> str:
     return (
         f"{_build_workspace_source_prefix()} && "
         f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
-        "python3 -m bartender_test.startup"
+        "exec python3 -m bartender_test.startup"
     )
 
 def _build_pick_command() -> str:
     return (
         f"{_build_workspace_source_prefix()} && "
         f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
-        "python3 -m bartender_test.pick"
+        "exec python3 -m bartender_test.pick"
     )
 
 def _build_action_command() -> str:
     return (
         f"{_build_workspace_source_prefix()} && "
         f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
-        "python3 -m bartender_test.action listen"
+        "exec python3 -m bartender_test.action listen"
     )
 
 def _build_web_command(host: str, port: int) -> str:
     python_bin = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
-    return f"{sh_quote(python_bin)} manage.py runserver {host}:{port}"
+    return f"exec {sh_quote(python_bin)} manage.py runserver {host}:{port}"
 
 def sh_quote(value: str) -> str:
     return shlex.quote(value)
@@ -74,8 +74,13 @@ def start_process(spec: ManagedProcess) -> None:
     stdout = None
     stderr = None
 
+    # Use exec to replace the bash shell with the intended command where possible
+    cmd = spec.cmd
+    if " && " not in cmd and ";" not in cmd and not cmd.strip().startswith("exec "):
+        cmd = f"exec {cmd}"
+
     spec.process = subprocess.Popen(
-        ["bash", "-lc", spec.cmd],
+        ["bash", "-lc", cmd],
         cwd=str(spec.cwd),
         stdout=stdout,
         stderr=stderr,
@@ -83,18 +88,20 @@ def start_process(spec: ManagedProcess) -> None:
         start_new_session=True,
         env=os.environ.copy(),
     )
-    print(f"[start] {spec.name}: {spec.cmd}")
+    print(f"[start] {spec.name}: {cmd}")
 
-def stop_process(spec: ManagedProcess) -> None:
+def stop_process(spec: ManagedProcess, sig: signal.Signals = signal.SIGINT) -> None:
     if spec.process is None or spec.process.poll() is not None:
         return
 
     try:
-        os.killpg(os.getpgid(spec.process.pid), signal.SIGINT)
-    except ProcessLookupError:
+        pgid = os.getpgid(spec.process.pid)
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
         return
 
 def main() -> int:
+    # ... (args parsing unchanged)
     parser = argparse.ArgumentParser(description="Start bartender web + pick stack together.")
     parser.add_argument("--with-bringup", action="store_true", help="Also run robot bringup command.")
     parser.add_argument(
@@ -158,6 +165,9 @@ def main() -> int:
                 env=os.environ.copy()
             )
             if startup_proc.returncode != 0:
+                # If interrupted by Ctrl+C, it might return non-zero
+                if startup_proc.returncode < 0: # Killed by signal
+                     raise KeyboardInterrupt
                 raise RuntimeError(f"startup exited with code {startup_proc.returncode}")
             print("[ok] startup completed successfully.")
 
@@ -195,18 +205,25 @@ def main() -> int:
     else:
         return_code = 0
     finally:
+        # Graceful shutdown
         for spec in reversed(started_processes):
-            stop_process(spec)
+            stop_process(spec, signal.SIGINT)
+        
+        # Wait for processes to exit
         for spec in reversed(started_processes):
             if spec.process is not None:
                 try:
-                    spec.process.wait(timeout=5)
+                    spec.process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
+                    print(f"[warn] {spec.name} (pid={spec.process.pid}) did not stop gracefully, sending SIGTERM...")
+                    stop_process(spec, signal.SIGTERM)
                     try:
-                        os.killpg(os.getpgid(spec.process.pid), signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-
+                        spec.process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        print(f"[warn] {spec.name} (pid={spec.process.pid}) still alive, sending SIGKILL...")
+                        stop_process(spec, signal.SIGKILL)
+                        spec.process.wait(timeout=5)
+    
     return return_code
 
 
