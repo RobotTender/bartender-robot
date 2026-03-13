@@ -31,7 +31,7 @@ def euler_from_quaternion(x, y, z, w):
 
 class UnifiedMonitor(Node):
     def __init__(self):
-        super().__init__('unified_monitor', namespace='dsr01')
+        super().__init__('robotender_monitor', namespace='dsr01')
         
         # Real-time Data (10Hz)
         self.joint_pos = [0.0] * 6
@@ -72,7 +72,15 @@ class UnifiedMonitor(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.timer = self.create_timer(0.1, self.loop)
-        self.settings = termios.tcgetattr(sys.stdin)
+        
+        # Terminal handling for interactive input (Optional if no TTY)
+        self.is_tty = sys.stdin.isatty()
+        if self.is_tty:
+            try:
+                self.settings = termios.tcgetattr(sys.stdin)
+            except Exception:
+                self.is_tty = False
+        
         os.system('clear')
 
     def cb_joint_states(self, msg):
@@ -128,6 +136,9 @@ class UnifiedMonitor(Node):
         self.display()
 
     def check_input(self):
+        if not self.is_tty:
+            return
+            
         if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
             key = sys.stdin.read(1)
             if key.lower() == 't':
@@ -139,71 +150,83 @@ class UnifiedMonitor(Node):
                 time.sleep(0.5)
 
     def display(self):
-        print("\033[H\033[J", end="")
+        # We only clear the screen if in TTY
+        if self.is_tty:
+            print("\033[H\033[J", end="")
+        
         latency = (time.time() - self.last_msg_time) if self.last_msg_time > 0 else 999.0
         data_status = f"\033[92mOK ({self.msg_count})\033[0m" if latency < 1.0 else f"\033[91mSTALE ({latency:.1f}s)\033[0m"
         status_box = "\033[92m[STABLE]\033[0m" if self.is_stable else "\033[93m[MOVING]\033[0m"
         
-        print("="*75)
-        print(f" UNIFIED ROBOT MONITOR | Status: {status_box} | Data: {data_status}")
-        print("="*75)
+        # In launch mode, we prefix the output if no TTY to avoid excessive scrolling
+        prefix = ""
+        if not self.is_tty:
+            # Only print periodically in non-TTY mode to reduce log size
+            if self.msg_count % 100 != 0: return 
+            prefix = "[Monitor] "
+
+        print(f"{prefix}" + "="*75)
+        print(f"{prefix} UNIFIED ROBOT MONITOR | Status: {status_box} | Data: {data_status}")
+        print(f"{prefix}" + "="*75)
 
         # 1. Joints
-        print(" [JOINTS] (deg)")
-        print(f" J1:{self.joint_pos[0]:>8.2f} | J2:{self.joint_pos[1]:>8.2f} | J3:{self.joint_pos[2]:>8.2f}")
-        print(f" J4:{self.joint_pos[3]:>8.2f} | J5:{self.joint_pos[4]:>8.2f} | J6:{self.joint_pos[5]:>8.2f}")
-        print("-" * 75)
+        print(f"{prefix} [JOINTS] (deg)")
+        print(f"{prefix} J1:{self.joint_pos[0]:>8.2f} | J2:{self.joint_pos[1]:>8.2f} | J3:{self.joint_pos[2]:>8.2f}")
+        print(f"{prefix} J4:{self.joint_pos[3]:>8.2f} | J5:{self.joint_pos[4]:>8.2f} | J6:{self.joint_pos[5]:>8.2f}")
+        print(f"{prefix}" + "-" * 75)
 
         # 2. Pose
-        print(" [POSE] (mm, deg)")
-        print(f" X :{self.tcp_pose[0]:>8.2f} | Y :{self.tcp_pose[1]:>8.2f} | Z :{self.tcp_pose[2]:>8.2f}")
-        print(f" RX:{self.tcp_pose[3]:>8.2f} | RY:{self.tcp_pose[4]:>8.2f} | RZ:{self.tcp_pose[5]:>8.2f}")
-        print("-" * 75)
+        print(f"{prefix} [POSE] (mm, deg)")
+        print(f"{prefix} X :{self.tcp_pose[0]:>8.2f} | Y :{self.tcp_pose[1]:>8.2f} | Z :{self.tcp_pose[2]:>8.2f}")
+        print(f"{prefix} RX:{self.tcp_pose[3]:>8.2f} | RY:{self.tcp_pose[4]:>8.2f} | RZ:{self.tcp_pose[5]:>8.2f}")
+        print(f"{prefix}" + "-" * 75)
 
         # 3. Feel
-        print(f" [FEEL] {status_box if self.is_stable else '(Holding Last Stable Values)'}")
+        print(f"{prefix} [FEEL] {status_box if self.is_stable else '(Holding Last Stable Values)'}")
         
         # JTS Sub-section
         net_j2 = self.motor_data_stable[1] - self.tare_motor[1]
         net_j3 = self.motor_data_stable[2] - self.tare_motor[2]
-        print(f" JTS (Arm&Shoulder) | J2 Net:{net_j2:>7.3f} | J3 Net:{net_j3:>7.3f} Nm")
+        print(f"{prefix} JTS (Arm&Shoulder) | J2 Net:{net_j2:>7.3f} | J3 Net:{net_j3:>7.3f} Nm")
         
         # TCP Sub-section
         net_fx = self.tcp_force_stable[0] - self.tare_force[0]
         net_fy = self.tcp_force_stable[1] - self.tare_force[1]
         net_fz = self.tcp_force_stable[2] - self.tare_force[2]
         
-        # Check if TCP sensor is active
         tcp_is_dead = all(abs(v) < 0.0001 for v in [net_fx, net_fy, net_fz])
-        
         fx_str = f"{net_fx:>7.3f}" if not tcp_is_dead else "    N/A"
         fy_str = f"{net_fy:>7.3f}" if not tcp_is_dead else "    N/A"
         fz_str = f"{net_fz:>7.3f}" if not tcp_is_dead else "    N/A"
         
-        print(f" TCP (Fingers)      | Fx:{fx_str} | Fy:{fy_str} | Fz:{fz_str} N")
+        print(f"{prefix} TCP (Fingers)      | Fx:{fx_str} | Fy:{fy_str} | Fz:{fz_str} N")
         
-        # Unified Weight Display
-        # Logic: If TCP is active, it's usually more precise at the hand. 
-        # Otherwise, use JTS which is always active (estimated from motor torque).
         unified_weight = self.weight_tcp_stable if not tcp_is_dead else self.weight_jts_stable
         source_tag = "(TCP Sensor)" if not tcp_is_dead else "(JTS Estimate)"
         
-        print(f" UNIFIED WEIGHT     | \033[92m{unified_weight:>7.1f} g\033[0m {source_tag}")
-        print("-" * 75)
+        print(f"{prefix} UNIFIED WEIGHT     | \033[92m{unified_weight:>7.1f} g\033[0m {source_tag}")
+        print(f"{prefix}" + "-" * 75)
 
-        print(" Press 'T' to Tare | Ctrl+C to stop")
-        print("="*75)
+        if self.is_tty:
+            print(" Press 'T' to Tare | Ctrl+C to stop")
+        print(f"{prefix}" + "="*75)
 
 def main():
     rclpy.init()
     node = UnifiedMonitor()
-    tty.setcbreak(sys.stdin.fileno())
+    
+    # Conditional terminal setup
+    fd = sys.stdin.fileno()
+    if node.is_tty:
+        tty.setcbreak(fd)
+        
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, node.settings)
+        if node.is_tty:
+            termios.tcsetattr(fd, termios.TCSADRAIN, node.settings)
         node.destroy_node()
         rclpy.shutdown()
 

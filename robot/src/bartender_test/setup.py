@@ -1,3 +1,5 @@
+import os
+from glob import glob
 from setuptools import find_packages, setup
 
 package_name = 'bartender_test'
@@ -10,6 +12,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -20,10 +23,10 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'gripper = bartender_test.gripper_command:main',
+            'gripper = bartender_test.gripper:main',
+            'action = bartender_test.action_node:main',
             'pose = bartender_test.pose:main',
             'movej = bartender_test.movej:main',
-            'action = bartender_test.action:main',
             'check_tcp = bartender_test.check_tcp:main',
             'monitor = bartender_test.monitor:main',
             'trigger = bartender_test.trigger:main',
