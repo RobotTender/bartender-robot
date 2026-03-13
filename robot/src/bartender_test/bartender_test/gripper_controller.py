@@ -12,21 +12,17 @@ def modbus_set_slaveid(slaveid):
 
 def modbus_fc06(address, value):
     global g_slaveid
-    data = (g_slaveid).to_bytes(1, byteorder='big')
-    data += (6).to_bytes(1, byteorder='big')
-    data += (address).to_bytes(2, byteorder='big')
-    data += (value).to_bytes(2, byteorder='big')
+    # Use bytearray so it's mutable for modbus_send_make
+    data = bytearray([g_slaveid, 6, (address >> 8) & 0xFF, address & 0xFF, (value >> 8) & 0xFF, value & 0xFF])
     return modbus_send_make(data)
 
 def modbus_fc16(startaddress, cnt, valuelist):
     global g_slaveid
-    data = (g_slaveid).to_bytes(1, byteorder='big')
-    data += (16).to_bytes(1, byteorder='big')
-    data += (startaddress).to_bytes(2, byteorder='big')
-    data += (cnt).to_bytes(2, byteorder='big')
-    data += (2 * cnt).to_bytes(1, byteorder='big')
-    for i in range(0, cnt):
-        data += (valuelist[i]).to_bytes(2, byteorder='big')
+    # Use bytearray so it's mutable for modbus_send_make
+    data = bytearray([g_slaveid, 16, (startaddress >> 8) & 0xFF, startaddress & 0xFF, (cnt >> 8) & 0xFF, cnt & 0xFF, 2 * cnt])
+    for val in valuelist:
+        data.append((val >> 8) & 0xFF)
+        data.append(val & 0xFF)
     return modbus_send_make(data)
 
 def gripper_init(force):
@@ -56,7 +52,9 @@ def gripper_move_and_wait(stroke):
         # Internal Polling for "Moving" (Reg 284)
         for i in range(0, 50):
             # FC03 Read (ID=1, FC=3, Addr=284, Cnt=1)
-            flange_serial_write(modbus_send_make(bytes([1, 3, 1, 28, 0, 1])))
+            # modbus_send_make needs a mutable object
+            read_req = bytearray([1, 3, 1, 28, 0, 1])
+            flange_serial_write(modbus_send_make(read_req))
             size, val = flange_serial_read(0.1)
             if size >= 5:
                 # val is bytes in Python 3, indexable as ints
