@@ -148,6 +148,9 @@ BARTENDER_ROBOT_ACTION_SCRIPT_PATH = os.path.join(
 BARTENDER_ROBOT_ACTION_SCRIPT_TIMEOUT_SEC = max(
     2.0, float(os.environ.get("BARTENDER_ROBOT_ACTION_SCRIPT_TIMEOUT_SEC", "12.0"))
 )
+VOICE_ORDER_RUNTIME_TIMEOUT_SEC = max(
+    10.0, float(os.environ.get("BARTENDER_VOICE_RUNTIME_TIMEOUT_SEC", "90.0"))
+)
 BARTENDER_ROBOT_ACTION_NATIVE = str(os.environ.get("BARTENDER_ROBOT_ACTION_NATIVE", "1")).strip().lower() in (
     "1",
     "true",
@@ -518,6 +521,14 @@ class NativeRobotActionApi:
         msg = str(text or "").strip()
         if msg:
             self._step_logs.append(msg)
+            try:
+                # 메인 로그창에서 로봇동작 중간단계/목표값을 바로 확인할 수 있게 출력
+                if self.robot_controller is not None:
+                    self.robot_controller._log_info(f"[로봇동작] {msg}")
+                else:
+                    print(f"[로봇동작] {msg}")
+            except Exception:
+                pass
 
     @staticmethod
     def _is_resolved_target_pose(pose):
@@ -567,7 +578,16 @@ class NativeRobotActionApi:
             raise RuntimeError(f"{label} 실패: movej 반환값={ret}")
         wait(0.5)
 
-    def _resolve_detection_xyz(self, *, ingredient_code: str, center_uv, depth_m: float, apply_menu_offset: bool, extra_offset_xyz_mm):
+    def _resolve_detection_xyz(
+        self,
+        *,
+        ingredient_code: str,
+        center_uv,
+        depth_m: float,
+        apply_menu_offset: bool,
+        extra_offset_xyz_mm,
+        debug_label: str | None = None,
+    ):
         u = float(center_uv[0])
         v = float(center_uv[1])
         z_mm = float(depth_m) * 1000.0
@@ -578,12 +598,14 @@ class NativeRobotActionApi:
         if robot_xyz is None:
             raise RuntimeError(str(xyz_msg or "UVZ->XYZ 변환 실패"))
         tx, ty, tz = [float(vv) for vv in robot_xyz[:3]]
+        base_x, base_y, base_z = tx, ty, tz
+        menu_ox, menu_oy, menu_oz = 0.0, 0.0, 0.0
 
         if bool(apply_menu_offset):
-            ox, oy, oz = self.backend._get_menu_xyz_offset(ingredient_code, self.offset_map)
-            tx += float(ox)
-            ty += float(oy)
-            tz += float(oz)
+            menu_ox, menu_oy, menu_oz = self.backend._get_menu_xyz_offset(ingredient_code, self.offset_map)
+            tx += float(menu_ox)
+            ty += float(menu_oy)
+            tz += float(menu_oz)
 
         extra_offset = extra_offset_xyz_mm if isinstance(extra_offset_xyz_mm, (list, tuple)) else [0.0, 0.0, 0.0]
         ex = float(extra_offset[0]) if len(extra_offset) >= 1 else 0.0
@@ -592,6 +614,13 @@ class NativeRobotActionApi:
         tx += ex
         ty += ey
         tz += ez
+        if debug_label:
+            self._append_log(
+                f"{debug_label} 계산: base=({base_x:.1f},{base_y:.1f},{base_z:.1f}) + "
+                f"menu_offset=({float(menu_ox):.1f},{float(menu_oy):.1f},{float(menu_oz):.1f}) + "
+                f"extra_offset=({ex:.1f},{ey:.1f},{ez:.1f}) => final=({tx:.1f},{ty:.1f},{tz:.1f}), "
+                f"UV=({u:.1f},{v:.1f}), depth={z_mm:.1f}mm, ingredient={str(ingredient_code or '').strip().lower() or '-'}"
+            )
         return tx, ty, tz
 
     def set_robot_mode(self, mode: int, label: str = "로봇 오토모드 전환", enabled: bool = True):
@@ -609,8 +638,21 @@ class NativeRobotActionApi:
         if not self.execute_enabled:
             self._append_log(f"{label}(계획 mode={int(mode)})")
             return
+        # 이미 목표 모드면 불필요한 set 호출을 생략한다.
+        try:
+            if int(mode) == 1 and hasattr(self.backend, "sync_robot_mode_once"):
+                self.backend.sync_robot_mode_once(force=False, timeout_sec=0.8)
+            if hasattr(self.backend, "get_robot_mode_snapshot"):
+                cur_mode, _seen_at = self.backend.get_robot_mode_snapshot()
+                if cur_mode is not None and int(cur_mode) == int(mode):
+                    self._append_log(f"{label}(mode={int(mode)} 이미 적용, skip)")
+                    return
+        except Exception:
+            pass
+        # NativeRobotActionApi는 run_bartender_first_ingredient_action() 내부 busy 구간에서 실행된다.
+        # 여기서 public set_robot_mode()를 호출하면 busy 가드에 걸리므로, 내부 서비스 호출 함수로 우회한다.
         ok_mode, mode_msg = self.backend._call_with_retry(
-            lambda: self.backend.set_robot_mode(int(mode), timeout_sec=6.0),
+            lambda: self.backend._call_set_robot_mode(int(mode), timeout_sec=6.0),
             timeout_sec=8.0,
             poll_sec=0.2,
         )
@@ -731,6 +773,28 @@ class NativeRobotActionApi:
             raise RuntimeError(f"{label} 실패: distance={float(distance_mm):.1f}mm")
         self._append_log(f"{label}({float(distance_mm):.1f}mm)")
 
+    def wait_sec(self, seconds: float, label: str = "대기", enabled: bool = True):
+        wait_s = max(0.0, float(seconds))
+        self._append_step(
+            {
+                "op": "wait_sec",
+                "label": str(label),
+                "seconds": float(wait_s),
+                "enabled": bool(enabled),
+            }
+        )
+        if not bool(enabled):
+            self._append_log(f"{label}(비활성)")
+            return
+        if not self.execute_enabled:
+            self._append_log(f"{label}(계획 {wait_s:.2f}s)")
+            return
+        end_t = time.monotonic() + float(wait_s)
+        while time.monotonic() < end_t:
+            self._check_motion(label, max_state_age_sec=2.0)
+            time.sleep(min(0.05, max(0.0, end_t - time.monotonic())))
+        self._append_log(f"{label}({wait_s:.2f}s)")
+
     def resolve_detection_target(
         self,
         *,
@@ -768,6 +832,7 @@ class NativeRobotActionApi:
             depth_m=float(depth_m),
             apply_menu_offset=bool(apply_menu_offset),
             extra_offset_xyz_mm=extra_offset_xyz_mm,
+            debug_label=str(label or "비전 타겟 계산"),
         )
         self._resolved_targets[key] = (tx, ty, tz)
         self._append_log(f"{label}(XYZ={tx:.1f},{ty:.1f},{tz:.1f})")
@@ -1481,9 +1546,6 @@ class RobotBackend:
                         self.robot_controller._log_error("비전 좌표 이동 실패")
                         continue
                     time.sleep(max(0.0, float(dwell_sec)))
-                    ok_home = self.robot_controller.move_to_home_pose(home_posj=self.get_home_posj())
-                    if not ok_home:
-                        self.robot_controller._log_error("비전 이동 후 홈 복귀 실패")
                 finally:
                     self._busy_event.clear()
             elif cmd == "move_cartesian":
@@ -2443,7 +2505,7 @@ class RobotBackend:
         request_stt: bool = False,
         audio_bytes=None,
         audio_filename: str = "recording.webm",
-        timeout_sec: float = 40.0,
+        timeout_sec: float = VOICE_ORDER_RUNTIME_TIMEOUT_SEC,
         event_callback=None,
         cancel_checker=None,
     ):
@@ -2485,6 +2547,9 @@ class RobotBackend:
 
     def get_bartender_sequence_snapshot(self):
         return self._bartender_sequence_manager.get_snapshot()
+
+    def notify_bartender_tts_done(self, run_id: int | None = None):
+        return self._bartender_sequence_manager.notify_tts_done(run_id=run_id)
 
     def _start_bartender_sequence_api_server(self, progress_callback=None):
         if self._bartender_sequence_api_server is not None:
@@ -2714,16 +2779,26 @@ class RobotBackend:
 
     def _load_vision1_affine_from_file(self, force: bool = False):
         with self._vision1_affine_lock:
-            if (not force) and (self._vision1_affine_3x4 is not None):
+            has_cached = self._vision1_affine_3x4 is not None
+            cached_path = os.path.abspath(self._vision1_affine_path) if self._vision1_affine_path else ""
+
+        candidates = self._candidate_vision1_affine_paths()
+        preferred_path = os.path.abspath(candidates[0]) if candidates else ""
+        if (not force) and has_cached:
+            if preferred_path and cached_path and (preferred_path == cached_path):
+                return True, f"vision1 affine 유지: {self._vision1_affine_path or '-'}"
+            if not preferred_path:
                 return True, f"vision1 affine 유지: {self._vision1_affine_path or '-'}"
 
         last_err = "vision1 affine 파일을 찾지 못했습니다."
-        for path in self._candidate_vision1_affine_paths():
+        for path in candidates:
             try:
                 affine = self._parse_affine_file(path)
                 with self._vision1_affine_lock:
                     self._vision1_affine_3x4 = [list(row[:3]) for row in affine[:4]]
                     self._vision1_affine_path = path
+                if cached_path and (os.path.abspath(path) != cached_path):
+                    return True, f"vision1 affine 갱신 로드 완료: {cached_path} -> {path}"
                 return True, f"vision1 affine 로드 완료: {path}"
             except Exception as e:
                 last_err = f"vision1 affine 로드 실패({path}): {e}"
@@ -2806,7 +2881,8 @@ class RobotBackend:
         parsed = {}
         if not isinstance(raw_map, dict):
             return parsed
-        for key, payload in raw_map.items():
+        source = raw_map.get("menus", raw_map) if isinstance(raw_map.get("menus", None), dict) else raw_map
+        for key, payload in source.items():
             code = str(key or "").strip().lower()
             if not code:
                 continue
@@ -2832,6 +2908,39 @@ class RobotBackend:
                 with open(MENU_OFFSET_CONFIG_PATH, "r", encoding="utf-8") as f:
                     decoded = json.load(f)
                 parsed = self._parse_menu_offset_map(decoded)
+                if parsed:
+                    return parsed
+        except Exception:
+            pass
+        return {}
+
+    def _parse_menu_gripper_close_map(self, raw_map):
+        parsed = {}
+        if not isinstance(raw_map, dict):
+            return parsed
+        source = raw_map.get("menus", raw_map) if isinstance(raw_map.get("menus", None), dict) else raw_map
+        for key, payload in source.items():
+            code = str(key or "").strip().lower()
+            if not code or (not isinstance(payload, dict)):
+                continue
+            try:
+                value = float(payload.get("gripper_close_mm"))
+            except Exception:
+                continue
+            if (not math.isfinite(value)) or value < 0.0:
+                continue
+            parsed[code] = float(value)
+        return parsed
+
+    def _load_menu_gripper_close_mm(self, menu_offsets=None):
+        parsed_override = self._parse_menu_gripper_close_map(menu_offsets)
+        if parsed_override:
+            return parsed_override
+        try:
+            if os.path.isfile(MENU_OFFSET_CONFIG_PATH):
+                with open(MENU_OFFSET_CONFIG_PATH, "r", encoding="utf-8") as f:
+                    decoded = json.load(f)
+                parsed = self._parse_menu_gripper_close_map(decoded)
                 if parsed:
                     return parsed
         except Exception:
@@ -2972,6 +3081,21 @@ class RobotBackend:
         if not isinstance(sequence_steps, list) or not sequence_steps:
             return False, "시퀀스 step 목록이 비어 있습니다."
 
+        def _emit_robot_action_log(message: str, *, is_error: bool = False):
+            text = str(message or "").strip()
+            if not text:
+                return
+            try:
+                if self.robot_controller is not None:
+                    if is_error:
+                        self.robot_controller._log_error(f"[로봇동작] {text}")
+                    else:
+                        self.robot_controller._log_info(f"[로봇동작] {text}")
+                else:
+                    print(f"[로봇동작]{'[오류]' if is_error else ''} {text}")
+            except Exception:
+                pass
+
         allowed_backend_calls = {
             "set_robot_mode",
             "send_move_home",
@@ -2996,10 +3120,12 @@ class RobotBackend:
             if op == "placeholder":
                 note = str(step.get("note", "") or "").strip()
                 step_logs.append(f"{idx}:{label}(placeholder{': ' + note if note else ''})")
+                _emit_robot_action_log(step_logs[-1])
                 continue
 
             if not enabled:
                 step_logs.append(f"{idx}:{label}(비활성)")
+                _emit_robot_action_log(step_logs[-1])
                 continue
 
             if op == "set_robot_mode":
@@ -3013,6 +3139,7 @@ class RobotBackend:
                     if not ok_mode:
                         return False, f"{idx}:{label} 실패: {mode_msg}"
                 step_logs.append(f"{idx}:{label}(mode={mode}{'' if execute_enabled else ', 계획'})")
+                _emit_robot_action_log(step_logs[-1])
                 continue
 
             if op == "resolve_detection_target":
@@ -3037,12 +3164,14 @@ class RobotBackend:
                 if robot_xyz is None:
                     return False, f"{idx}:{label} 실패: {xyz_msg}"
                 tx, ty, tz = [float(vv) for vv in robot_xyz[:3]]
+                base_x, base_y, base_z = tx, ty, tz
+                menu_ox, menu_oy, menu_oz = 0.0, 0.0, 0.0
 
                 if bool(step.get("apply_menu_offset", True)):
-                    ox, oy, oz = self._get_menu_xyz_offset(ingredient_code, offset_map)
-                    tx += float(ox)
-                    ty += float(oy)
-                    tz += float(oz)
+                    menu_ox, menu_oy, menu_oz = self._get_menu_xyz_offset(ingredient_code, offset_map)
+                    tx += float(menu_ox)
+                    ty += float(menu_oy)
+                    tz += float(menu_oz)
 
                 extra_offset = step.get("extra_offset_xyz_mm", [0.0, 0.0, 0.0])
                 try:
@@ -3057,6 +3186,12 @@ class RobotBackend:
 
                 resolved_targets[target_key] = (tx, ty, tz)
                 step_logs.append(f"{idx}:{label}(key={target_key}, XYZ={tx:.1f},{ty:.1f},{tz:.1f})")
+                _emit_robot_action_log(
+                    f"{step_logs[-1]}, base=({base_x:.1f},{base_y:.1f},{base_z:.1f}), "
+                    f"menu_offset=({float(menu_ox):.1f},{float(menu_oy):.1f},{float(menu_oz):.1f}), "
+                    f"extra_offset=({ex:.1f},{ey:.1f},{ez:.1f}), "
+                    f"UV=({u:.1f},{v:.1f}), depth={z_mm:.1f}mm, ingredient={ingredient_code or '-'}"
+                )
                 continue
 
             if op == "movel_resolved_target":
@@ -3122,6 +3257,9 @@ class RobotBackend:
                     if not ok_tg:
                         return False, f"{idx}:{label} 타겟이동 실패: {msg_tg}"
                 step_logs.append(f"{idx}:{label}(key={target_key}, XYZ={tx:.1f},{ty:.1f},{tz:.1f})")
+                _emit_robot_action_log(
+                    f"{step_logs[-1]}, ABC={a:.1f},{b:.1f},{c:.1f}, approach_up={approach_up_mm:.1f}mm"
+                )
                 continue
 
             if op == "move_to_detection":
@@ -3143,12 +3281,14 @@ class RobotBackend:
                 if robot_xyz is None:
                     return False, f"{idx}:{label} 실패: {xyz_msg}"
                 tx, ty, tz = [float(vv) for vv in robot_xyz[:3]]
+                base_x, base_y, base_z = tx, ty, tz
+                menu_ox, menu_oy, menu_oz = 0.0, 0.0, 0.0
 
                 if bool(step.get("apply_menu_offset", True)):
-                    ox, oy, oz = self._get_menu_xyz_offset(ingredient_code, offset_map)
-                    tx += float(ox)
-                    ty += float(oy)
-                    tz += float(oz)
+                    menu_ox, menu_oy, menu_oz = self._get_menu_xyz_offset(ingredient_code, offset_map)
+                    tx += float(menu_ox)
+                    ty += float(menu_oy)
+                    tz += float(menu_oz)
 
                 extra_offset = step.get("extra_offset_xyz_mm", [0.0, 0.0, 0.0])
                 try:
@@ -3192,6 +3332,13 @@ class RobotBackend:
                     if not ok_tg:
                         return False, f"{idx}:{label} 타겟이동 실패: {msg_tg}"
                 step_logs.append(f"{idx}:{label}(XYZ={tx:.1f},{ty:.1f},{tz:.1f})")
+                _emit_robot_action_log(
+                    f"{step_logs[-1]}, base=({base_x:.1f},{base_y:.1f},{base_z:.1f}), "
+                    f"menu_offset=({float(menu_ox):.1f},{float(menu_oy):.1f},{float(menu_oz):.1f}), "
+                    f"extra_offset=({ex:.1f},{ey:.1f},{ez:.1f}), "
+                    f"UV=({u:.1f},{v:.1f}), depth={z_mm:.1f}mm, ABC={a:.1f},{b:.1f},{c:.1f}, "
+                    f"ingredient={ingredient_code or '-'}"
+                )
                 continue
 
             if op == "wait_volume_target":
@@ -3241,6 +3388,27 @@ class RobotBackend:
                     return False, f"{idx}:{label} 실패: 목표용량 미도달({last_volume:.1f}/{target_volume_ml:.1f}ml)"
 
                 step_logs.append(f"{idx}:{label}(volume={last_volume:.1f}/{target_volume_ml:.1f}ml)")
+                _emit_robot_action_log(step_logs[-1])
+                continue
+
+            if op == "wait_sec":
+                try:
+                    wait_s = max(0.0, float(step.get("seconds", 0.0)))
+                except Exception:
+                    return False, f"{idx}:{label} 실패: seconds 형식오류"
+
+                if not execute_enabled:
+                    step_logs.append(f"{idx}:{label}(계획 {wait_s:.2f}s)")
+                    continue
+
+                end_t = time.monotonic() + float(wait_s)
+                while time.monotonic() < end_t:
+                    ok_state, state_msg = self._check_motion_precondition(max_state_age_sec=2.0)
+                    if not ok_state:
+                        return False, f"{idx}:{label} 실패: {state_msg}"
+                    time.sleep(min(0.05, max(0.0, end_t - time.monotonic())))
+                step_logs.append(f"{idx}:{label}({wait_s:.2f}s)")
+                _emit_robot_action_log(step_logs[-1])
                 continue
 
             if op == "backend_call":
@@ -3280,6 +3448,23 @@ class RobotBackend:
                     if not ok_call:
                         return False, f"{idx}:{label} 실패: {call_msg}"
                 step_logs.append(f"{idx}:{label}({method})")
+                if method == "send_move_cartesian" and len(args) >= 6:
+                    try:
+                        _emit_robot_action_log(
+                            f"{step_logs[-1]} XYZ={float(args[0]):.1f},{float(args[1]):.1f},{float(args[2]):.1f} "
+                            f"ABC={float(args[3]):.1f},{float(args[4]):.1f},{float(args[5]):.1f}"
+                        )
+                    except Exception:
+                        _emit_robot_action_log(step_logs[-1])
+                elif method == "send_move_joint" and len(args) >= 6:
+                    try:
+                        _emit_robot_action_log(
+                            f"{step_logs[-1]} J={','.join(f'{float(v):.1f}' for v in list(args)[:6])}"
+                        )
+                    except Exception:
+                        _emit_robot_action_log(step_logs[-1])
+                else:
+                    _emit_robot_action_log(step_logs[-1])
                 continue
 
             return False, f"step[{idx}] 미지원 op: {op}"
@@ -3287,7 +3472,13 @@ class RobotBackend:
         summary = " / ".join(step_logs[-6:]) if step_logs else "시퀀스 실행 완료"
         return True, summary
 
-    def run_bartender_first_ingredient_action(self, order_result: dict, menu_offsets=None, motion_speed_percent=None):
+    def run_bartender_first_ingredient_action(
+        self,
+        order_result: dict,
+        menu_offsets=None,
+        motion_speed_percent=None,
+        execute_enabled_override=None,
+    ):
         if not self._ready_event.is_set():
             return False, "백엔드 준비 중입니다."
         if not isinstance(order_result, dict):
@@ -3304,6 +3495,11 @@ class RobotBackend:
         ok_aff, msg_aff = self._load_vision1_affine_from_file(force=False)
         if not ok_aff:
             return False, msg_aff
+        if self.robot_controller is not None and str(msg_aff or "").strip():
+            try:
+                self.robot_controller._log_info(str(msg_aff))
+            except Exception:
+                pass
 
         meta_payload = None
         meta_seen_at = None
@@ -3335,13 +3531,35 @@ class RobotBackend:
             "vision1_meta": dict(meta_payload),
             "requested_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }
-        execute_enabled = str(os.environ.get("BARTENDER_ROBOT_ACTION_EXECUTE", "0")).strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
+        if execute_enabled_override is None:
+            execute_enabled = str(os.environ.get("BARTENDER_ROBOT_ACTION_EXECUTE", "0")).strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+        else:
+            execute_enabled = bool(execute_enabled_override)
         offset_map = self._load_menu_xyz_offsets(menu_offsets=menu_offsets)
+        gripper_close_map = self._load_menu_gripper_close_mm(menu_offsets=menu_offsets)
+        merged_menu_offsets = {"menus": {}}
+        for code in sorted(set(list(offset_map.keys()) + list(gripper_close_map.keys()))):
+            ox, oy, oz = self._get_menu_xyz_offset(code, offset_map)
+            merged_menu_offsets["menus"][str(code)] = {
+                "offset_xyz_mm": [float(ox), float(oy), float(oz)],
+                "gripper_close_mm": float(gripper_close_map.get(code, 41.0)),
+            }
+        context["menu_offsets"] = merged_menu_offsets
+        if self.robot_controller is not None:
+            try:
+                self.robot_controller._log_info(
+                    f"[로봇동작] 적용 메뉴 오프셋: {json.dumps(offset_map, ensure_ascii=False)}"
+                )
+                self.robot_controller._log_info(
+                    f"[로봇동작] 적용 메뉴 파지(mm): {json.dumps(gripper_close_map, ensure_ascii=False)}"
+                )
+            except Exception:
+                pass
         move_speed = None
         try:
             if motion_speed_percent is not None:
@@ -3499,7 +3717,7 @@ class RobotBackend:
             return False, state_msg
 
         self._cmd_q.put(("move_vision_point", (tx, ty, tz, td)))
-        return True, f"비전 좌표 이동 시작: X={tx:.2f}, Y={ty:.2f}, Z={tz:.2f} (대기 {td:.1f}s 후 홈 복귀)"
+        return True, f"비전 좌표 이동 시작: X={tx:.2f}, Y={ty:.2f}, Z={tz:.2f} (대기 {td:.1f}s)"
 
     def send_move_cartesian(self, x, y, z, a, b, c, vel=None, acc=None):
         if not self._ready_event.is_set():

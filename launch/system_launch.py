@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import csv
 import os
 import signal
 import socket
@@ -78,6 +79,40 @@ def _detect_local_ip_for_target(target_host):
             sock.close()
     except Exception:
         return None
+
+
+def _load_saved_runtime_toggle_defaults(project_root):
+    param_file = os.path.join(str(project_root), 'config', 'parameter.csv')
+    defaults = (True, True, True)  # vision1, vision2, robot
+    if not os.path.isfile(param_file):
+        return defaults
+    rows = {}
+    try:
+        with open(param_file, 'r', encoding='utf-8', newline='') as f:
+            for row in csv.reader(f):
+                if not row:
+                    continue
+                key = str(row[0]).strip()
+                if not key or key.lower() == 'name':
+                    continue
+                rows[key] = [str(v).strip() for v in row[1:] if str(v).strip()]
+    except Exception:
+        return defaults
+
+    def _as_bool_from_row(key, default):
+        vals = rows.get(str(key), [])
+        raw = vals[0] if vals else ("1" if default else "0")
+        text = str(raw).strip().lower()
+        if text in ('1', 'true', 'yes', 'on'):
+            return True
+        if text in ('0', 'false', 'no', 'off'):
+            return False
+        return bool(default)
+
+    vision1_on = _as_bool_from_row('top_status_vision_enabled', True)
+    vision2_on = _as_bool_from_row('top_status_vision2_enabled', True)
+    robot_on = _as_bool_from_row('top_status_robot_enabled', True)
+    return bool(vision1_on), bool(vision2_on), bool(robot_on)
 
 
 def _collect_processes_by_pattern(pattern):
@@ -173,15 +208,25 @@ def generate_launch_description(overrides=None):
     this_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(this_dir, '..'))
     doosan_share = get_package_share_directory('dsr_bringup2')
+    vision1_on, vision2_on, robot_on = _load_saved_runtime_toggle_defaults(project_root)
+    run_robot_default = 'true' if robot_on else 'false'
+    run_sensors_default = 'true' if (vision1_on or vision2_on) else 'false'
+    print(
+        f"[system_launch] 저장된 토글 기반 기본값: "
+        f"robot={robot_on} -> run_robot={run_robot_default}, "
+        f"vision1={vision1_on}, vision2={vision2_on} -> run_sensors={run_sensors_default}"
+    )
 
     args = [
-        DeclareLaunchArgument('run_robot', default_value='true'),
+        DeclareLaunchArgument('run_robot', default_value=run_robot_default),
         DeclareLaunchArgument('robot_mode', default_value='real'),
         DeclareLaunchArgument('robot_host', default_value='110.120.1.68'),
         DeclareLaunchArgument('robot_rt_host', default_value='192.168.137.50'),
         DeclareLaunchArgument('robot_model', default_value='e0509'),
         DeclareLaunchArgument('robot_gz', default_value='false'),
-        DeclareLaunchArgument('run_sensors', default_value='true'),
+        DeclareLaunchArgument('run_sensors', default_value=run_sensors_default),
+        DeclareLaunchArgument('run_camera1', default_value='true' if vision1_on else 'false'),
+        DeclareLaunchArgument('run_camera2', default_value='true' if vision2_on else 'false'),
         DeclareLaunchArgument('run_frontend', default_value='true'),
         # Canonical flag for end-user web frontend execution.
         DeclareLaunchArgument('run_user_frontend', default_value='true'),
@@ -208,6 +253,10 @@ def generate_launch_description(overrides=None):
 
     sensor_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(this_dir, 'realsense_launch.py')),
+        launch_arguments={
+            'run_camera1': LaunchConfiguration('run_camera1'),
+            'run_camera2': LaunchConfiguration('run_camera2'),
+        }.items(),
         condition=IfCondition(LaunchConfiguration('run_sensors')),
     )
 

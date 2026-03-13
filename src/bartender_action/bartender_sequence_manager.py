@@ -38,6 +38,9 @@ LOG_KEEP_MAX = 400
 VOICE_ORDER_RETRY_MAX_ATTEMPTS = max(
     1, int(float(os.environ.get("BARTENDER_VOICE_RETRY_MAX_ATTEMPTS", "3")))
 )
+VOICE_ORDER_RUNTIME_TIMEOUT_SEC = max(
+    10.0, float(os.environ.get("BARTENDER_VOICE_RUNTIME_TIMEOUT_SEC", "90.0"))
+)
 
 RECIPE_INGREDIENT_ALIASES = {
     "soju": {"soju", "소주"},
@@ -75,6 +78,8 @@ class BartenderSequenceManager:
             ),
         )
         self._state = self._empty_state()
+        self._tts_done_run_id = 0
+        self._tts_done_at = 0.0
 
     def _empty_state(self) -> dict:
         return {
@@ -183,6 +188,8 @@ class BartenderSequenceManager:
             self._state["started_at"] = _now_iso_text()
             self._state["request"] = req
             self._state["stop_requested"] = False
+            self._tts_done_run_id = 0
+            self._tts_done_at = 0.0
             self._append_log_locked("system", f"시퀀스 시작(mode={norm_mode})")
             self._stop_event.clear()
             self._thread = threading.Thread(
@@ -204,6 +211,18 @@ class BartenderSequenceManager:
             self._append_log_locked("system", text, level="warning")
         self._stop_event.set()
         return True, text, self.get_snapshot()
+
+    def notify_tts_done(self, run_id: int | None = None):
+        with self._lock:
+            current_run_id = int(self._state.get("run_id", 0) or 0)
+            target_run_id = int(current_run_id if run_id is None else run_id)
+            if target_run_id <= 0:
+                return False, "유효하지 않은 run_id", copy.deepcopy(self._state)
+            self._tts_done_run_id = int(target_run_id)
+            self._tts_done_at = time.monotonic()
+            if bool(self._state.get("running", False)) and int(current_run_id) == int(target_run_id):
+                self._append_log_locked("tts", f"TTS 완료 플래그 수신(run_id={target_run_id})")
+            return True, "TTS 완료 플래그 반영", copy.deepcopy(self._state)
 
     def shutdown(self):
         self._stop_event.set()
@@ -348,33 +367,79 @@ class BartenderSequenceManager:
         try:
             voice_only = bool(request.get("voice_only", False))
             robot_action_only = bool(request.get("robot_action_only", False))
+            mode_norm = _normalize_mode(mode)
+            request_stt_hint = bool(request.get("request_stt", False))
+            # 메뉴얼 STT 시작은 모드 전환 단계가 앞서면 체감 지연이 커진다.
+            # 음성요청을 우선 시작하고, 로봇동작 단계에서 모드 적용을 처리한다.
+            defer_mode_until_robot_action = bool(
+                (mode_norm == "manual")
+                and (not voice_only)
+                and (not robot_action_only)
+                and request_stt_hint
+            )
             self._set_active_step("boot")
             if not self._guard_or_stop(run_id, mode):
                 return
             self._set_step_done_if_pending("boot")
 
             self._set_active_step("mode")
-            if voice_only or robot_action_only:
+            if defer_mode_until_robot_action:
+                self._append_log("mode", "메뉴얼 STT 우선: 모드 전환 지연(로봇동작 단계에서 적용)")
+            elif voice_only or robot_action_only:
                 if voice_only:
                     self._append_log("mode", "voice_only 실행: 로봇모드 전환 생략")
                 else:
                     self._append_log("mode", "robot_action_only 실행: 로봇모드 전환 생략")
             else:
-                # 전체 시퀀스 동작은 오토모드 기준으로 동일 루트를 유지한다.
+                # 이미 오토모드(1)이면 불필요한 모드 변경 호출을 생략한다.
                 try:
-                    ok_mode, msg_mode = backend.set_robot_mode(1, timeout_sec=8.0)
-                except Exception as exc:
-                    ok_mode, msg_mode = False, f"로봇모드 전환 예외: {exc}"
-                if not ok_mode:
-                    self._fail(run_id, f"오토모드 전환 실패: {msg_mode}")
-                    return
-                self._append_log("mode", f"오토모드 전환: {msg_mode}")
+                    if hasattr(backend, "sync_robot_mode_once"):
+                        backend.sync_robot_mode_once(force=False, timeout_sec=0.8)
+                    if hasattr(backend, "get_robot_mode_snapshot"):
+                        cur_mode, _seen_at = backend.get_robot_mode_snapshot()
+                        if cur_mode is not None and int(cur_mode) == 1:
+                            self._append_log("mode", "오토모드 이미 적용됨: mode 변경 생략")
+                            self._set_step_done_if_pending("mode")
+                            if not self._guard_or_stop(run_id, mode):
+                                return
+                            # 이후 음성요청 단계로 바로 진행
+                            pass
+                        else:
+                            # 전체 시퀀스 동작은 오토모드 기준으로 동일 루트를 유지한다.
+                            try:
+                                ok_mode, msg_mode = backend.set_robot_mode(1, timeout_sec=8.0)
+                            except Exception as exc:
+                                ok_mode, msg_mode = False, f"로봇모드 전환 예외: {exc}"
+                            if not ok_mode:
+                                self._fail(run_id, f"오토모드 전환 실패: {msg_mode}")
+                                return
+                            self._append_log("mode", f"오토모드 전환: {msg_mode}")
+                    else:
+                        # 모드 스냅샷 조회 함수가 없으면 기존 로직을 사용한다.
+                        try:
+                            ok_mode, msg_mode = backend.set_robot_mode(1, timeout_sec=8.0)
+                        except Exception as exc:
+                            ok_mode, msg_mode = False, f"로봇모드 전환 예외: {exc}"
+                        if not ok_mode:
+                            self._fail(run_id, f"오토모드 전환 실패: {msg_mode}")
+                            return
+                        self._append_log("mode", f"오토모드 전환: {msg_mode}")
+                except Exception:
+                    # 모드 조회/동기화 예외 시 기존 로직으로 폴백
+                    try:
+                        ok_mode, msg_mode = backend.set_robot_mode(1, timeout_sec=8.0)
+                    except Exception as exc:
+                        ok_mode, msg_mode = False, f"로봇모드 전환 예외: {exc}"
+                    if not ok_mode:
+                        self._fail(run_id, f"오토모드 전환 실패: {msg_mode}")
+                        return
+                    self._append_log("mode", f"오토모드 전환: {msg_mode}")
             self._set_step_done_if_pending("mode")
             if not self._guard_or_stop(run_id, mode):
                 return
 
             if robot_action_only:
-                manual_mode = (_normalize_mode(mode) == "manual")
+                manual_mode = (mode_norm == "manual")
                 if not manual_mode:
                     self._fail(run_id, "로봇동작 단독 테스트는 메뉴얼모드에서만 실행할 수 있습니다.")
                     return
@@ -400,6 +465,7 @@ class BartenderSequenceManager:
                     order_result,
                     menu_offsets=menu_offsets,
                     motion_speed_percent=motion_speed_percent,
+                    execute_enabled_override=bool(request.get("execute_robot_action", True)),
                 )
                 if not ok_action:
                     self._fail(run_id, f"로봇동작 실패: {action_msg}")
@@ -484,7 +550,7 @@ class BartenderSequenceManager:
                     request_stt=current_request_stt,
                     audio_bytes=current_audio_bytes,
                     audio_filename=current_audio_filename,
-                    timeout_sec=45.0,
+                    timeout_sec=float(VOICE_ORDER_RUNTIME_TIMEOUT_SEC),
                     cancel_checker=lambda: bool(self._stop_event.is_set()),
                     event_callback=_on_voice_event,
                 )
@@ -580,6 +646,53 @@ class BartenderSequenceManager:
                 self._fail(run_id, fail_text)
                 return
 
+            # TTS 완료 플래그를 받은 뒤 로봇동작으로 넘어간다.
+            wait_tts_done_flag = bool(request.get("wait_tts_done_flag", True))
+            if wait_tts_done_flag:
+                wait_timeout_sec = max(
+                    0.5,
+                    float(
+                        request.get(
+                            "tts_done_wait_timeout_sec",
+                            os.environ.get("BARTENDER_TTS_DONE_WAIT_TIMEOUT_SEC", "12.0"),
+                        )
+                        or 12.0
+                    ),
+                )
+                post_delay_sec = max(
+                    0.0,
+                    float(
+                        request.get(
+                            "post_tts_robot_delay_sec",
+                            os.environ.get("BARTENDER_POST_TTS_ROBOT_DELAY_SEC", "0.3"),
+                        )
+                        or 0.3
+                    ),
+                )
+                self._append_log("tts", f"TTS 완료 플래그 대기 시작(timeout={wait_timeout_sec:.1f}s)")
+                got_tts_done = False
+                deadline = time.monotonic() + float(wait_timeout_sec)
+                while time.monotonic() < deadline:
+                    if self._stop_event.is_set():
+                        self._stop_finalize(run_id, "중지 요청 수신")
+                        return
+                    with self._lock:
+                        if int(self._tts_done_run_id) == int(run_id):
+                            got_tts_done = True
+                            break
+                    time.sleep(0.05)
+                if got_tts_done:
+                    if post_delay_sec > 0.0:
+                        self._append_log("tts", f"TTS 완료 후 로봇동작 지연: {post_delay_sec:.1f}s")
+                        delay_deadline = time.monotonic() + float(post_delay_sec)
+                        while time.monotonic() < delay_deadline:
+                            if self._stop_event.is_set():
+                                self._stop_finalize(run_id, "중지 요청 수신")
+                                return
+                            time.sleep(0.05)
+                else:
+                    self._append_log("tts", "TTS 완료 플래그 대기 시간초과: 로봇동작 계속", level="warning")
+
             self._set_step_done_if_pending("voice_request")
             self._set_step_done_if_pending("stt")
             self._set_step_done_if_pending("llm")
@@ -594,7 +707,7 @@ class BartenderSequenceManager:
                 self._succeed(run_id, "음성주문 완료(voice_only)")
                 return
 
-            if _normalize_mode(mode) == "auto":
+            if mode_norm == "auto":
                 meta_payload, _meta_seen = backend.get_vision1_meta_snapshot()
                 missing = self._missing_ingredients(result.get("recipe", {}), meta_payload if isinstance(meta_payload, dict) else {})
                 if missing:
@@ -608,6 +721,7 @@ class BartenderSequenceManager:
                 dict(result),
                 menu_offsets=menu_offsets,
                 motion_speed_percent=motion_speed_percent,
+                execute_enabled_override=bool(request.get("execute_robot_action", True)),
             )
             if not ok_action:
                 self._fail(run_id, f"로봇동작 실패: {action_msg}")
@@ -616,7 +730,7 @@ class BartenderSequenceManager:
             self._set_step_done_if_pending("robot_action")
 
             self._set_active_step("vision_check")
-            if not self._guard_or_stop(run_id, mode, require_vision=(_normalize_mode(mode) == "auto")):
+            if not self._guard_or_stop(run_id, mode, require_vision=(mode_norm == "auto")):
                 return
             self._set_step_done_if_pending("vision_check")
 
@@ -727,6 +841,18 @@ class BartenderSequenceApiServer:
                 if path == "/api/sequence/stop":
                     reason = str(payload.get("reason", "") or "")
                     ok, msg, snap = backend.stop_bartender_sequence(reason=reason)
+                    self._write_json(
+                        {"ok": bool(ok), "message": str(msg or ""), "snapshot": snap},
+                        status_code=200 if ok else 409,
+                    )
+                    return
+                if path == "/api/sequence/tts_done":
+                    run_id = payload.get("run_id", None)
+                    try:
+                        run_id = None if run_id is None else int(run_id)
+                    except Exception:
+                        run_id = None
+                    ok, msg, snap = backend.notify_bartender_tts_done(run_id=run_id)
                     self._write_json(
                         {"ok": bool(ok), "message": str(msg or ""), "snapshot": snap},
                         status_code=200 if ok else 409,

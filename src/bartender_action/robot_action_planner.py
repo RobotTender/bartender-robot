@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from typing import Any
 
@@ -156,6 +157,16 @@ class PlannerSequenceApi:
                 "method": "send_gripper_move",
                 "args": [float(distance_mm)],
                 "kwargs": {},
+                "enabled": bool(enabled),
+            }
+        )
+
+    def wait_sec(self, seconds: float, label: str = "대기", enabled: bool = True):
+        self._append(
+            {
+                "op": "wait_sec",
+                "label": str(label),
+                "seconds": float(seconds),
                 "enabled": bool(enabled),
             }
         )
@@ -331,6 +342,27 @@ def _extract_vision1_detections(context: dict):
     return detections
 
 
+def _extract_menu_gripper_close_map(context: dict):
+    ctx = dict(context or {})
+    raw = ctx.get("menu_offsets", {})
+    if not isinstance(raw, dict):
+        return {}
+    source = raw.get("menus", raw) if isinstance(raw.get("menus", None), dict) else raw
+    out = {}
+    for key, payload in source.items():
+        code = _norm_code(key)
+        if (not code) or (not isinstance(payload, dict)):
+            continue
+        try:
+            value = float(payload.get("gripper_close_mm"))
+        except Exception:
+            continue
+        if (not math.isfinite(value)) or value < 0.0:
+            continue
+        out[code] = float(value)
+    return out
+
+
 def _pick_detection_for_ingredient(detections, ingredient_code: str):
     if not isinstance(detections, list):
         return None
@@ -409,10 +441,11 @@ def _resolve_recipe_in_menu_order(order_result: dict):
     return resolved, selected_menu, ""
 
 
-def _resolve_targets_from_recipe(recipe_items, detections):
+def _resolve_targets_from_recipe(recipe_items, detections, gripper_close_map=None):
     picked_targets = []
     missing_ingredients = []
     resolved_targets = []
+    grip_map = dict(gripper_close_map or {})
 
     cumulative_target_ml = 0.0
     for ingredient_code, amount_ml in recipe_items:
@@ -426,6 +459,7 @@ def _resolve_targets_from_recipe(recipe_items, detections):
             "ingredient_code": str(ingredient_code),
             "amount_ml": float(amount_ml),
             "target_volume_ml": float(cumulative_target_ml),
+            "gripper_close_mm": float(grip_map.get(_norm_code(ingredient_code), 41.0)),
             "detection": dict(det),
         }
         resolved_targets.append(row)
@@ -543,6 +577,12 @@ def _append_ingredient_sequence(api: PlannerSequenceApi, row: dict, seq_index: i
     center_uv = row["detection"]["center_uv"]
     depth_m = float(row["detection"]["depth_m"])
     target_volume_ml = float(row["target_volume_ml"])
+    try:
+        gripper_close_mm = float(row.get("gripper_close_mm", 41.0))
+        if (not math.isfinite(gripper_close_mm)) or gripper_close_mm < 0.0:
+            gripper_close_mm = 41.0
+    except Exception:
+        gripper_close_mm = 41.0
 
     # 객체 기준 로봇좌표에서 각 단계별 XYZ 오프셋(mm)을 명시적으로 더해 사용한다.
     pick_base_offset = [0.0, 0.0, 0.0]
@@ -558,6 +598,18 @@ def _append_ingredient_sequence(api: PlannerSequenceApi, row: dict, seq_index: i
     pour_pose = list(pour_pose_by_ingredient.get(ingredient_code, pour_ready_pose))
     target_key = f"{seq_index}_{ingredient_code}_target"
 
+    api.gripper(109.0, label=f"[{ingredient_code}] 그리퍼 열림")
+    api.wait_sec(2.0, label="그리퍼 열림 대기")
+
+    # 집기전 자세1
+    j_target = [45.0, 0.0, 135.0, 90.0, -90.0, -135.0]
+    api.movej_posj(j_target, label=f"[{ingredient_code}] 위치 이동전1")
+
+    # 집기전 자세2
+    j_target = [28.0, -35.0, 100.0, 77.0, 63.0, -154.0]
+    api.movej_posj(j_target, label=f"[{ingredient_code}] 위치 이동전2")
+    
+    
     # A) 비전1 대상 병 접근 -> 파지 -> 리프트
     # 역할: 비전 검출값(center_uv, depth_m)을 로봇 좌표계 목표로 변환해 `target_key`로 1회 저장한다.
     api.resolve_detection_target(
@@ -610,13 +662,14 @@ def _append_ingredient_sequence(api: PlannerSequenceApi, row: dict, seq_index: i
     ]
     api.movel_posx(pick_pose, label=f"[{ingredient_code}] 병 파지 위치 이동")
     # 역할: 그리퍼를 닫아 병을 파지한다.
-    api.gripper(80.0, label=f"[{ingredient_code}] 병 파지")
+    api.gripper(gripper_close_mm, label=f"[{ingredient_code}] 병 파지")
+    api.wait_sec(2.0, label="그리퍼 파지 대기")
 
     # 역할: 기준 타겟 + 리프트 오프셋(절대좌표 XYZABC)으로 이동한다.
     lift_pose = [
         x ,
         y ,
-        z + 70.0,
+        z + 50.0,
         a,
         b,
         c,
@@ -640,7 +693,7 @@ def _append_ingredient_sequence(api: PlannerSequenceApi, row: dict, seq_index: i
     j_target = list(cur_posj)
     j_target[0] = 0.0
 
-    api.movej_posj(j_target, label=f"[{ingredient_code}] 따르기 준비 위치 이동")
+    #api.movej_posj(j_target, label=f"[{ingredient_code}] 따르기 준비 위치 이동")
     '''
     api.movel_posx(pour_ready_pose, label=f"[{ingredient_code}] 따르기 준비 위치 이동")
     
@@ -700,7 +753,7 @@ def _append_ingredient_sequence(api: PlannerSequenceApi, row: dict, seq_index: i
 
 def _append_finish_sequence(api: PlannerSequenceApi):
     # 원본 의미: movel(posx([520,-20,300,180,0,180]), ...)
-    api.movel_posx([520.0, -20.0, 300.0, 180.0, 0.0, 180.0], label="완성잔 전달 위치 이동")
+    #api.movel_posx([520.0, -20.0, 300.0, 180.0, 0.0, 180.0], label="완성잔 전달 위치 이동")
     # 원본 의미: movej(posj(HOME_POSJ), ...)
     api.move_home(label="시퀀스 종료 홈 복귀")
 
@@ -715,9 +768,14 @@ def run_robot_action(context: dict, api: PlannerSequenceApi | None = None):
         return {"ok": False, "status": "recipe_invalid", "message": recipe_err}
 
     detections = _extract_vision1_detections(context)
+    gripper_close_map = _extract_menu_gripper_close_map(context)
     sequence_api = api if api is not None else PlannerSequenceApi()
 
-    picked_targets, missing_ingredients, resolved_targets = _resolve_targets_from_recipe(recipe_items, detections)
+    picked_targets, missing_ingredients, resolved_targets = _resolve_targets_from_recipe(
+        recipe_items,
+        detections,
+        gripper_close_map=gripper_close_map,
+    )
     if missing_ingredients:
         return {
             "ok": False,

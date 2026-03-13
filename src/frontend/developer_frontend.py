@@ -12,6 +12,7 @@ import traceback
 import warnings
 import io
 import wave
+import re
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 from datetime import datetime
@@ -161,6 +162,10 @@ CALIB_HELPER_AUTO_LAUNCH = os.environ.get("CALIB_HELPER_AUTO_LAUNCH", "0") == "1
 CALIB_HELPER_CMD = os.environ.get("CALIB_HELPER_CMD", "").strip()
 
 POSITION_STALE_SEC = float(os.environ.get("UI_POSITION_STALE_SEC", "2.0"))
+VISION_DECODE_MIN_INTERVAL_MS = max(
+    0.0, float(os.environ.get("VISION_DECODE_MIN_INTERVAL_MS", "40.0"))
+)
+VISION_DECODE_MIN_INTERVAL_SEC = float(VISION_DECODE_MIN_INTERVAL_MS) / 1000.0
 STATE_FLASH_SEC = float(os.environ.get("UI_STATE_FLASH_SEC", "1.2"))
 POSITION_FLASH_SEC = float(os.environ.get("UI_POSITION_FLASH_SEC", "0.9"))
 ROBOT_STARTUP_CONNECT_GRACE_SEC = float(os.environ.get("ROBOT_STARTUP_CONNECT_GRACE_SEC", "20.0"))
@@ -274,11 +279,18 @@ VISION_META_PROCESS_HZ = float(os.environ.get("VISION_META_PROCESS_HZ", "8.0"))
 VISION_META_STALE_SEC = float(os.environ.get("VISION_META_STALE_SEC", "2.0"))
 VISION_META_HOLD_SEC = float(os.environ.get("VISION_META_HOLD_SEC", "1.5"))
 VISION_RUNTIME_UI_HOLD_SEC = float(os.environ.get("VISION_RUNTIME_UI_HOLD_SEC", "3.0"))
+# 카메라 프레임 수신 지연(stale) 판정 기준(비전 전용)
+VISION_CAMERA_STALE_SEC = max(0.5, float(os.environ.get("VISION_CAMERA_STALE_SEC", "5.0")))
 VISION_RENDER_INTERVAL_MS = max(15, int(float(os.environ.get("VISION_RENDER_INTERVAL_MS", "33"))))
 DEFAULT_VISION1_SERIAL = os.environ.get("DEFAULT_VISION1_SERIAL", "313522301601")
 DEFAULT_VISION2_SERIAL = os.environ.get("DEFAULT_VISION2_SERIAL", "311322302867")
+ROBOT_MODE_HINT = (str(os.environ.get("BARTENDER_ROBOT_MODE_HINT", "real") or "").strip().lower() or "real")
+ROBOT_MODEL_HINT = str(os.environ.get("BARTENDER_ROBOT_MODEL_HINT", "e0509") or "").strip() or "e0509"
+ROBOT_HOST_HINT = str(os.environ.get("BARTENDER_ROBOT_HOST_HINT", "110.120.1.68") or "").strip() or "110.120.1.68"
+ROBOT_RT_HOST_HINT = str(os.environ.get("BARTENDER_ROBOT_RT_HOST_HINT", "192.168.137.50") or "").strip() or "192.168.137.50"
+ROBOT_GZ_HINT = (str(os.environ.get("BARTENDER_ROBOT_GZ_HINT", "false") or "").strip().lower() or "false")
 CALIB_SEQUENCE_ROW_DEFS = [
-    ("home", "홈위치"),
+    ("initial", "초기위치"),
     ("wait1", "대기위치1"),
     ("wait2", "대기위치2"),
     ("p1", "데이터1"),
@@ -293,7 +305,7 @@ CALIB_SEQUENCE_ROW_DEFS = [
     ("p10", "데이터10"),
     ("return1", "복귀위치1"),
     ("return2", "복귀위치2"),
-    ("end_home", "홈위치"),
+    ("end", "끝위치"),
 ]
 
 ROBOT_STATE_KR_MAP = {
@@ -576,6 +588,10 @@ class App(QMainWindow, form):
         self._voice_order_status_severity = "warn"
         self._voice_order_enabled = False
         self._voice_order_process_state = "대기"
+        self._sensor_launch_proc = None
+        self._sensor_launch_signature = ""
+        self._robot_launch_proc = None
+        self._robot_launch_signature = ""
         self._voice_cycle_thread = None
         self._voice_cycle_worker = None
         self._voice_cycle_worker_token = 0
@@ -587,6 +603,7 @@ class App(QMainWindow, form):
         self._voice_retry_pending_after_tts = False
         self._voice_sequence_running = False
         self._voice_sequence_run_id = 0
+        self._bartender_sequence_run_id = 0
         self._voice_ready_tone_armed = False
         self._voice_ready_tone_last_at = 0.0
         self._voice_ready_tone_warmed = False
@@ -621,6 +638,7 @@ class App(QMainWindow, form):
         self._bartender_last_tts_signature = ""
         self._bartender_status_lock = False
         self._menu_xyz_offsets_by_code = {}
+        self._menu_gripper_close_mm_by_code = {}
         self._menu_label_by_code = dict(BARTENDER_MENU_LABELS)
         self._motion_speed_percent = int(DEFAULT_MOTION_SPEED_PERCENT)
         self._motion_speed_slider = None
@@ -967,6 +985,8 @@ class App(QMainWindow, form):
         self._vision_mode_switch_grace_until_2 = 0.0
         self._vision_drop_frames_until_1 = 0.0
         self._vision_drop_frames_until_2 = 0.0
+        self._vision_decode_next_at_1 = 0.0
+        self._vision_decode_next_at_2 = 0.0
         self._last_robot_comm_connected = False
         self._try_load_calibration_matrix_on_startup()
         self._update_calibration_mode_ui()
@@ -1299,7 +1319,12 @@ class App(QMainWindow, form):
         self._bartender_last_safety_reason = ""
         self._bartender_safety_last_check_at = 0.0
         self._reset_bartender_sequence(log=False)
+        if mode == "auto":
+            # 오토모드에서는 개발자 UI 수동 음성 루트를 중지하고 WEB UI 루트만 사용한다.
+            self._voice_retry_pending_after_tts = False
+            self._stop_voice_order_worker(reason="오토모드 전환: 개발자 수동 음성입력 중지")
         self._update_bartender_mode_ui()
+        self._update_voice_mic_button_state()
         self._append_voice_order_log(f"바텐더 시퀀스 모드 변경: {'오토모드' if mode == 'auto' else '메뉴얼모드'}")
 
     def _is_bartender_auto_ready(self) -> bool:
@@ -1391,6 +1416,7 @@ class App(QMainWindow, form):
             offsets[str(menu_code)] = {
                 "label": str(menu_label),
                 "offset_xyz_mm": [0.0, 0.0, 0.0],
+                "gripper_close_mm": 41.0,
             }
         return offsets
 
@@ -1416,6 +1442,10 @@ class App(QMainWindow, form):
             except Exception:
                 offsets[code] = (0.0, 0.0, 0.0)
             labels[code] = str(payload.get("label", code) or code)
+        gripper_map = {
+            code: float(payload.get("gripper_close_mm", 41.0))
+            for code, payload in defaults.items()
+        }
 
         try:
             if os.path.isfile(MENU_OFFSET_CONFIG_PATH):
@@ -1430,33 +1460,51 @@ class App(QMainWindow, form):
                         if isinstance(raw_payload, dict):
                             label = str(raw_payload.get("label", labels.get(code, code)) or code)
                             xyz = raw_payload.get("offset_xyz_mm", [0.0, 0.0, 0.0])
+                            gripper_close_mm = raw_payload.get("gripper_close_mm", gripper_map.get(code, 41.0))
                         else:
                             label = labels.get(code, code)
                             xyz = raw_payload
+                            gripper_close_mm = gripper_map.get(code, 41.0)
                         try:
                             x = float(xyz[0]) if isinstance(xyz, (list, tuple)) and len(xyz) >= 1 else 0.0
                             y = float(xyz[1]) if isinstance(xyz, (list, tuple)) and len(xyz) >= 2 else 0.0
                             z = float(xyz[2]) if isinstance(xyz, (list, tuple)) and len(xyz) >= 3 else 0.0
                         except Exception:
                             x, y, z = 0.0, 0.0, 0.0
+                        try:
+                            grip_v = float(gripper_close_mm)
+                            if (not np.isfinite(grip_v)) or grip_v < 0.0:
+                                grip_v = float(gripper_map.get(code, 41.0))
+                        except Exception:
+                            grip_v = float(gripper_map.get(code, 41.0))
                         if not np.isfinite(np.asarray([x, y, z], dtype=np.float64)).all():
                             x, y, z = 0.0, 0.0, 0.0
                         labels[code] = label
                         offsets[code] = (float(x), float(y), float(z))
+                        gripper_map[code] = float(grip_v)
         except Exception as exc:
             self._append_voice_order_log(f"오프셋 설정 로드 실패: {exc}", level="warning")
 
         self._menu_xyz_offsets_by_code = dict(offsets)
+        self._menu_gripper_close_mm_by_code = dict(gripper_map)
         self._menu_label_by_code = dict(labels)
+        return dict(self._menu_xyz_offsets_by_code)
 
     def _save_menu_xyz_offsets(self):
         payload = {"menus": {}}
         for code in self._menu_codes_for_offset_ui():
             xyz = self._menu_xyz_offsets_by_code.get(code, (0.0, 0.0, 0.0))
             label = str(self._menu_label_by_code.get(code, code) or code)
+            try:
+                grip_mm = float(self._menu_gripper_close_mm_by_code.get(code, 41.0))
+                if (not np.isfinite(grip_mm)) or grip_mm < 0.0:
+                    grip_mm = 41.0
+            except Exception:
+                grip_mm = 41.0
             payload["menus"][str(code)] = {
                 "label": label,
                 "offset_xyz_mm": [float(xyz[0]), float(xyz[1]), float(xyz[2])],
+                "gripper_close_mm": float(grip_mm),
             }
         try:
             os.makedirs(os.path.dirname(MENU_OFFSET_CONFIG_PATH), exist_ok=True)
@@ -1487,6 +1535,27 @@ class App(QMainWindow, form):
         except Exception:
             return (0.0, 0.0, 0.0)
 
+    def _get_menu_gripper_close_mm(self, menu_code: str):
+        code = str(menu_code or "").strip()
+        try:
+            value = float(self._menu_gripper_close_mm_by_code.get(code, 41.0))
+            if (not np.isfinite(value)) or value < 0.0:
+                return 41.0
+            return float(value)
+        except Exception:
+            return 41.0
+
+    def _build_menu_offset_payload(self):
+        payload = {"menus": {}}
+        for code in self._menu_codes_for_offset_ui():
+            xyz = self._get_menu_xyz_offset(code)
+            payload["menus"][str(code)] = {
+                "label": str(self._menu_label_by_code.get(code, code) or code),
+                "offset_xyz_mm": [float(xyz[0]), float(xyz[1]), float(xyz[2])],
+                "gripper_close_mm": float(self._get_menu_gripper_close_mm(code)),
+            }
+        return payload
+
     def _open_menu_xyz_offset_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("술 종류별 XYZ 오프셋 설정")
@@ -1498,7 +1567,8 @@ class App(QMainWindow, form):
         root.setSpacing(8)
 
         info = QLabel(
-            "비전 좌표를 로봇 좌표계로 변환한 기준값에 메뉴별 XYZ 오프셋(mm)을 더해 사용합니다.",
+            "비전 좌표를 로봇 좌표계로 변환한 기준값에 메뉴별 XYZ 오프셋(mm)을 더하고,\n"
+            "병 파지 단계에서 사용할 그리퍼 거리(mm)도 메뉴별로 지정합니다.",
             dialog,
         )
         info.setWordWrap(True)
@@ -1507,14 +1577,14 @@ class App(QMainWindow, form):
 
         table = QTableWidget(dialog)
         codes = self._menu_codes_for_offset_ui()
-        table.setColumnCount(5)
+        table.setColumnCount(6)
         table.setRowCount(len(codes))
-        table.setHorizontalHeaderLabels(["메뉴코드", "메뉴명", "X(mm)", "Y(mm)", "Z(mm)"])
+        table.setHorizontalHeaderLabels(["메뉴코드", "메뉴명", "X(mm)", "Y(mm)", "Z(mm)", "파지(mm)"])
         table.verticalHeader().setVisible(False)
         table.setSelectionMode(QTableWidget.NoSelection)
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        for col in (2, 3, 4):
+        for col in (2, 3, 4, 5):
             table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
 
         for row, code in enumerate(codes):
@@ -1530,6 +1600,7 @@ class App(QMainWindow, form):
 
             for col, value in enumerate(xyz, start=2):
                 table.setItem(row, col, QTableWidgetItem(f"{float(value):.2f}"))
+            table.setItem(row, 5, QTableWidgetItem(f"{float(self._get_menu_gripper_close_mm(code)):.2f}"))
 
         root.addWidget(table, 1)
 
@@ -1547,10 +1618,17 @@ class App(QMainWindow, form):
                         table.setItem(r, c, item)
                     else:
                         item.setText("0.00")
+                grip_item = table.item(r, 5)
+                if grip_item is None:
+                    grip_item = QTableWidgetItem("41.00")
+                    table.setItem(r, 5, grip_item)
+                else:
+                    grip_item.setText("41.00")
 
         def _on_save():
             new_offsets = {}
             new_labels = {}
+            new_gripper = {}
             for r in range(table.rowCount()):
                 code_item = table.item(r, 0)
                 code = str(code_item.text() if code_item is not None else "").strip()
@@ -1571,17 +1649,29 @@ class App(QMainWindow, form):
                         QMessageBox.warning(self, "오프셋 설정", f"{code}의 오프셋 값이 유효하지 않습니다: {txt}")
                         return
                     vals.append(float(v))
+                grip_item = table.item(r, 5)
+                grip_txt = str(grip_item.text() if grip_item is not None else "").strip() or "41"
+                try:
+                    grip_v = float(grip_txt)
+                except Exception:
+                    QMessageBox.warning(self, "오프셋 설정", f"{code}의 파지(mm) 값이 숫자가 아닙니다: {grip_txt}")
+                    return
+                if (not np.isfinite(grip_v)) or grip_v < 0.0:
+                    QMessageBox.warning(self, "오프셋 설정", f"{code}의 파지(mm) 값이 유효하지 않습니다: {grip_txt}")
+                    return
                 new_labels[code] = label
                 new_offsets[code] = (vals[0], vals[1], vals[2])
+                new_gripper[code] = float(grip_v)
 
             self._menu_label_by_code = dict(new_labels)
             self._menu_xyz_offsets_by_code = dict(new_offsets)
+            self._menu_gripper_close_mm_by_code = dict(new_gripper)
             ok, msg = self._save_menu_xyz_offsets()
             self._refresh_menu_xyz_offset_button_text()
             if not ok:
                 QMessageBox.warning(self, "오프셋 설정", msg)
                 return
-            self._append_voice_order_log(f"메뉴별 XYZ 오프셋 저장: {MENU_OFFSET_CONFIG_PATH}")
+            self._append_voice_order_log(f"메뉴별 XYZ/파지(mm) 설정 저장: {MENU_OFFSET_CONFIG_PATH}")
             dialog.accept()
 
         reset_btn.clicked.connect(_on_reset)
@@ -1636,12 +1726,8 @@ class App(QMainWindow, form):
         last_error_step_label = str(snapshot.get("last_error_step_label", "") or "").strip()
         last_error_stage = str(snapshot.get("last_error_stage", "") or "").strip()
         last_error_message = str(snapshot.get("last_error_message", "") or "").strip()
-        # 백엔드 idle 스냅샷(mode=manual 기본값)이 사용자 선택 모드를 덮어쓰지 않도록
-        # 실행/종료 상태의 실제 시퀀스 스냅샷에서만 모드를 동기화한다.
-        if (not is_voice_only) and mode in ("manual", "auto") and (
-            bool(running) or status in ("success", "error", "stopped", "stopping")
-        ):
-            self._bartender_mode = mode
+        # UI 모드는 사용자가 선택한 값을 단일 진실 소스로 사용한다.
+        # 백엔드 스냅샷의 mode 값으로 UI 선택 상태를 덮어쓰지 않는다.
 
         prev_active_step = str(getattr(self, "_bartender_active_step", "") or "").strip()
         active_step_label = ""
@@ -1677,6 +1763,10 @@ class App(QMainWindow, form):
                     self._bartender_sequence_state[k] = str(step_states.get(k, "pending") or "pending").strip().lower()
             self._bartender_active_step = str(snapshot.get("active_step", "") or "").strip()
             self._bartender_sequence_running = running
+            if running:
+                self._bartender_sequence_run_id = int(run_id)
+            elif int(getattr(self, "_bartender_sequence_run_id", 0) or 0) == int(run_id):
+                self._bartender_sequence_run_id = 0
             if running:
                 self._bartender_status_lock = False
             elif status in ("success", "error", "stopped"):
@@ -1759,7 +1849,11 @@ class App(QMainWindow, form):
             self._set_voice_order_result(merged_result)
             tts_text = str(merged_result.get("tts_text", "") or "").strip()
             result_status = str(merged_result.get("status", "") or "").strip().lower()
-            if tts_text and result_status in ("success", "retry"):
+            allow_tts_play = True
+            if str(getattr(self, "_bartender_mode", "") or "").strip().lower() == "auto":
+                # 오토모드 음성 출력은 WEB UI 담당. 개발자 UI는 진행/결과 데이터만 표시한다.
+                allow_tts_play = False
+            if allow_tts_play and tts_text and result_status in ("success", "retry"):
                 public_tts = self._sanitize_customer_tts_text(status=result_status, raw_text=tts_text)
                 tts_sig = f"{run_id}:{result_status}:{public_tts}"
                 if tts_sig != str(getattr(self, "_bartender_last_tts_signature", "")):
@@ -1997,8 +2091,9 @@ class App(QMainWindow, form):
             "input_text": str(getattr(self, "_voice_order_last_input_text", "") or "").strip(),
             "request_stt": (not bool(str(getattr(self, "_voice_order_last_input_text", "") or "").strip())),
             "allow_llm": True,
+            "execute_robot_action": True,
             "motion_speed_percent": float(self._motion_speed_for_command()),
-            "menu_offsets": self._load_menu_xyz_offsets(),
+            "menu_offsets": self._build_menu_offset_payload(),
         }
         if str(self._bartender_mode or "manual").strip().lower() == "manual":
             # 메뉴얼 시퀀스 시작 시에도 테스트용 마이크 입력처럼 STT를 새로 요청한다.
@@ -2072,8 +2167,9 @@ class App(QMainWindow, form):
             "order_result": result,
             "request_stt": False,
             "allow_llm": False,
+            "execute_robot_action": True,
             "motion_speed_percent": float(self._motion_speed_for_command()),
-            "menu_offsets": self._load_menu_xyz_offsets(),
+            "menu_offsets": self._build_menu_offset_payload(),
         }
         self._bartender_status_lock = False
         self._reset_bartender_sequence(log=False)
@@ -2511,6 +2607,10 @@ class App(QMainWindow, form):
     def _update_voice_mic_button_state(self):
         btn = getattr(self, "_voice_order_mic_button", None)
         if btn is None:
+            return
+        if str(getattr(self, "_bartender_mode", "") or "").strip().lower() == "auto":
+            btn.setEnabled(False)
+            btn.setText("오토모드: WEB UI 시작")
             return
         toggle = getattr(self, "_voice_order_connection_toggle", None)
         on = bool(toggle.isChecked()) if toggle is not None else True
@@ -2970,6 +3070,24 @@ class App(QMainWindow, form):
         except Exception as exc:
             self._append_voice_order_log(f"WEB UI 주문시작 잠금 동기화 실패: {exc}", level="warning")
 
+    def _notify_bartender_tts_done(self):
+        run_id = int(getattr(self, "_voice_sequence_run_id", 0) or 0)
+        if run_id <= 0:
+            run_id = int(getattr(self, "_bartender_sequence_run_id", 0) or 0)
+        if run_id <= 0:
+            return
+
+        backend = getattr(self, "backend", None)
+        if backend is not None and hasattr(backend, "notify_bartender_tts_done"):
+            try:
+                ok, msg, _snap = backend.notify_bartender_tts_done(run_id=run_id)
+                if not ok:
+                    self._append_voice_order_log(f"TTS 완료 플래그 반영 실패: {msg}", level="warning")
+                return
+            except Exception as exc:
+                self._append_voice_order_log(f"TTS 완료 플래그 반영 예외: {exc}", level="warning")
+                return
+
     def _refresh_voice_order_webui_badge(self):
         label = getattr(self, "_voice_order_html_badge", None)
         if label is None:
@@ -2985,6 +3103,9 @@ class App(QMainWindow, form):
             self._append_voice_order_log(f"WEB UI 열기 실패: {url}")
 
     def _capture_voice_input_once(self):
+        if str(getattr(self, "_bartender_mode", "") or "").strip().lower() == "auto":
+            self._append_voice_order_log("오토모드에서는 개발자 UI 마이크 시작을 사용할 수 없습니다. WEB UI에서 시작하세요.", level="warning")
+            return
         if bool(getattr(self, "_voice_order_mic_test_running", False)):
             self._stop_voice_order_mic_test_monitor("STT 입력 시작")
         toggle = getattr(self, "_voice_order_connection_toggle", None)
@@ -3378,6 +3499,10 @@ class App(QMainWindow, form):
     def _start_voice_order_test(self, request_stt: bool = False):
         if self._voice_order_input_edit is None:
             return
+        if str(getattr(self, "_bartender_mode", "") or "").strip().lower() == "auto":
+            self._append_voice_order_log("오토모드에서는 개발자 UI 음성 테스트를 시작하지 않습니다. WEB UI에서 시작하세요.", level="warning")
+            self._update_voice_mic_button_state()
+            return
         backend = getattr(self, "backend", None)
         if backend is not None and hasattr(backend, "start_bartender_sequence") and hasattr(
             backend, "get_bartender_sequence_snapshot"
@@ -3560,6 +3685,7 @@ class App(QMainWindow, form):
             return
         if evt_type == "tts_done":
             self._set_voice_order_process_state("대기")
+            self._notify_bartender_tts_done()
             if bool(getattr(self, "_voice_retry_pending_after_tts", False)):
                 self._voice_retry_pending_after_tts = False
                 self._schedule_voice_retry_auto_listen("")
@@ -3653,6 +3779,12 @@ class App(QMainWindow, form):
             if not ok:
                 self._set_voice_order_process_state("실패")
                 self._append_voice_order_log("[done] 처리 실패", level="error")
+                return
+            if str(getattr(self, "_bartender_mode", "") or "").strip().lower() == "auto":
+                # 오토모드에서는 개발자 UI가 음성 출력을 하지 않는다.
+                self._voice_retry_pending_after_tts = False
+                self._set_voice_order_process_state("완료")
+                self._append_voice_order_log("[done] 처리 완료(오토모드: 음성출력은 WEB UI)")
                 return
             status_text = str((self._voice_last_result or {}).get("status", "")).strip().lower()
             tts_text = str((self._voice_last_result or {}).get("tts_text", "") or "").strip()
@@ -4142,6 +4274,7 @@ class App(QMainWindow, form):
             self._set_vision_panel_controls_enabled(2, on)
             self._sync_vision_render_timers()
         elif k == "robot" and (not on):
+            self._sync_robot_launch_from_toggle(reason="robot OFF")
             self._robot_cycle_ms = None
             if self.backend is not None and hasattr(self.backend, "stop_robot_state_subscriptions"):
                 try:
@@ -4151,6 +4284,7 @@ class App(QMainWindow, form):
                     self.append_log(f"[로봇] 구독 종료 실패: {e}\n")
             self._clear_robot_data_view()
         elif k == "robot" and on and (not prev_on):
+            self._sync_robot_launch_from_toggle(reason="robot ON")
             if self.backend is not None and hasattr(self.backend, "start_robot_state_subscriptions"):
                 try:
                     ok, msg = self.backend.start_robot_state_subscriptions()
@@ -4162,11 +4296,260 @@ class App(QMainWindow, form):
             self._last_positions_seen_at = None
             self._set_robot_controls_enabled(self.backend is not None and self.backend.is_ready())
         self.append_log(f"[상태토글] {k} {'활성화' if on else '비활성화'}\n")
+        if k in ("vision", "vision2"):
+            self._sync_sensor_launch_from_vision_toggles(reason=f"{k} {'ON' if on else 'OFF'}")
         if on and (not prev_on) and k in ("vision", "vision2"):
             self._restart_vision_after_toggle_enable(k)
         self._save_vision_serial_settings()
         self._refresh_robot_status()
         self._refresh_vision_status()
+
+    def _is_realsense_nodes_alive(self) -> bool:
+        try:
+            probe = subprocess.run(
+                ["pgrep", "-f", "realsense2_camera_node"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=0.8,
+                check=False,
+            )
+            return int(getattr(probe, "returncode", 1)) == 0 and bool(str(probe.stdout or "").strip())
+        except Exception:
+            return False
+
+    def _stop_sensor_launch_runtime(self, reason: str = "", kill_nodes: bool = True):
+        proc = getattr(self, "_sensor_launch_proc", None)
+        self._sensor_launch_proc = None
+        self._sensor_launch_signature = ""
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=3.0)
+            except Exception:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=1.0)
+                except Exception:
+                    pass
+        if kill_nodes:
+            # system_launch에서 올린 기존 센서 노드도 함께 내린다.
+            for pattern in (
+                r"realsense2_camera_node.*__ns:=/camera2",
+                r"realsense2_camera_node.*__ns:=/camera",
+                r"realsense2_camera_node",
+            ):
+                try:
+                    subprocess.run(
+                        ["pkill", "-f", pattern],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=0.8,
+                        check=False,
+                    )
+                except Exception:
+                    pass
+            time.sleep(0.15)
+        if reason:
+            self.append_log(f"[센서] 런타임 센서 종료: {reason}\n")
+
+    def _start_sensor_launch_runtime(self, run_camera1: bool, run_camera2: bool, reason: str = "") -> bool:
+        launch_path = os.path.join(PROJECT_ROOT, "launch", "realsense_launch.py")
+        if not os.path.isfile(launch_path):
+            self.append_log(f"[센서] 재런치 실패: 런치 파일 없음 ({launch_path})\n")
+            return False
+        serial1 = self._normalize_serial_text(getattr(self, "_vision_assigned_serial_1", ""))
+        serial2 = self._normalize_serial_text(getattr(self, "_vision_assigned_serial_2", ""))
+        cmd = [
+            sys.executable,
+            launch_path,
+            f"run_camera1:={'true' if bool(run_camera1) else 'false'}",
+            f"run_camera2:={'true' if bool(run_camera2) else 'false'}",
+        ]
+        if serial1:
+            cmd.append(f"camera1_serial_no:=_{serial1}")
+        if serial2:
+            cmd.append(f"camera2_serial_no:=_{serial2}")
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd=PROJECT_ROOT,
+                env=dict(os.environ),
+                start_new_session=True,
+            )
+        except Exception as exc:
+            self.append_log(f"[센서] 재런치 실패: {exc}\n")
+            return False
+        time.sleep(0.2)
+        if proc.poll() is not None:
+            self.append_log("[센서] 재런치 실패: 프로세스가 즉시 종료되었습니다.\n")
+            return False
+        self._sensor_launch_proc = proc
+        self._sensor_launch_signature = f"{int(bool(run_camera1))}:{int(bool(run_camera2))}:{serial1}:{serial2}"
+        self.append_log(
+            f"[센서] 런타임 센서 시작: cam1={serial1 or '-'}({bool(run_camera1)}), "
+            f"cam2={serial2 or '-'}({bool(run_camera2)})"
+            + (f", 사유={reason}" if reason else "")
+            + "\n"
+        )
+        return True
+
+    def _sync_sensor_launch_from_vision_toggles(self, reason: str = ""):
+        want_cam1 = bool(self._top_status_enabled.get("vision", True))
+        want_cam2 = bool(self._top_status_enabled.get("vision2", True))
+        serial1 = self._normalize_serial_text(getattr(self, "_vision_assigned_serial_1", ""))
+        serial2 = self._normalize_serial_text(getattr(self, "_vision_assigned_serial_2", ""))
+        desired_sig = f"{int(want_cam1)}:{int(want_cam2)}:{serial1}:{serial2}"
+
+        if (not want_cam1) and (not want_cam2):
+            self._stop_sensor_launch_runtime(reason=reason or "비전 토글 OFF", kill_nodes=True)
+            return
+
+        proc = getattr(self, "_sensor_launch_proc", None)
+        proc_alive = bool(proc is not None and proc.poll() is None)
+        nodes_alive = self._is_realsense_nodes_alive()
+        current_sig = str(getattr(self, "_sensor_launch_signature", "") or "")
+
+        if proc_alive and nodes_alive and (current_sig == desired_sig):
+            return
+
+        self._stop_sensor_launch_runtime(reason=(reason or "비전 설정 변경"), kill_nodes=True)
+        self._start_sensor_launch_runtime(want_cam1, want_cam2, reason=reason)
+
+    def _is_robot_nodes_alive(self) -> bool:
+        patterns = (
+            r"ros2_control_node.*__ns:=/dsr01",
+            r"dsr_bringup2_gazebo.launch.py",
+        )
+        for pattern in patterns:
+            try:
+                probe = subprocess.run(
+                    ["pgrep", "-f", pattern],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=0.8,
+                    check=False,
+                )
+                if int(getattr(probe, "returncode", 1)) == 0 and bool(str(probe.stdout or "").strip()):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _stop_robot_launch_runtime(self, reason: str = "", kill_nodes: bool = True):
+        proc = getattr(self, "_robot_launch_proc", None)
+        self._robot_launch_proc = None
+        self._robot_launch_signature = ""
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=3.0)
+            except Exception:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=1.0)
+                except Exception:
+                    pass
+        if kill_nodes:
+            for pattern in (
+                r"dsr_bringup2_gazebo.launch.py",
+                r"ros2_control_node.*__ns:=/dsr01",
+                r"spawner.*dsr",
+            ):
+                try:
+                    subprocess.run(
+                        ["pkill", "-f", pattern],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=0.8,
+                        check=False,
+                    )
+                except Exception:
+                    pass
+            time.sleep(0.2)
+        if reason:
+            self.append_log(f"[로봇] 런타임 로봇 런치 종료: {reason}\n")
+
+    def _start_robot_launch_runtime(self, reason: str = "") -> bool:
+        launch_path = os.path.join(PROJECT_ROOT, "launch", "system_launch.py")
+        if not os.path.isfile(launch_path):
+            self.append_log(f"[로봇] 런타임 로봇 런치 시작 실패: launch 파일 없음 ({launch_path})\n")
+            return False
+
+        mode = str(ROBOT_MODE_HINT or "real").strip().lower() or "real"
+        model = str(ROBOT_MODEL_HINT or "e0509").strip() or "e0509"
+        host = str(ROBOT_HOST_HINT or "110.120.1.68").strip() or "110.120.1.68"
+        rt_host = str(ROBOT_RT_HOST_HINT or "192.168.137.50").strip() or "192.168.137.50"
+        gz = str(ROBOT_GZ_HINT or ("false" if mode == "real" else "true")).strip().lower()
+        if gz not in ("true", "false"):
+            gz = "false" if mode == "real" else "true"
+
+        cmd = [
+            sys.executable,
+            launch_path,
+            "run_robot:=true",
+            "run_sensors:=false",
+            "run_frontend:=false",
+            "run_user_frontend:=false",
+            f"robot_mode:={mode}",
+            f"robot_model:={model}",
+            f"robot_host:={host}",
+            f"robot_rt_host:={rt_host}",
+            f"robot_gz:={gz}",
+        ]
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd=PROJECT_ROOT,
+                env=dict(os.environ),
+                start_new_session=True,
+            )
+        except Exception as exc:
+            self.append_log(f"[로봇] 런타임 로봇 런치 시작 실패: {exc}\n")
+            return False
+        time.sleep(0.2)
+        if proc.poll() is not None:
+            self.append_log("[로봇] 런타임 로봇 런치 시작 실패: 프로세스가 즉시 종료되었습니다.\n")
+            return False
+        self._robot_launch_proc = proc
+        self._robot_launch_signature = f"{mode}:{model}:{host}:{rt_host}:{gz}"
+        self.append_log(
+            f"[로봇] 런타임 로봇 런치 시작: mode={mode}, model={model}, host={host}, rt_host={rt_host}, gz={gz}"
+            + (f", 사유={reason}" if reason else "")
+            + "\n"
+        )
+        return True
+
+    def _sync_robot_launch_from_toggle(self, reason: str = ""):
+        want_robot = bool(self._top_status_enabled.get("robot", True))
+        mode = str(ROBOT_MODE_HINT or "real").strip().lower() or "real"
+        model = str(ROBOT_MODEL_HINT or "e0509").strip() or "e0509"
+        host = str(ROBOT_HOST_HINT or "110.120.1.68").strip() or "110.120.1.68"
+        rt_host = str(ROBOT_RT_HOST_HINT or "192.168.137.50").strip() or "192.168.137.50"
+        gz = str(ROBOT_GZ_HINT or ("false" if mode == "real" else "true")).strip().lower()
+        if gz not in ("true", "false"):
+            gz = "false" if mode == "real" else "true"
+        desired_sig = f"{mode}:{model}:{host}:{rt_host}:{gz}"
+
+        if not want_robot:
+            self._stop_robot_launch_runtime(reason=reason or "로봇 토글 OFF", kill_nodes=True)
+            return
+
+        proc = getattr(self, "_robot_launch_proc", None)
+        proc_alive = bool(proc is not None and proc.poll() is None)
+        nodes_alive = self._is_robot_nodes_alive()
+        current_sig = str(getattr(self, "_robot_launch_signature", "") or "")
+
+        if nodes_alive and ((not proc_alive) or (current_sig == desired_sig)):
+            return
+
+        self._stop_robot_launch_runtime(reason=(reason or "로봇 설정 변경"), kill_nodes=True)
+        self._start_robot_launch_runtime(reason=reason)
 
     def _restart_vision_after_toggle_enable(self, key: str):
         if not UI_ENABLE_VISION:
@@ -4537,7 +4920,7 @@ class App(QMainWindow, form):
         )
         if last_camera_frame_at is None:
             return "확인중" if now < self._vision_mode_switch_grace_until(panel) else "끊김"
-        if (now - float(last_camera_frame_at)) > POSITION_STALE_SEC:
+        if (now - float(last_camera_frame_at)) > VISION_CAMERA_STALE_SEC:
             return "지연"
         return "정상 수신 중"
 
@@ -5104,7 +5487,7 @@ class App(QMainWindow, form):
         calib_on_any = bool(getattr(self, "_calibration_mode_enabled_1", False) or getattr(self, "_calibration_mode_enabled_2", False))
         last_camera_at = self._last_camera_frame_at_2 if panel == 2 else self._last_camera_frame_at_1
         stale_vision = bool(vision_on) and (
-            (last_camera_at is None) or ((now - float(last_camera_at)) > 3.0)
+            (last_camera_at is None) or ((now - float(last_camera_at)) > VISION_CAMERA_STALE_SEC)
         )
         if stale_vision and ((now - self._vision_rebind_last_try_at) > 8.0):
             retry_needed = True
@@ -5845,10 +6228,9 @@ class App(QMainWindow, form):
 
     def _on_change_vision_camera(self, panel_index: int):
         discovered = self._discover_connected_camera_serials()
-        for s in discovered:
-            if s not in self._available_camera_serials:
-                self._available_camera_serials.append(s)
-        options = [s for s in self._available_camera_serials if s]
+        # 카메라 변경 목록은 "현재 검색된" 시리얼만 노출한다.
+        self._available_camera_serials = [s for s in discovered if s]
+        options = list(self._available_camera_serials)
         if not options:
             QMessageBox.warning(self, "카메라 변경", "검색된 카메라 시리얼이 없습니다.")
             return
@@ -5898,10 +6280,19 @@ class App(QMainWindow, form):
         self._vision_drop_frames_until_2 = now + 1.2
         self._vision_state_text = "전환중"
         self._vision_state_text_2 = "전환중"
+        self._sync_sensor_launch_from_vision_toggles(reason="카메라 시리얼 변경")
         self._sync_calibration_processes()
         self._rebind_external_vision_bridge_for_mode()
         self.append_log(
             f"[{self._vision_log_tag()}] 카메라 할당 변경: 비전1={self._vision_assigned_serial_1}, 비전2={self._vision_assigned_serial_2} (런타임 camera={self._runtime_camera_serial_1}, camera2={self._runtime_camera_serial_2})\n"
+        )
+        self.append_log(
+            f"[{self._vision_log_tag()}] 카메라 시리얼 변경 저장 완료: 센서 런타임을 재시작해 즉시 반영했습니다.\n"
+        )
+        QMessageBox.information(
+            self,
+            "카메라 변경",
+            "시리얼 변경을 저장했습니다.\n센서 런타임을 재시작하여 현재 설정을 즉시 반영했습니다.",
         )
 
     def _setup_position_table_common(self, table: QTableWidget, keys):
@@ -7593,6 +7984,58 @@ class App(QMainWindow, form):
 
         def _resolve_sequence_storage_key(row_key: str):
             key_text = str(row_key or "").strip()
+            if key_text == "initial":
+                explicit_keys = (
+                    f"{prefix}initial_enabled",
+                    f"{prefix}initial_j",
+                    f"{prefix}initial_pose6",
+                    f"{prefix}initial_xyzabc",
+                )
+                if any(rows.get(name) for name in explicit_keys):
+                    return "initial"
+                legacy_home_keys = (
+                    f"{prefix}home_enabled",
+                    f"{prefix}home_j",
+                    f"{prefix}home_pose6",
+                    f"{prefix}home_xyzabc",
+                )
+                if any(rows.get(name) for name in legacy_home_keys):
+                    return "home"
+                legacy_end_home_keys = (
+                    f"{prefix}end_home_enabled",
+                    f"{prefix}end_home_j",
+                    f"{prefix}end_home_pose6",
+                    f"{prefix}end_home_xyzabc",
+                )
+                if any(rows.get(name) for name in legacy_end_home_keys):
+                    return "end_home"
+                return "initial"
+            if key_text == "end":
+                explicit_keys = (
+                    f"{prefix}end_enabled",
+                    f"{prefix}end_j",
+                    f"{prefix}end_pose6",
+                    f"{prefix}end_xyzabc",
+                )
+                if any(rows.get(name) for name in explicit_keys):
+                    return "end"
+                legacy_end_home_keys = (
+                    f"{prefix}end_home_enabled",
+                    f"{prefix}end_home_j",
+                    f"{prefix}end_home_pose6",
+                    f"{prefix}end_home_xyzabc",
+                )
+                if any(rows.get(name) for name in legacy_end_home_keys):
+                    return "end_home"
+                legacy_home_keys = (
+                    f"{prefix}home_enabled",
+                    f"{prefix}home_j",
+                    f"{prefix}home_pose6",
+                    f"{prefix}home_xyzabc",
+                )
+                if any(rows.get(name) for name in legacy_home_keys):
+                    return "home"
+                return "end"
             if key_text not in ("return1", "return2"):
                 return key_text
             explicit_keys = (
@@ -7626,7 +8069,7 @@ class App(QMainWindow, form):
                 "target_joint": None,
                 "target_text": "-",
             }
-            if key in ("home", "end_home"):
+            if key in ("initial", "end"):
                 entry["enabled"] = self._parse_bool_text(((rows.get(f"{prefix}{storage_key}_enabled") or ["1"])[0]), default=True)
                 entry["move_kind"] = "home"
                 entry["target_joint"] = home_posj
@@ -7663,15 +8106,15 @@ class App(QMainWindow, form):
         if enabled is not None:
             rows[f"{prefix}_enabled"] = ["1" if bool(enabled) else "0"]
 
-        if key in ("home", "end_home"):
+        if key in ("initial", "end"):
             if joints is not None:
                 if self.backend is None or not hasattr(self.backend, "set_home_posj"):
-                    return False, "백엔드 홈 저장 기능을 지원하지 않습니다."
+                    return False, "백엔드 초기위치 저장 기능을 지원하지 않습니다."
                 ok_home, msg_home = self.backend.set_home_posj(joints)
                 if not ok_home:
                     return False, msg_home
             self._save_parameter_rows(rows)
-            return True, "홈위치 설정 저장 완료"
+            return True, "초기위치 설정 저장 완료"
 
         if joints is not None:
             joint_vals = self._parse_float_values(joints, expected_len=6)
@@ -8447,7 +8890,7 @@ class App(QMainWindow, form):
             if not ok_save:
                 QMessageBox.warning(dialog, "캘리브레이션", msg_save, QMessageBox.Ok)
                 return
-            if row_state["data"]["key"] in ("home", "end_home"):
+            if row_state["data"]["key"] in ("initial", "end"):
                 row_state["data"]["move_kind"] = "home"
                 row_state["data"]["target_joint"] = list(posj)
                 row_state["data"]["target_pose6"] = None
@@ -8499,7 +8942,7 @@ class App(QMainWindow, form):
                 if not ok_save:
                     QMessageBox.warning(dialog, "캘리브레이션", msg_save, QMessageBox.Ok)
                     return
-                if seq_row["key"] in ("home", "end_home"):
+                if seq_row["key"] in ("initial", "end"):
                     seq_row["move_kind"] = "home"
                     seq_row["target_pose6"] = None
                 else:
@@ -8858,24 +9301,113 @@ class App(QMainWindow, form):
 
     def _discover_connected_camera_serials(self):
         serials = []
-        try:
-            proc = subprocess.run(
-                ["rs-enumerate-devices", "-s"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=2.5,
-                check=False,
-            )
-            text = (proc.stdout or "") + "\n" + (proc.stderr or "")
-            for line in text.splitlines():
+        rs_cmd_candidates = [
+            ["rs-enumerate-devices", "-s"],
+            ["/opt/ros/jazzy/bin/rs-enumerate-devices", "-s"],
+        ]
+        for cmd in rs_cmd_candidates:
+            try:
+                env = dict(os.environ)
+                prev_ld = str(env.get("LD_LIBRARY_PATH", "") or "")
+                extra_ld = ["/opt/ros/jazzy/lib/x86_64-linux-gnu", "/opt/ros/jazzy/lib"]
+                merged_ld = ":".join([p for p in extra_ld + [prev_ld] if p])
+                if merged_ld:
+                    env["LD_LIBRARY_PATH"] = merged_ld
+                proc = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=2.5,
+                    check=False,
+                    env=env,
+                )
+            except Exception:
+                continue
+            # rs-enumerate-devices의 표준 출력(장치 목록)만 우선 파싱한다.
+            # stderr에는 내부 로그/스레드 ID 숫자가 섞여 오탐이 발생할 수 있다.
+            text = str(proc.stdout or "")
+            if not text.strip():
+                text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+            for line in str(text).splitlines():
                 low = line.lower()
-                if "serial number" not in low:
+                # 1) "Serial Number: xxxxx" 형식
+                if "serial number" in low and ":" in line:
+                    raw = line.split(":", 1)[1].strip()
+                    serial = self._normalize_serial_text(raw)
+                    if serial.isdigit() and 10 <= len(serial) <= 14 and serial not in serials:
+                        serials.append(serial)
                     continue
-                if ":" not in line:
+                # 2) 테이블 형식: "Intel RealSense D455F  252222300723  5.17.0.10"
+                m = re.search(
+                    r"Intel\s+RealSense.*?\s(?P<sn>\d{10,14})\s+\d+\.\d+\.\d+\.\d+",
+                    line,
+                    flags=re.IGNORECASE,
+                )
+                if m:
+                    serial = self._normalize_serial_text(m.group("sn"))
+                    if serial and serial not in serials:
+                        serials.append(serial)
+            if serials:
+                break
+        if serials:
+            return serials
+
+        # Fallback 1) /dev/v4l/by-id 링크명에서 RealSense 시리얼 추출
+        try:
+            for path in sorted(glob.glob("/dev/v4l/by-id/*")):
+                name = os.path.basename(path)
+                low = name.lower()
+                if ("realsense" not in low) and ("intel" not in low):
                     continue
-                raw = line.split(":", 1)[1].strip()
-                serial = self._normalize_serial_text(raw)
+                head = name.split("-video-index", 1)[0]
+                tokens = [t for t in head.split("_") if t]
+                serial = ""
+                for tok in reversed(tokens):
+                    t = self._normalize_serial_text(tok)
+                    if len(t) >= 6 and t.isdigit():
+                        serial = t
+                        break
+                if serial and serial not in serials:
+                    serials.append(serial)
+        except Exception:
+            pass
+        if serials:
+            return serials
+
+        # Fallback 2) udevadm 속성에서 Intel(8086) 장치 시리얼 추출
+        try:
+            for dev in sorted(glob.glob("/dev/video*")):
+                try:
+                    proc = subprocess.run(
+                        ["udevadm", "info", "--query=property", "--name", dev],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        timeout=0.7,
+                        check=False,
+                    )
+                except Exception:
+                    continue
+                if int(getattr(proc, "returncode", 1)) != 0:
+                    continue
+                props = {}
+                for line in str(proc.stdout or "").splitlines():
+                    if "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    props[str(k).strip()] = str(v).strip()
+                if str(props.get("ID_VENDOR_ID", "")).strip() != "8086":
+                    continue
+                serial = self._normalize_serial_text(props.get("ID_SERIAL_SHORT", ""))
+                if not serial:
+                    raw_serial = self._normalize_serial_text(props.get("ID_SERIAL", ""))
+                    if raw_serial:
+                        for tok in reversed([t for t in raw_serial.replace("-", "_").split("_") if t]):
+                            t = self._normalize_serial_text(tok)
+                            if len(t) >= 6 and t.isdigit():
+                                serial = t
+                                break
                 if serial and serial not in serials:
                     serials.append(serial)
         except Exception:
@@ -10800,6 +11332,10 @@ class App(QMainWindow, form):
             self._last_camera_frame_at_1 = now
             if now < float(getattr(self, "_vision_drop_frames_until_1", 0.0)):
                 return
+            if VISION_DECODE_MIN_INTERVAL_SEC > 0.0 and now < float(getattr(self, "_vision_decode_next_at_1", 0.0)):
+                return
+            if VISION_DECODE_MIN_INTERVAL_SEC > 0.0:
+                self._vision_decode_next_at_1 = now + float(VISION_DECODE_MIN_INTERVAL_SEC)
 
             h = int(msg.height)
             w = int(msg.width)
@@ -10847,6 +11383,10 @@ class App(QMainWindow, form):
             self._last_camera_frame_at_2 = now
             if now < float(getattr(self, "_vision_drop_frames_until_2", 0.0)):
                 return
+            if VISION_DECODE_MIN_INTERVAL_SEC > 0.0 and now < float(getattr(self, "_vision_decode_next_at_2", 0.0)):
+                return
+            if VISION_DECODE_MIN_INTERVAL_SEC > 0.0:
+                self._vision_decode_next_at_2 = now + float(VISION_DECODE_MIN_INTERVAL_SEC)
             h = int(msg.height)
             w = int(msg.width)
             step = int(msg.step)
@@ -12005,6 +12545,9 @@ class App(QMainWindow, form):
                     self._reset_thread.terminate()
                     self._reset_thread.wait(300)
             self._stop_vision_compose_workers()
+            # 앱 종료 시 런타임으로 띄운 launch 하위 노드까지 정리한다.
+            self._stop_sensor_launch_runtime(reason="앱 종료", kill_nodes=True)
+            self._stop_robot_launch_runtime(reason="앱 종료", kill_nodes=True)
             self._stop_yolo_camera()
             self._stop_calibration_process(1)
             self._stop_calibration_process(2)
