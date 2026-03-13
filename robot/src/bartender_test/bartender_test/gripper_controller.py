@@ -30,7 +30,6 @@ def recv_check():
     return size > 0
 
 def gripper_init(force):
-    flange_serial_close()
     res = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
     wait(0.5)
     if res == 0:
@@ -47,7 +46,6 @@ def gripper_init(force):
     return False
 
 def gripper_move_and_wait(stroke):
-    flange_serial_close()
     res = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
     wait(0.2)
     if res == 0:
@@ -55,13 +53,11 @@ def gripper_move_and_wait(stroke):
         flange_serial_write(modbus_fc16(282, 2, [stroke, 0]))
         recv_check()
         wait(0.5)
-
+        
         # Internal Polling for "Moving" (Reg 284)
-        # modbus_fc03 not implemented in this helper, use manual bytes for read
-        read_req = (1).to_bytes(1, 'big') + (3).to_bytes(1, 'big') + (1).to_bytes(2, 'big') + (1).to_bytes(2, 'big')
-        # Wait, the above is [1, 3, 0, 1, 0, 1]. Register 284 is 0x011C
+        # Register 284 is 0x011C
         read_req = (1).to_bytes(1, 'big') + (3).to_bytes(1, 'big') + (284).to_bytes(2, 'big') + (1).to_bytes(2, 'big')
-
+        
         for i in range(0, 50):
             flange_serial_write(modbus_send_make(read_req))
             size, val = flange_serial_read(0.1)
@@ -70,7 +66,7 @@ def gripper_move_and_wait(stroke):
                 if moving == 0:
                     break
             wait(0.1)
-
+        
         flange_serial_close()
         return True
     return False
