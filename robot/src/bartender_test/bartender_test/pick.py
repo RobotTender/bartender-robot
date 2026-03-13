@@ -167,7 +167,6 @@ class RobotControllerNode(Node):
             self.intrinsics.coeffs = list(info_msg.d)
             self.get_logger().info("카메라 내장 파라미터(Intrinsics) 수신 완료.")
 
-        self._try_start_task()
 
     def _gripper_open(self):
         self.get_logger().info("Service Call: Gripper Open")
