@@ -67,7 +67,7 @@ def _build_action_command() -> str:
     return (
         f"{_build_workspace_source_prefix()} && "
         f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
-        "exec python3 -m bartender_test.action listen"
+        "exec python3 -m bartender_test.action_node listen"
     )
 
 def _build_web_command(host: str, port: int) -> str:
