@@ -138,10 +138,9 @@ PARAM_DIR = os.path.join(PROJECT_ROOT, "config")
 PARAM_FILE = os.path.join(PARAM_DIR, "parameter.csv")
 CALIB_DIR = os.path.join(PARAM_DIR, "calibration")
 MENU_OFFSET_CONFIG_PATH = os.path.join(PARAM_DIR, "menu_xyz_offsets.json")
-VISION1_META_TOPIC = os.environ.get("VISION_OBJECT_META_TOPIC_1", "/vision1/object/meta")
-VISION1_CAMERA_INFO_TOPIC_PRIMARY = os.environ.get("CALIB_CAMERA_INFO_TOPIC", "/camera/camera/color/camera_info")
-VISION1_CAMERA_INFO_TOPIC_FALLBACK = os.environ.get("CALIB_CAMERA_INFO_TOPIC_FALLBACK", "/camera/color/camera_info")
-VISION2_META_TOPIC = os.environ.get("VISION_VOLUME_META_TOPIC_2", "/vision2/volume/meta")
+VISION1_META_TOPIC = os.environ.get("VISION_OBJECT_META_TOPIC_1", "/camera/camera_1/detection/object/meta")
+VISION1_CAMERA_INFO_TOPIC_PRIMARY = os.environ.get("CALIB_CAMERA_INFO_TOPIC", "/camera/camera_1/color/camera_info")
+VISION2_META_TOPIC = os.environ.get("VISION_VOLUME_META_TOPIC_2", "/camera/camera_2/detection/volume/meta")
 BARTENDER_ROBOT_ACTION_SCRIPT_PATH = os.path.join(
     PROJECT_ROOT, "src", "backend", "bartender_action", "robot_action_planner.py"
 )
@@ -2545,8 +2544,14 @@ class RobotBackend:
     def stop_bartender_sequence(self, reason: str = ""):
         return self._bartender_sequence_manager.stop(reason=reason)
 
+    def reset_bartender_sequence(self, reason: str = ""):
+        return self._bartender_sequence_manager.reset(reason=reason)
+
     def get_bartender_sequence_snapshot(self):
         return self._bartender_sequence_manager.get_snapshot()
+
+    def get_bartender_sequence_precheck(self, mode: str = "auto"):
+        return self._bartender_sequence_manager.get_precheck(mode=mode)
 
     def notify_bartender_tts_done(self, run_id: int | None = None):
         return self._bartender_sequence_manager.notify_tts_done(run_id=run_id)
@@ -2616,20 +2621,6 @@ class RobotBackend:
         elif self._vision1_camera_info_sub is None:
             try:
                 topic = str(VISION1_CAMERA_INFO_TOPIC_PRIMARY or "").strip()
-                topic_map = {}
-                try:
-                    topic_map = dict(self.robot_controller.get_topic_names_and_types())
-                except Exception:
-                    topic_map = {}
-                fallback = str(VISION1_CAMERA_INFO_TOPIC_FALLBACK or "").strip()
-                primary_types = topic_map.get(topic, [])
-                fallback_types = topic_map.get(fallback, [])
-                if topic and ("sensor_msgs/msg/CameraInfo" not in primary_types) and fallback and (
-                    "sensor_msgs/msg/CameraInfo" in fallback_types
-                ):
-                    topic = fallback
-                if not topic:
-                    topic = fallback or VISION1_CAMERA_INFO_TOPIC_PRIMARY
                 self._vision1_camera_info_sub = self.robot_controller.create_subscription(
                     RosCameraInfoMsg,
                     topic,

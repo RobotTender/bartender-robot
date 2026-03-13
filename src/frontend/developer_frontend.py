@@ -147,14 +147,12 @@ CALIBRATION_FIXED_SPEED_PERCENT = 20.0
 
 UI_ENABLE_VISION = os.environ.get("UI_ENABLE_VISION", "1") == "1"
 YOLO_EXTERNAL_NODE = os.environ.get("YOLO_EXTERNAL_NODE", "1") == "1"
-CALIB_VISION_TOPIC_PRIMARY = os.environ.get("CALIB_VISION_TOPIC", "/camera/camera/color/image_raw")
-CALIB_VISION_TOPIC_FALLBACK = os.environ.get("CALIB_VISION_TOPIC_FALLBACK", "/camera/color/image_raw")
-CALIB_CAMERA_INFO_TOPIC_PRIMARY = os.environ.get("CALIB_CAMERA_INFO_TOPIC", "/camera/camera/color/camera_info")
-CALIB_CAMERA_INFO_TOPIC_FALLBACK = os.environ.get("CALIB_CAMERA_INFO_TOPIC_FALLBACK", "/camera/color/camera_info")
-CALIB_OUTPUT_META_TOPIC_1 = os.environ.get("CALIB_OUTPUT_META_TOPIC_1", "/vision1/calibration/meta")
-CALIB_OUTPUT_META_TOPIC_2 = os.environ.get("CALIB_OUTPUT_META_TOPIC_2", "/vision2/calibration/meta")
-VISION_OBJECT_META_TOPIC_1 = os.environ.get("VISION_OBJECT_META_TOPIC_1", "/vision1/object/meta")
-VISION_VOLUME_META_TOPIC_2 = os.environ.get("VISION_VOLUME_META_TOPIC_2", "/vision2/volume/meta")
+CALIB_VISION_TOPIC_PRIMARY = os.environ.get("CALIB_VISION_TOPIC", "/camera/camera_1/color/image_raw")
+CALIB_CAMERA_INFO_TOPIC_PRIMARY = os.environ.get("CALIB_CAMERA_INFO_TOPIC", "/camera/camera_1/color/camera_info")
+CALIB_OUTPUT_META_TOPIC_1 = os.environ.get("CALIB_OUTPUT_META_TOPIC_1", "/camera/camera_1/calibration/meta")
+CALIB_OUTPUT_META_TOPIC_2 = os.environ.get("CALIB_OUTPUT_META_TOPIC_2", "/camera/camera_2/calibration/meta")
+VISION_OBJECT_META_TOPIC_1 = os.environ.get("VISION_OBJECT_META_TOPIC_1", "/camera/camera_1/detection/object/meta")
+VISION_VOLUME_META_TOPIC_2 = os.environ.get("VISION_VOLUME_META_TOPIC_2", "/camera/camera_2/detection/volume/meta")
 YOLO_AUTO_LAUNCH_NODE = os.environ.get("YOLO_AUTO_LAUNCH_NODE", "1") == "1"
 YOLO_AUTO_LAUNCH_ALWAYS = os.environ.get("YOLO_AUTO_LAUNCH_ALWAYS", "0") == "1"
 YOLO_AUTO_LAUNCH_CMD = os.environ.get("YOLO_AUTO_LAUNCH_CMD", "").strip()
@@ -636,6 +634,7 @@ class App(QMainWindow, form):
         self._bartender_last_safety_reason = ""
         self._bartender_last_log_id = 0
         self._bartender_last_tts_signature = ""
+        self._voice_feedback_audio_gen = 0
         self._bartender_status_lock = False
         self._menu_xyz_offsets_by_code = {}
         self._menu_gripper_close_mm_by_code = {}
@@ -1318,7 +1317,23 @@ class App(QMainWindow, form):
         self._bartender_manual_step_index = -1
         self._bartender_last_safety_reason = ""
         self._bartender_safety_last_check_at = 0.0
+        self._stop_voice_order_feedback_audio("모드 전환")
+        backend = getattr(self, "backend", None)
+        if backend is not None and hasattr(backend, "reset_bartender_sequence"):
+            try:
+                ok_reset, msg_reset, snap_reset = backend.reset_bartender_sequence(reason="모드 변경: 시퀀스 상태 초기화")
+                self._append_voice_order_log(
+                    f"시퀀스 상태 초기화 {'완료' if ok_reset else '실패'}: {msg_reset}",
+                    level=("info" if ok_reset else "warning"),
+                )
+                if isinstance(snap_reset, dict):
+                    self._apply_bartender_sequence_snapshot(snap_reset)
+            except Exception as exc:
+                self._append_voice_order_log(f"시퀀스 상태 초기화 예외: {exc}", level="warning")
         self._reset_bartender_sequence(log=False)
+        self._voice_last_result = None
+        self._set_voice_order_result(None)
+        self._set_voice_order_llm_text("-")
         if mode == "auto":
             # 오토모드에서는 개발자 UI 수동 음성 루트를 중지하고 WEB UI 루트만 사용한다.
             self._voice_retry_pending_after_tts = False
@@ -1355,11 +1370,10 @@ class App(QMainWindow, form):
 
     def _update_bartender_mode_ui(self):
         self._bartender_auto_ready = self._is_bartender_auto_ready()
-        # 오토모드가 실제 활성 조건(모드=auto + 준비완료)일 때만 WEB UI 주문 시작 잠금을 해제한다.
-        # 그 외(메뉴얼/오토 비활성/실행중)에는 잠금 상태를 유지한다.
+        self._apply_device_toggle_lock_by_mode()
+        # manual/auto 동일 조건: 오토모드에서는 WEB UI 보이스 버튼으로 시작만 허용한다.
         auto_unlock = bool(
             (str(self._bartender_mode or "").strip().lower() == "auto")
-            and bool(self._bartender_auto_ready)
             and (not bool(getattr(self, "_bartender_sequence_running", False)))
         )
         self._set_webui_order_start_enabled(auto_unlock)
@@ -1393,22 +1407,24 @@ class App(QMainWindow, form):
             return
 
         if start_btn is not None:
-            start_btn.setEnabled(False)
+            start_btn.setEnabled(True)
             start_btn.setText("오토모드: WEB UI 실행")
         if robot_action_test_btn is not None:
             robot_action_test_btn.setEnabled(False)
-        if self._bartender_auto_ready:
-            if hint_label is not None and (not lock_status):
-                hint_label.setText("오토모드: 모든 장치 정상. WEB UI 시작 플래그를 기다리는 모니터링 상태입니다.")
-            if status_label is not None and (not self._bartender_sequence_running) and (not lock_status):
-                status_label.setText("상태: 오토모드 대기 (WEB UI 시작 플래그 대기)")
-                status_label.setStyleSheet("font-size: 10pt; font-weight: 800; color: #166534;")
-        else:
-            if hint_label is not None and (not lock_status):
-                hint_label.setText("오토모드: 비전/로봇/음성주문 연결이 모두 정상일 때만 활성 조건이 충족됩니다.")
-            if status_label is not None and (not self._bartender_sequence_running) and (not lock_status):
-                status_label.setText("상태: 오토모드 비활성 (장치 상태 확인 필요)")
-                status_label.setStyleSheet("font-size: 10pt; font-weight: 800; color: #b45309;")
+        if hint_label is not None and (not lock_status):
+            hint_label.setText("오토모드: WEB UI 보이스 버튼으로 시퀀스를 시작합니다. (메뉴얼과 동일 실행 조건)")
+        if status_label is not None and (not self._bartender_sequence_running) and (not lock_status):
+            status_label.setText("상태: 오토모드 대기 (WEB UI 보이스 버튼 시작)")
+            status_label.setStyleSheet("font-size: 10pt; font-weight: 800; color: #166534;")
+
+    def _apply_device_toggle_lock_by_mode(self):
+        lock = str(getattr(self, "_bartender_mode", "") or "").strip().lower() == "auto"
+        for _k, toggle in getattr(self, "_top_status_toggles", {}).items():
+            if toggle is not None:
+                toggle.setEnabled(not lock)
+        voice_toggle = getattr(self, "_voice_order_connection_toggle", None)
+        if voice_toggle is not None:
+            voice_toggle.setEnabled(not lock)
 
     def _default_menu_xyz_offsets(self):
         offsets = {}
@@ -1853,17 +1869,18 @@ class App(QMainWindow, form):
             if str(getattr(self, "_bartender_mode", "") or "").strip().lower() == "auto":
                 # 오토모드 음성 출력은 WEB UI 담당. 개발자 UI는 진행/결과 데이터만 표시한다.
                 allow_tts_play = False
-            if allow_tts_play and tts_text and result_status in ("success", "retry"):
+            if tts_text and result_status in ("success", "retry"):
                 public_tts = self._sanitize_customer_tts_text(status=result_status, raw_text=tts_text)
                 tts_sig = f"{run_id}:{result_status}:{public_tts}"
                 if tts_sig != str(getattr(self, "_bartender_last_tts_signature", "")):
                     self._bartender_last_tts_signature = tts_sig
-                    if result_status == "retry":
-                        self._voice_retry_pending_after_tts = True
-                        self._play_voice_order_feedback_tone(public_tts)
-                    else:
-                        self._voice_retry_pending_after_tts = False
-                        self._play_voice_order_feedback_tone(public_tts)
+                    if allow_tts_play:
+                        if result_status == "retry":
+                            self._voice_retry_pending_after_tts = True
+                            self._play_voice_order_feedback_tone(public_tts)
+                        else:
+                            self._voice_retry_pending_after_tts = False
+                            self._play_voice_order_feedback_tone(public_tts)
 
         status_label = getattr(self, "_bartender_status_label", None)
         hint_label = getattr(self, "_bartender_mode_hint_label", None)
@@ -1961,23 +1978,6 @@ class App(QMainWindow, form):
             except Exception:
                 return "백엔드 상태 확인 실패"
 
-        if self._bartender_mode == "auto":
-            top_required = (("vision", "비전1"), ("vision2", "비전2"), ("robot", "로봇"))
-            for key, label in top_required:
-                if not bool(self._top_status_enabled.get(key, True)):
-                    return f"{label} 비활성화 상태입니다."
-                payload = self._top_status_state_cache.get(key, None)
-                if not isinstance(payload, tuple) or len(payload) != 2:
-                    return f"{label} 상태 미수신"
-                state_text, severity = payload
-                if not self._severity_is_normal(severity):
-                    return f"{label} 상태 이상: {state_text}"
-
-            voice_sev = str(getattr(self, "_voice_order_status_severity", "") or "").strip().lower()
-            if not self._severity_is_normal(voice_sev):
-                voice_state = str(getattr(self, "_voice_order_status_text", "") or "").strip() or "알수없음"
-                return f"음성주문 연결 이상: {voice_state}"
-
         if hasattr(backend, "get_robot_state_snapshot"):
             try:
                 state_code, state_name, _seen_at = backend.get_robot_state_snapshot()
@@ -1991,13 +1991,6 @@ class App(QMainWindow, form):
                 if code is not None and code in ROBOT_STATE_ERROR_CODES:
                     name = str(state_name or f"STATE_{code}")
                     return f"로봇 에러 상태 감지: {name}({code})"
-
-        missing = self._missing_recipe_ingredients_for_runtime()
-        if missing:
-            missing_text = ", ".join(
-                str(self._menu_label_by_code.get(code, code) or code) for code in missing
-            )
-            return f"레시피 재료 미검출: {missing_text}"
         return None
 
     def _stop_bartender_sequence_for_safety(self, reason: str):
@@ -2022,8 +2015,6 @@ class App(QMainWindow, form):
     def _check_bartender_runtime_safety(self):
         if not bool(getattr(self, "_bartender_sequence_running", False)):
             return
-        if str(getattr(self, "_bartender_mode", "") or "").strip().lower() != "auto":
-            return
         now = time.monotonic()
         if (now - float(getattr(self, "_bartender_safety_last_check_at", 0.0))) < 0.25:
             return
@@ -2033,6 +2024,7 @@ class App(QMainWindow, form):
             self._stop_bartender_sequence_for_safety(reason)
 
     def _reset_bartender_sequence(self, log: bool = True):
+        self._stop_voice_order_feedback_audio("시퀀스 초기화")
         for step_key, _step_label in BARTENDER_SEQUENCE_STEPS:
             self._bartender_sequence_state[str(step_key)] = "pending"
         self._bartender_active_step = ""
@@ -2042,7 +2034,6 @@ class App(QMainWindow, form):
         self._bartender_last_safety_reason = ""
         self._bartender_safety_last_check_at = 0.0
         self._bartender_last_log_id = 0
-        self._bartender_last_tts_signature = ""
         self._bartender_status_lock = False
         self._refresh_bartender_sequence_styles()
         if log:
@@ -2085,6 +2076,11 @@ class App(QMainWindow, form):
             else:
                 self._bartender_sequence_running = False
             self._update_bartender_mode_ui()
+            return
+
+        # 오토모드 대기에서는 개발자 버튼을 WEB UI 실행 버튼으로 사용한다.
+        if str(self._bartender_mode or "").strip().lower() == "auto":
+            self._open_voice_order_webui()
             return
 
         request_payload = {
@@ -2377,10 +2373,9 @@ class App(QMainWindow, form):
         status = str(result.get("status", "") or "").strip().lower()
         if status != "success":
             return False, f"주문 상태가 success가 아닙니다: {status or '-'}"
-        if self._bartender_mode == "auto":
-            safety_issue = self._detect_bartender_runtime_safety_issue()
-            if safety_issue:
-                return False, f"안전정지 조건: {safety_issue}"
+        safety_issue = self._detect_bartender_runtime_safety_issue()
+        if safety_issue:
+            return False, f"안전정지 조건: {safety_issue}"
 
         speed = self._motion_speed_for_command()
         ok, msg = self._robot_action_call_with_retry(
@@ -2569,6 +2564,15 @@ class App(QMainWindow, form):
         self._update_voice_mic_button_state()
 
     def _on_voice_order_connection_toggled(self, checked: bool):
+        if str(getattr(self, "_bartender_mode", "") or "").strip().lower() == "auto":
+            toggle = getattr(self, "_voice_order_connection_toggle", None)
+            if toggle is not None:
+                toggle.blockSignals(True)
+                toggle.setChecked(bool(self._voice_order_enabled))
+                toggle.setText("ON" if bool(self._voice_order_enabled) else "OFF")
+                toggle.blockSignals(False)
+            self._append_voice_order_log("오토모드에서는 음성주문 ON/OFF를 변경할 수 없습니다.", level="warning")
+            return
         on = bool(checked)
         self._voice_order_enabled = bool(on)
         self._set_voice_order_connection_state(on)
@@ -2610,7 +2614,7 @@ class App(QMainWindow, form):
             return
         if str(getattr(self, "_bartender_mode", "") or "").strip().lower() == "auto":
             btn.setEnabled(False)
-            btn.setText("오토모드: WEB UI 시작")
+            btn.setText(VOICE_MIC_BUTTON_TEXT_START)
             return
         toggle = getattr(self, "_voice_order_connection_toggle", None)
         on = bool(toggle.isChecked()) if toggle is not None else True
@@ -2621,6 +2625,19 @@ class App(QMainWindow, form):
             return
         btn.setEnabled(True)
         btn.setText(VOICE_MIC_BUTTON_TEXT_STOP if running else VOICE_MIC_BUTTON_TEXT_START)
+
+    def _stop_voice_order_feedback_audio(self, reason: str = ""):
+        try:
+            self._voice_feedback_audio_gen = int(getattr(self, "_voice_feedback_audio_gen", 0) or 0) + 1
+        except Exception:
+            self._voice_feedback_audio_gen = 1
+        if sd is not None:
+            try:
+                sd.stop()
+            except Exception:
+                pass
+        if reason:
+            self._append_voice_order_log(f"TTS 재생 중지: {reason}", level="warning")
 
     def _set_voice_order_mic_state(self, state_text: str, severity: str = "info"):
         label = getattr(self, "_voice_order_mic_state_label", None)
@@ -3325,6 +3342,7 @@ class App(QMainWindow, form):
                 except Exception:
                     pass
             return
+        play_gen = int(getattr(self, "_voice_feedback_audio_gen", 0) or 0)
         play_ms = int(max(520, min(5200, 320 + (len(text) * 95))))
         self._set_voice_order_process_state("응답 음성 출력중")
 
@@ -3359,6 +3377,9 @@ class App(QMainWindow, form):
                 return False
 
         def _play_worker():
+            def _is_canceled() -> bool:
+                return int(getattr(self, "_voice_feedback_audio_gen", 0) or 0) != int(play_gen)
+
             def _emit_tts_log(msg: str, level: str = "info"):
                 try:
                     self.voice_order_event_received.emit(
@@ -3372,11 +3393,15 @@ class App(QMainWindow, form):
                     pass
 
             try:
+                if _is_canceled():
+                    return
                 spoken = False
                 use_openai_tts = str(os.environ.get("VOICE_ORDER_USE_OPENAI_TTS", "1") or "").strip().lower()
                 use_openai_tts = use_openai_tts not in ("0", "false", "no", "off")
 
                 if use_openai_tts:
+                    if _is_canceled():
+                        return
                     try:
                         tts_result = synthesize_openai_tts(text)
                         spoken = _play_wav_bytes(tts_result.audio_bytes)
@@ -3403,6 +3428,8 @@ class App(QMainWindow, form):
                 use_spd_say_fallback = str(os.environ.get("VOICE_ORDER_TTS_FALLBACK_SPD_SAY", "0") or "").strip().lower()
                 use_spd_say_fallback = use_spd_say_fallback in ("1", "true", "yes", "on")
                 if use_spd_say_fallback:
+                    if _is_canceled():
+                        return
                     try:
                         result = subprocess.run(
                             ["spd-say", "-w", text],
@@ -3427,6 +3454,8 @@ class App(QMainWindow, form):
                     return
 
                 if sd is not None:
+                    if _is_canceled():
+                        return
                     try:
                         duration_sec = float(play_ms) / 1000.0
                         freq_hz = 660.0
@@ -4222,6 +4251,15 @@ class App(QMainWindow, form):
     def _on_top_status_toggle_changed(self, key: str, checked: bool):
         k = str(key)
         prev_on = bool(self._top_status_enabled.get(k, True))
+        if str(getattr(self, "_bartender_mode", "") or "").strip().lower() == "auto":
+            toggle = self._top_status_toggles.get(k)
+            if toggle is not None:
+                toggle.blockSignals(True)
+                toggle.setChecked(prev_on)
+                toggle.setText("ON" if prev_on else "OFF")
+                toggle.blockSignals(False)
+            self.append_log(f"[상태토글] 오토모드에서는 {k} ON/OFF를 변경할 수 없습니다.\n")
+            return
         on = bool(checked)
         self._top_status_enabled[k] = on
         toggle = self._top_status_toggles.get(k)
@@ -9635,50 +9673,23 @@ class App(QMainWindow, form):
 
     def _assigned_depth_topic_for_serial(self, serial, node=None):
         slot = self._runtime_camera_slot_for_serial(serial)
+        _ = node
         if slot == 2:
-            candidates = [
-                "/camera2/camera/aligned_depth_to_color/image_raw",
-                "/camera2/aligned_depth_to_color/image_raw",
-                "/camera2/camera/depth/image_rect_raw",
-                "/camera2/depth/image_rect_raw",
-                "/camera2/camera/depth/image_raw",
-            ]
-        else:
-            candidates = [
-                "/camera/camera/aligned_depth_to_color/image_raw",
-                "/camera/aligned_depth_to_color/image_raw",
-                "/camera/camera/depth/image_rect_raw",
-                "/camera/depth/image_rect_raw",
-                "/camera/camera/depth/image_raw",
-            ]
-        if node is not None:
-            for t in candidates:
-                if self._is_topic_alive(node, t):
-                    return t
-        return candidates[0]
+            return "/camera2/camera/aligned_depth_to_color/image_raw"
+        return "/camera/camera_1/aligned_depth_to_color/image_raw"
 
     def _assigned_raw_topic_for_serial(self, serial, node):
         slot = self._runtime_camera_slot_for_serial(serial)
+        _ = node
         if slot == 2:
-            topic_primary = "/camera2/camera/color/image_raw"
-            topic_fallback = "/camera2/color/image_raw"
-            for t in (topic_primary, topic_fallback):
-                if node is not None and self._is_image_topic_alive(node, t):
-                    return t
-            return topic_primary
-        return self._resolve_calib_vision_topic(node)
+            return "/camera2/camera/color/image_raw"
+        return CALIB_VISION_TOPIC_PRIMARY
 
     def _assigned_info_topic_for_serial(self, serial, node):
         slot = self._runtime_camera_slot_for_serial(serial)
+        _ = node
         if slot == 2:
-            for t in ("/camera2/camera/color/camera_info", "/camera2/color/camera_info"):
-                if self._is_topic_alive(node, t):
-                    return t
             return "/camera2/camera/color/camera_info"
-        if self._is_topic_alive(node, CALIB_CAMERA_INFO_TOPIC_PRIMARY):
-            return CALIB_CAMERA_INFO_TOPIC_PRIMARY
-        if self._is_topic_alive(node, CALIB_CAMERA_INFO_TOPIC_FALLBACK):
-            return CALIB_CAMERA_INFO_TOPIC_FALLBACK
         return CALIB_CAMERA_INFO_TOPIC_PRIMARY
 
     def _vision_panel_needs_depth(self, panel_index: int = 1):
@@ -9817,12 +9828,6 @@ class App(QMainWindow, form):
 
     def _is_image_topic_alive(self, node, topic_name):
         return self._is_topic_alive(node, topic_name)
-
-    def _resolve_calib_vision_topic(self, node):
-        for topic_name in (CALIB_VISION_TOPIC_PRIMARY, CALIB_VISION_TOPIC_FALLBACK):
-            if self._is_image_topic_alive(node, topic_name):
-                return topic_name
-        return CALIB_VISION_TOPIC_PRIMARY
 
     def _calibration_output_meta_topic(self, panel_index: int = 1):
         return CALIB_OUTPUT_META_TOPIC_2 if int(panel_index) == 2 else CALIB_OUTPUT_META_TOPIC_1

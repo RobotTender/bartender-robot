@@ -1289,25 +1289,79 @@ class VoiceOrderWebHandler(BaseHTTPRequestHandler):
                 self._write_json({"error": fail_msg}, status_code=500)
                 return
 
+            recognized_text = str(transcript or "").strip()
+            if not recognized_text:
+                for key in ("input_text", "stt_text", "recognized_text", "text"):
+                    maybe_text = str(result.get(key, "") or "").strip()
+                    if maybe_text:
+                        recognized_text = maybe_text
+                        break
+
+            status_text = str(result.get("status", "") or "").strip().lower()
+            making = False
+            if status_text == "success":
+                # 오토모드에서는 WebUI 보이스 버튼이 시퀀스 시작 트리거가 된다.
+                start_payload = {
+                    "mode": "auto",
+                    "request": {
+                        "input_text": recognized_text,
+                        "request_stt": (not bool(recognized_text)),
+                        "allow_llm": True,
+                        "execute_robot_action": True,
+                    },
+                }
+                ok_backend, backend_resp = _backend_sequence_api_call(
+                    "POST",
+                    "/api/sequence/start",
+                    payload=start_payload,
+                    timeout_sec=2.0,
+                )
+                if not ok_backend or (not bool(backend_resp.get("ok", False))):
+                    err = str(backend_resp.get("message") or backend_resp.get("error") or "backend_start_failed")
+                    _append_progress(self.server, "system", f"오토 시퀀스 시작 실패: {err}")
+                    # Web UI에서 재입력 가능하도록 실패 응답을 정상 payload로 반환한다.
+                    self._write_json(
+                        {
+                            "text": recognized_text,
+                            "transcript": recognized_text,
+                            "emotion": emotion,
+                            "recommend_menu": recommend_menu,
+                            "reason": reason,
+                            "tts_text": f"시퀀스 시작 실패: {err}",
+                            "llm_text": f"시퀀스 시작 실패: {err}",
+                            "status": "error",
+                            "selected_menu": "",
+                            "selected_menu_label": "",
+                            "recipe": {},
+                            "route": "backend_start_failed",
+                            "making": False,
+                        }
+                    )
+                    return
+                _append_progress(self.server, "system", "WEB 보이스버튼 트리거로 오토 시퀀스 시작")
+                making = True
+            else:
+                _append_progress(self.server, "system", f"오토 시퀀스 시작 생략(status={status_text or '-'})")
+
             with self.server.state_lock:
-                self.server.last_input_text = transcript
-                self.server.bartender_process_running = True
+                self.server.last_input_text = recognized_text
+                self.server.bartender_process_running = bool(making)
                 self.server.updated_at = _now_text()
             self._write_json(
                 {
-                    "text": transcript,
-                    "transcript": transcript,
+                    "text": recognized_text,
+                    "transcript": recognized_text,
                     "emotion": emotion,
                     "recommend_menu": recommend_menu,
                     "reason": reason,
                     "tts_text": str(result.get("tts_text", "") or ""),
                     "llm_text": str(result.get("llm_text", result.get("tts_text", "")) or ""),
-                    "status": str(result.get("status", "") or ""),
+                    "status": str(status_text or ""),
                     "selected_menu": str(result.get("selected_menu", "") or ""),
                     "selected_menu_label": str(result.get("selected_menu_label", "") or ""),
                     "recipe": result.get("recipe", {}) or {},
                     "route": str(result.get("route", "") or ""),
-                    "making": False,
+                    "making": bool(making),
                 }
             )
             return
