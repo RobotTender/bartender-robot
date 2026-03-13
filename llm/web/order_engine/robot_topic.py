@@ -22,8 +22,17 @@ def _build_order_payload(payload: dict) -> str:
 def _publish_robot_order(payload: dict) -> None:
     order_payload = _build_order_payload(payload)
     msg = {"data": order_payload}
+    
+    # Dynamically find the workspace setup file
+    workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    setup_bash = os.path.join(workspace_root, "robot", "install", "setup.bash")
+    
+    source_cmd = "source /opt/ros/jazzy/setup.bash"
+    if os.path.exists(setup_bash):
+        source_cmd += f" && source {shlex.quote(setup_bash)}"
+
     full_cmd = (
-        "source /opt/ros/jazzy/setup.bash && "
+        f"{source_cmd} && "
         f"ros2 topic pub --once {ROBOT_ORDER_TOPIC} std_msgs/msg/String "
         f"{shlex.quote(json.dumps(msg, ensure_ascii=False, separators=(',', ':')))}"
     )
