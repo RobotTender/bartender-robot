@@ -5,23 +5,6 @@ import time
 
 # Robust, Single-Task DRL for Gripper Control (Python 3 Compatible)
 DRL_HELPER_FUNCTIONS = """
-def modbus_send_make(buf):
-    # buf is a list of integers
-    crc = 0xFFFF
-    for pos in buf:
-        crc ^= pos
-        for i in range(8):
-            if (crc & 1) != 0:
-                crc >>= 1
-                crc ^= 0xA001
-            else:
-                crc >>= 1
-    
-    # Append CRC (Little Endian)
-    buf.append(crc & 0xFF)
-    buf.append((crc >> 8) & 0xFF)
-    return buf
-
 def gripper_init(force):
     res = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
     wait(0.5)
