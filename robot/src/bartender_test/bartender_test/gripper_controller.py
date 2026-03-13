@@ -5,17 +5,34 @@ import time
 
 # Robust, Single-Task DRL for Gripper Control (Python 3 Compatible)
 DRL_HELPER_FUNCTIONS = """
+def modbus_send_make(buf):
+    # buf is a list of integers
+    crc = 0xFFFF
+    for pos in buf:
+        crc ^= pos
+        for i in range(8):
+            if (crc & 1) != 0:
+                crc >>= 1
+                crc ^= 0xA001
+            else:
+                crc >>= 1
+    
+    # Append CRC (Little Endian)
+    buf.append(crc & 0xFF)
+    buf.append((crc >> 8) & 0xFF)
+    return buf
+
 def gripper_init(force):
     res = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
     wait(0.5)
     if res == 0:
         # Torque enable (ID=1, FC=6, Addr=256, Val=1)
-        flange_serial_write(modbus_send_make(bytes([1, 6, 1, 0, 0, 1])))
+        flange_serial_write(modbus_send_make([1, 6, 1, 0, 0, 1]))
         wait(0.5)
         # Set Force (ID=1, FC=6, Addr=275, Val=force)
         f_hi = (force >> 8) & 0xFF
         f_lo = force & 0xFF
-        flange_serial_write(modbus_send_make(bytes([1, 6, 1, 19, f_hi, f_lo])))
+        flange_serial_write(modbus_send_make([1, 6, 1, 19, f_hi, f_lo]))
         wait(0.5)
         flange_serial_close()
         return True
@@ -28,15 +45,15 @@ def gripper_move_and_wait(stroke):
         # Send Position command (ID=1, FC=16, Addr=282, Cnt=2, Len=4, Pos_Hi, Pos_Lo, 0, 0)
         s_hi = (stroke >> 8) & 0xFF
         s_lo = stroke & 0xFF
-        flange_serial_write(modbus_send_make(bytes([1, 16, 1, 26, 0, 2, 4, s_hi, s_lo, 0, 0])))
+        flange_serial_write(modbus_send_make([1, 16, 1, 26, 0, 2, 4, s_hi, s_lo, 0, 0]))
         wait(0.5)
         
         # Internal Polling for "Moving" (Reg 284)
         for i in range(0, 50):
-            flange_serial_write(modbus_send_make(bytes([1, 3, 1, 28, 0, 1])))
+            flange_serial_write(modbus_send_make([1, 3, 1, 28, 0, 1]))
             size, val = flange_serial_read(0.1)
             if size >= 5:
-                # val is bytes in Python 3
+                # val is bytes in Python 3, indexable as ints
                 moving = val[3] * 256 + val[4]
                 if moving == 0:
                     break
