@@ -120,17 +120,27 @@ class RobotControllerNode(Node):
 
     def _try_start_task(self):
         if self.state == "RUNNING":
+            self.get_logger().info("State is already RUNNING, skipping.")
             return
         if not self.task_received or self.items is None:
+            self.get_logger().info("No task received or items is None.")
             return
+
+        if self.latest_cv_color is None:
+            self.get_logger().info("latest_cv_color is None, waiting for camera...")
+        if self.latest_cv_depth_mm is None:
+            self.get_logger().info("latest_cv_depth_mm is None, waiting for camera...")
+        if self.intrinsics is None:
+            self.get_logger().info("intrinsics is None, waiting for camera...")
+
         if self.latest_cv_color is None or self.latest_cv_depth_mm is None or self.intrinsics is None:
             self.get_logger().info("카메라 입력 준비 전이라 주문을 보류합니다.")
             return
-        
+
         import threading
+        self.get_logger().info("Starting process_grip thread...")
         self.state = "RUNNING"
         threading.Thread(target=self.process_grip, args=(self.items,), daemon=True).start()
-
     def camera_to_robot(self, point_cam):
         return point_cam @ self.R + self.t
 
