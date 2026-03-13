@@ -74,6 +74,10 @@ def start_process(spec: ManagedProcess) -> None:
     stdout = None
     stderr = None
 
+    if spec.name == "camera":
+        stdout = subprocess.DEVNULL
+        stderr = subprocess.DEVNULL
+
     # Use exec to replace the bash shell with the intended command where possible
     cmd = spec.cmd
     if " && " not in cmd and ";" not in cmd and not cmd.strip().startswith("exec "):

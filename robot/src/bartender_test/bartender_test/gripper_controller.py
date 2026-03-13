@@ -91,6 +91,14 @@ class GripperController:
         if not self.wait_drl_ready(force_stop=True): 
             return False
         
+        # Record last alarm before starting
+        last_alarm_before = None
+        req_alarm = GetLastAlarm.Request()
+        future_alarm = self.alarm_cli.call_async(req_alarm)
+        res_alarm = self._wait_for_future(future_alarm, timeout=2.0)
+        if res_alarm and res_alarm.success:
+            last_alarm_before = res_alarm.log_alarm.index
+
         self.node.get_logger().info("DRL is ready. Starting task...")
         time.sleep(1.0) # Settle Task Manager
         
@@ -102,6 +110,15 @@ class GripperController:
             self.node.get_logger().info("DRL Start Service Success. Waiting for completion...")
             time.sleep(1.0) # Wait for task to register as PLAYING
             success = self.wait_drl_ready(timeout=timeout, force_stop=False)
+            
+            # Check for new alarms even if wait_drl_ready returned True (as it returns True on state=1 (Stopped))
+            future_alarm_after = self.alarm_cli.call_async(req_alarm)
+            res_alarm_after = self._wait_for_future(future_alarm_after, timeout=2.0)
+            if res_alarm_after and res_alarm_after.success:
+                if res_alarm_after.log_alarm.index != last_alarm_before and res_alarm_after.log_alarm.index != 0:
+                    self.node.get_logger().error(f"DRL Task triggered an alarm! Index: {res_alarm_after.log_alarm.index}")
+                    return False
+
             if success:
                 self.node.get_logger().info("DRL Task Completed Successfully.")
             else:

@@ -92,9 +92,31 @@ class TriggerListener(Node):
 def execute_action(cmd: str, count: int, motion_node: Node, listener_node: TriggerListener):
     from DSR_ROBOT2 import (movej, movel, movesx, posx, posj, movesj, set_robot_mode, ROBOT_MODE_AUTONOMOUS, wait,
                             get_current_posx, get_current_posj, fkin, get_robot_state, get_workpiece_weight)
+    from dsr_msgs2.srv import GetRobotState
 
     set_robot_mode(ROBOT_MODE_AUTONOMOUS)
     wait(0.5)
+
+    motion_node.get_logger().info("Ensuring robot is completely stationary before starting action...")
+    state_cli = motion_node.create_client(GetRobotState, 'system/get_robot_state')
+    if state_cli.wait_for_service(timeout_sec=2.0):
+        for _ in range(30):
+            req = GetRobotState.Request()
+            future = state_cli.call_async(req)
+            
+            # Correctly spin the node to process the service response
+            rclpy.spin_until_future_complete(motion_node, future, timeout_sec=1.0)
+            
+            if future.done():
+                res = future.result()
+                if res and res.robot_state == 1: # STATE_STANDBY
+                    motion_node.get_logger().info("Robot is in STANDBY state.")
+                    break
+                else:
+                    motion_node.get_logger().info(f"Robot state is {res.robot_state}, waiting for STANDBY (1)...")
+            else:
+                motion_node.get_logger().warn("Timeout waiting for GetRobotState response.")
+            time.sleep(0.5)
 
     if cmd == 'warmup':
         motion_node.get_logger().info(f"Starting WARMUP ({count} cycles)")
@@ -108,12 +130,29 @@ def execute_action(cmd: str, count: int, motion_node: Node, listener_node: Trigg
             wait(0.5)
 
     elif cmd == 'pour':
+        motion_node.get_logger().info("Calculating Cartesian pouring paths using fkin...")
+        
+        # Calculate Forward Kinematics
+        fkin_cheers = fkin(CHEERS_POSE, ref=0)
+        fkin_contact = fkin(CONTACT_POSE, ref=0)
+        fkin_horiz = fkin(POUR_HORIZONTAL, ref=0)
+        fkin_diag = fkin(POUR_DIAGONAL, ref=0)
+        fkin_vert = fkin(POUR_VERTICAL, ref=0)
+
+        motion_node.get_logger().info(f"fkin CHEERS: {fkin_cheers}")
+        motion_node.get_logger().info(f"fkin CONTACT: {fkin_contact}")
+
         # Create hybrid Cartesian poses: exact POS_XYZ + orientation from corresponding Joint Pose
-        p1 = posx(POS1_XYZ + [float(x) for x in fkin(CHEERS_POSE, ref=0)][3:])
-        p2 = posx(POS2_XYZ + [float(x) for x in fkin(CONTACT_POSE, ref=0)][3:])
-        p3 = posx(POS3_XYZ + [float(x) for x in fkin(POUR_HORIZONTAL, ref=0)][3:])
-        p4 = posx(POS4_XYZ + [float(x) for x in fkin(POUR_DIAGONAL, ref=0)][3:])
-        p5 = posx(POS5_XYZ + [float(x) for x in fkin(POUR_VERTICAL, ref=0)][3:])
+        p1 = posx(POS1_XYZ + [float(x) for x in fkin_cheers][3:])
+        p2 = posx(POS2_XYZ + [float(x) for x in fkin_contact][3:])
+        p3 = posx(POS3_XYZ + [float(x) for x in fkin_horiz][3:])
+        p4 = posx(POS4_XYZ + [float(x) for x in fkin_diag][3:])
+        p5 = posx(POS5_XYZ + [float(x) for x in fkin_vert][3:])
+
+        motion_node.get_logger().info(f"Pour Path P2 (CONTACT): {p2}")
+        motion_node.get_logger().info(f"Pour Path P3 (HORIZONTAL): {p3}")
+        motion_node.get_logger().info(f"Pour Path P4 (DIAGONAL): {p4}")
+        motion_node.get_logger().info(f"Pour Path P5 (VERTICAL): {p5}")
 
         # Approach: Move directly using Joint Space to avoid spline weirdness
         # We know p2 corresponds exactly to CONTACT_POSE
