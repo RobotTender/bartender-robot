@@ -20,7 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'gripper = bartender_test.gripper_command:main',
+            'gripper = bartender_test.gripper:main',
             'pose = bartender_test.pose:main',
             'movej = bartender_test.movej:main',
             'movel = bartender_test.movel:main',
@@ -30,6 +30,7 @@ setup(
             'trigger = bartender_test.trigger:main',
             'register_tool = bartender_test.register_tool:main',
             'startup = bartender_test.startup:main',
+            'pick = bartender_test.pick:main',
         ],
     },
 )

@@ -49,6 +49,13 @@ def _build_startup_command() -> str:
         "exec python3 -m bartender_test.startup"
     )
 
+def _build_gripper_command() -> str:
+    return (
+        f"{_build_workspace_source_prefix()} && "
+        f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
+        "exec python3 -m bartender_test.gripper"
+    )
+
 def _build_pick_command() -> str:
     return (
         f"{_build_workspace_source_prefix()} && "
@@ -174,6 +181,13 @@ def main() -> int:
                      raise KeyboardInterrupt
                 raise RuntimeError(f"startup exited with code {startup_proc.returncode}")
             print("[ok] startup completed successfully.")
+
+            # START GRIPPER NODE HERE (After robot is in STANDBY)
+            print("\n[status] Launching Persistent Gripper Node (Hardware Interface)...")
+            gripper_spec = ManagedProcess("gripper", _build_gripper_command(), ROOT)
+            start_process(gripper_spec)
+            started_processes.append(gripper_spec)
+            time.sleep(1.0) # Settle gripper node
 
         # 3. Start pick node
         if not args.skip_pick:
