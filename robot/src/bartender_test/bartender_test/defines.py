@@ -3,10 +3,10 @@
 
 HOME_POSE = [0.0, 0.0, 90.0, 0.0, 90.0, 0.0]
 CHEERS_POSE = [45.0, 0.0, 135.0, 90.0, -90.0, -135.0]
-CONTACT_POSE = [45.0, 30.0, 130.0, 90.0, -90.0, -60.0]
-POUR_HORIZONTAL = [45.0, 15.0, 125.0, 90.0, -90.0, -40.0]
-POUR_DIAGONAL = [45.0, -7.0, 125.0, 90.0, -90.0, -12.0]
-POUR_VERTICAL = [44.998, -35.539, 135.460, 90.0, -89.998, 10.942]
+CONTACT_POSE = [45.00, 31.00, 138.90, 90.01, -90.00, -70.10]
+POUR_HORIZONTAL = [45.00, 13.63, 137.92, 90.00, -90.00, -28.46]
+POUR_DIAGONAL = [45.00, -5.81, 143.54, 90.00, -90.00, 7.72]
+POUR_VERTICAL = [45.00, -26.99, 149.99, 90.00, -90.00, 34.01]
 POLE_POSE = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 # Bottle & Grasp Parameters
@@ -19,8 +19,8 @@ GRASP_Z_FROM_BOTTOM = 80.0   # mm
 DEFAULT_TARGET_POUR = 50.0   # g
 
 # Cartesian Markers (mm)
-POS1_XYZ = [308.48, 64.52, 313.75]   # Red
-POS2_XYZ = [345.98, 102.02, 183.75]   # Orange (was mid_p1p2)
-POS3_XYZ = [359.48, 115.52, 280.0]   # Yellow (was pos2)
-POS4_XYZ = [320.98, 77.02, 398.75]   # Green  (was mid_p2p3)
-POS5_XYZ = [228.48, -15.48, 443.75]  # Blue   (was pos3)
+POS1_XYZ = [278.48, 34.52, 313.75]   # Red
+POS2_XYZ = [304.04, 60.08, 156.99]   # Orange (was mid_p1p2)
+POS3_XYZ = [309.78, 65.83, 239.06]   # Yellow (was pos2)
+POS4_XYZ = [272.68, 28.72, 299.58]   # Green  (was mid_p2p3)
+POS5_XYZ = [223.48, -20.48, 333.75]  # Blue   (was pos3)
