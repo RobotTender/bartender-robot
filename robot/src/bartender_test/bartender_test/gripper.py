@@ -27,15 +27,19 @@ flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE,
 flange_serial_write(modbus_fc06(1, 256, 1))
 wait(0.2)
 
-# 3. Set Force (Slave 1, Addr 275, Val 400)
-flange_serial_write(modbus_fc06(1, 275, 400))
+# 3. Set Velocity (Slave 1, Addr 270, Val 200 - Faster)
+flange_serial_write(modbus_fc06(1, 270, 200))
 wait(0.1)
 
-# 4. Move (Slave 1, Addr 282, Val {stroke})
-flange_serial_write(modbus_fc16(1, 282, 2, [{stroke}, 0]))
-wait(1.5) # Wait for physical movement
+# 4. Set Force (Slave 1, Addr 275, Val {force})
+flange_serial_write(modbus_fc06(1, 275, {force}))
+wait(0.1)
 
-# 5. Cleanup
+# 5. Move (Slave 1, Addr 282, Val {stroke})
+flange_serial_write(modbus_fc16(1, 282, 2, [{stroke}, 0]))
+wait(1.0) # Reduced wait time for faster movement
+
+# 6. Cleanup
 flange_serial_close()
 """
 
@@ -57,17 +61,17 @@ class GripperNode(Node):
         
         self.get_logger().info('--- Autonomous Gripper Node (One-Shot Mode) Initialized ---')
 
-    async def execute_drl(self, stroke):
+    async def execute_drl(self, stroke, force=400):
         if not self.drl_cli.wait_for_service(timeout_sec=2.0):
             self.get_logger().error('DRL Start service not available!')
             return False
         
-        code = DRL_GRIPPER_TEMPLATE.format(stroke=stroke)
+        code = DRL_GRIPPER_TEMPLATE.format(stroke=stroke, force=force)
         req = DrlStart.Request()
         req.robot_system = 0 # Real/Virtual depending on bringup
         req.code = code
         
-        self.get_logger().info(f'Executing Gripper DRL: Stroke={stroke}')
+        self.get_logger().info(f'Executing Gripper DRL: Stroke={stroke}, Force={force}')
         try:
             future = self.drl_cli.call_async(req)
             result = await future
@@ -77,13 +81,14 @@ class GripperNode(Node):
             return False
 
     async def open_callback(self, request, response):
-        success = await self.execute_drl(0)
+        success = await self.execute_drl(0, force=400)
         response.success = success
         response.message = "Open command (One-Shot) finished" if success else "Failed to execute DRL"
         return response
 
     async def close_callback(self, request, response):
-        success = await self.execute_drl(700) # Full close
+        # We use a higher force for closing (800) to ensure stable grasp
+        success = await self.execute_drl(700, force=800) 
         response.success = success
         response.message = "Close command (One-Shot) finished" if success else "Failed to execute DRL"
         return response
