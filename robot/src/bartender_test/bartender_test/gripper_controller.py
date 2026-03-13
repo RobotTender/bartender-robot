@@ -12,21 +12,15 @@ def modbus_set_slaveid(slaveid):
     g_slaveid = slaveid
 def modbus_fc06(address, value):
     global g_slaveid
-    data = (g_slaveid).to_bytes(1, byteorder='big')
-    data += (6).to_bytes(1, byteorder='big')
-    data += (address).to_bytes(2, byteorder='big')
-    data += (value).to_bytes(2, byteorder='big')
-    return modbus_send_make(data)
+    data_list = [g_slaveid, 6, (address >> 8) & 0xFF, address & 0xFF, (value >> 8) & 0xFF, value & 0xFF]
+    return bytes(modbus_send_make(data_list))
 def modbus_fc16(startaddress, cnt, valuelist):
     global g_slaveid
-    data = (g_slaveid).to_bytes(1, byteorder='big')
-    data += (16).to_bytes(1, byteorder='big')
-    data += (startaddress).to_bytes(2, byteorder='big')
-    data += (cnt).to_bytes(2, byteorder='big')
-    data += (2 * cnt).to_bytes(1, byteorder='big')
+    data_list = [g_slaveid, 16, (startaddress >> 8) & 0xFF, startaddress & 0xFF, (cnt >> 8) & 0xFF, cnt & 0xFF, (2 * cnt) & 0xFF]
     for i in range(0, cnt):
-        data += (valuelist[i]).to_bytes(2, byteorder='big')
-    return modbus_send_make(data)
+        data_list.append((valuelist[i] >> 8) & 0xFF)
+        data_list.append(valuelist[i] & 0xFF)
+    return bytes(modbus_send_make(data_list))
 def recv_check():
     size, val = flange_serial_read(0.1)
     if size > 0:
