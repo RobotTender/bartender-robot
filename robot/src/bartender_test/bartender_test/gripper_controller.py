@@ -8,22 +8,17 @@ DRL_HELPER_FUNCTIONS = """
 g_slaveid = 1
 def modbus_fc06(address, value):
     global g_slaveid
-    data = (g_slaveid).to_bytes(1, byteorder='big')
-    data += (6).to_bytes(1, byteorder='big')
-    data += (address).to_bytes(2, byteorder='big')
-    data += (value).to_bytes(2, byteorder='big')
-    return modbus_send_make(data)
+    # Built-in modbus_send_make requires a list to append CRC, 
+    # but flange_serial_write requires bytes.
+    return bytes(modbus_send_make([g_slaveid, 6, (address >> 8) & 0xFF, address & 0xFF, (value >> 8) & 0xFF, value & 0xFF]))
 
 def modbus_fc16(startaddress, cnt, valuelist):
     global g_slaveid
-    data = (g_slaveid).to_bytes(1, byteorder='big')
-    data += (16).to_bytes(1, byteorder='big')
-    data += (startaddress).to_bytes(2, byteorder='big')
-    data += (cnt).to_bytes(2, byteorder='big')
-    data += (2 * cnt).to_bytes(1, byteorder='big')
-    for i in range(0, cnt):
-        data += (valuelist[i]).to_bytes(2, byteorder='big')
-    return modbus_send_make(data)
+    data = [g_slaveid, 16, (startaddress >> 8) & 0xFF, startaddress & 0xFF, (cnt >> 8) & 0xFF, cnt & 0xFF, 2 * cnt]
+    for val in valuelist:
+        data.append((val >> 8) & 0xFF)
+        data.append(val & 0xFF)
+    return bytes(modbus_send_make(data))
 
 def recv_check():
     size, val = flange_serial_read(0.1)
@@ -55,13 +50,12 @@ def gripper_move_and_wait(stroke):
         wait(0.5)
         
         # Internal Polling for "Moving" (Reg 284)
-        # Register 284 is 0x011C
-        read_req = (1).to_bytes(1, 'big') + (3).to_bytes(1, 'big') + (284).to_bytes(2, 'big') + (1).to_bytes(2, 'big')
-        
         for i in range(0, 50):
-            flange_serial_write(modbus_send_make(read_req))
+            # FC03 Read (ID=1, FC=3, Addr=284, Cnt=1)
+            flange_serial_write(bytes(modbus_send_make([1, 3, 1, 28, 0, 1])))
             size, val = flange_serial_read(0.1)
             if size >= 5:
+                # val is bytes in Python 3, indexable as ints
                 moving = val[3] * 256 + val[4]
                 if moving == 0:
                     break
