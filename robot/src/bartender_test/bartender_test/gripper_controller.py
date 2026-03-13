@@ -16,14 +16,14 @@ if res == -1:
     tp_log("Failed to open flange serial!")
 
 def modbus_fc06(address, value):
-    data = [SLAVE_ID, 6, (address >> 8) & 0xFF, address & 0xFF, (value >> 8) & 0xFF, value & 0xFF]
-    return bytes(modbus_send_make(data))
+    data_list = [SLAVE_ID, 6, (address >> 8) & 0xFF, address & 0xFF, (value >> 8) & 0xFF, value & 0xFF]
+    return bytes(modbus_send_make(data_list))
 
 def modbus_fc16(startaddress, cnt, valuelist):
-    data_list = [SLAVE_ID, 16, (startaddress >> 8) & 0xFF, startaddress & 0xFF, (cnt >> 8) & 0xFF, cnt & 0xFF, 2 * cnt]
-    for val in valuelist:
-        data_list.append((val >> 8) & 0xFF)
-        data_list.append(val & 0xFF)
+    data_list = [SLAVE_ID, 16, (startaddress >> 8) & 0xFF, startaddress & 0xFF, (cnt >> 8) & 0xFF, cnt & 0xFF, (2 * cnt) & 0xFF]
+    for i in range(0, cnt):
+        data_list.append((valuelist[i] >> 8) & 0xFF)
+        data_list.append(valuelist[i] & 0xFF)
     return bytes(modbus_send_make(data_list))
 
 # 1. Enable Torque
@@ -36,6 +36,9 @@ wait(0.1)
 
 # 3. Action Command
 flange_serial_write(modbus_fc16(282, 2, [{cmd_val}, 0]))
+
+# 4. Cleanup
+flange_serial_close()
 """
 
 class GripperController:
