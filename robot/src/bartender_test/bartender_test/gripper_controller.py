@@ -58,39 +58,57 @@ class GripperController:
         self.alarm_cli = self.node.create_client(GetLastAlarm, f"/{namespace}/system/get_last_alarm")
 
     def _wait_for_future(self, future, timeout):
-        if self.node.executor is not None:
-            start = time.time()
-            while not future.done() and time.time() - start < timeout:
-                time.sleep(0.05)
-            return future.result() if future.done() else None
-        else:
+        # Always use spin_until_future_complete for simple CLI scripts or when no thread is spinning
+        try:
             rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout)
-            return future.result() if future.done() else None
+        except Exception as e:
+            self.node.get_logger().error(f"Error spinning for future: {e}")
+            return None
+        return future.result() if future.done() else None
 
-    def wait_drl_ready(self, timeout=10.0, force_stop=True):
+    def wait_drl_ready(self, timeout=30.0, force_stop=True):
         start = time.time()
         while time.time() - start < timeout:
-            future = self.state_cli.call_async(GetDrlState.Request())
+            req = GetDrlState.Request()
+            future = self.state_cli.call_async(req)
             res = self._wait_for_future(future, timeout=2.0)
             if res and res.success:
-                if res.drl_state in [1, 3]: return True
+                if res.drl_state in [1, 3]: 
+                    self.node.get_logger().info(f"DRL Ready (state={res.drl_state})")
+                    return True
                 if force_stop:
                     self.node.get_logger().warn(f"DRL busy ({res.drl_state}), stopping...")
                     stop_f = self.stop_cli.call_async(DrlStop.Request(stop_mode=1))
                     self._wait_for_future(stop_f, timeout=2.0)
+            else:
+                self.node.get_logger().warn("Waiting for DRL state service response...")
             time.sleep(1.0)
+        self.node.get_logger().error(f"DRL not ready within {timeout}s.")
         return False
 
     def _execute_raw(self, code, timeout=30.0):
-        if not self.wait_drl_ready(force_stop=True): return False
+        self.node.get_logger().info("Checking DRL readiness...")
+        if not self.wait_drl_ready(force_stop=True): 
+            return False
+        
+        self.node.get_logger().info("DRL is ready. Starting task...")
         time.sleep(1.0) # Settle Task Manager
         
         req = DrlStart.Request(robot_system=self.robot_system, code=f"{DRL_HELPER_FUNCTIONS}\n{code}")
         future = self.cli.call_async(req)
         res = self._wait_for_future(future, timeout=5.0)
+        
         if res and res.success:
+            self.node.get_logger().info("DRL Start Service Success. Waiting for completion...")
             time.sleep(1.0) # Wait for task to register as PLAYING
-            return self.wait_drl_ready(timeout=timeout, force_stop=False)
+            success = self.wait_drl_ready(timeout=timeout, force_stop=False)
+            if success:
+                self.node.get_logger().info("DRL Task Completed Successfully.")
+            else:
+                self.node.get_logger().error("DRL Task failed to complete or timed out.")
+            return success
+        
+        self.node.get_logger().error(f"DRL Start Service Failed: {res.message if res else 'No response'}")
         return False
 
     def activate(self, force: int = 400) -> bool:
