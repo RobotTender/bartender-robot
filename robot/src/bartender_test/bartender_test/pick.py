@@ -323,11 +323,12 @@ class RobotControllerNode(Node):
             time.sleep(0.5)
             # gripper 주류 잡기 - Replaced self.gripper.move(550) with service call
             self._gripper_close(800) 
-            time.sleep(1)
+            self.get_logger().info("그리퍼가 닫힐 때까지 대기합니다 (3초)...")
+            time.sleep(3.0)
 
             P_mid = [61.0, -20.0, 97.0, 96.0, -63.0, -195.0]
             self._movej(P_mid, VELOCITY, ACC)
-            time.sleep(1)
+            time.sleep(1.0)
 
             self.get_logger().info("따르기 위한 자세를 취합니다.")
             last_posj = [45.0, 0.0, 135.0, 90.0, -90.0, -135.0]
