@@ -14,7 +14,7 @@ def modbus_fc06(address, value):
     global g_slaveid
     # Use bytearray so it's mutable for modbus_send_make
     data = bytearray([g_slaveid, 6, (address >> 8) & 0xFF, address & 0xFF, (value >> 8) & 0xFF, value & 0xFF])
-    return modbus_send_make(data)
+    return bytes(modbus_send_make(data)) # Convert back to bytes for flange_serial_write
 
 def modbus_fc16(startaddress, cnt, valuelist):
     global g_slaveid
@@ -23,7 +23,7 @@ def modbus_fc16(startaddress, cnt, valuelist):
     for val in valuelist:
         data.append((val >> 8) & 0xFF)
         data.append(val & 0xFF)
-    return modbus_send_make(data)
+    return bytes(modbus_send_make(data)) # Convert back to bytes for flange_serial_write
 
 def gripper_init(force):
     res = flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
@@ -52,9 +52,9 @@ def gripper_move_and_wait(stroke):
         # Internal Polling for "Moving" (Reg 284)
         for i in range(0, 50):
             # FC03 Read (ID=1, FC=3, Addr=284, Cnt=1)
-            # modbus_send_make needs a mutable object
+            # modbus_send_make needs a mutable object, then convert to bytes
             read_req = bytearray([1, 3, 1, 28, 0, 1])
-            flange_serial_write(modbus_send_make(read_req))
+            flange_serial_write(bytes(modbus_send_make(read_req)))
             size, val = flange_serial_read(0.1)
             if size >= 5:
                 # val is bytes in Python 3, indexable as ints
