@@ -73,10 +73,6 @@ def sh_quote(value: str) -> str:
 def start_process(spec: ManagedProcess) -> None:
     stdout = None
     stderr = None
-    # Hide camera logs as requested by user to focus on robot testing
-    if spec.name == "camera":
-        stdout = subprocess.DEVNULL
-        stderr = subprocess.DEVNULL
 
     spec.process = subprocess.Popen(
         ["bash", "-lc", spec.cmd],
