@@ -308,6 +308,7 @@ class RobotControllerNode(Node):
             self.task_received = False
             self.items = None
             self.state = "IDLE"
+            self.get_logger().info("Grip process finished, state reset to IDLE.")
 
     def move_robot_and_control_gripper(self, x, y, z):
         import time
