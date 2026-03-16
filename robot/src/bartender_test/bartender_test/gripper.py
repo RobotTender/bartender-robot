@@ -48,7 +48,7 @@ flange_serial_close()
 
 class GripperNode(Node):
     def __init__(self):
-        super().__init__('robotender_gripper', namespace='/')
+        super().__init__('robotender_gripper', namespace='/dsr01')
         self.callback_group = ReentrantCallbackGroup()
         
         # DRL Start Client (Executes raw DRL code)
@@ -59,8 +59,8 @@ class GripperNode(Node):
         )
         
         # ROS Services
-        self.open_srv = self.create_service(Trigger, '/robotender/gripper/open', self.open_callback, callback_group=self.callback_group)
-        self.close_srv = self.create_service(Trigger, '/robotender/gripper/close', self.close_callback, callback_group=self.callback_group)
+        self.open_srv = self.create_service(Trigger, 'robotender_gripper/open', self.open_callback, callback_group=self.callback_group)
+        self.close_srv = self.create_service(Trigger, 'robotender_gripper/close', self.close_callback, callback_group=self.callback_group)
         
         self.get_logger().info('--- Autonomous Gripper Node (One-Shot Mode) Initialized ---')
 

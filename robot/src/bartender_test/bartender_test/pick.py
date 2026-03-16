@@ -46,7 +46,7 @@ model = YOLO(str(MODEL_PATH))
 
 class RobotControllerNode(Node):
     def __init__(self):
-        super().__init__("robotender_pick", namespace="/")
+        super().__init__("robotender_pick", namespace="/dsr01")
 
         self.bridge = CvBridge()
 
@@ -92,13 +92,13 @@ class RobotControllerNode(Node):
         # self.action_pub = self.create_publisher(String, ACTION_TOPIC, 10) # Deprecated topic
 
         # New Service Clients
-        self.gripper_open_cli = self.create_client(Trigger, '/robotender/gripper/open')
-        self.gripper_close_cli = self.create_client(Trigger, '/robotender/gripper/close')
-        self.pour_start_cli = self.create_client(Trigger, '/robotender/pour/start')
+        self.gripper_open_cli = self.create_client(Trigger, 'robotender_gripper/open')
+        self.gripper_close_cli = self.create_client(Trigger, 'robotender_gripper/close')
+        self.pour_start_cli = self.create_client(Trigger, 'robotender_pour/start')
 
         self.get_logger().info("컬러/뎁스/카메라정보 토픽 구독 대기 중...")
         self.get_logger().info(f"주문 토픽 구독 대기 중... {ORDER_TOPIC}")
-        self.get_logger().info("후속 액션 서비스 준비... /robotender/pour/start")
+        self.get_logger().info("후속 액션 서비스 준비... /dsr01/robotender_pour/start")
         self.get_logger().info("화면이 나오지 않으면 Launch 명령어를 확인하세요.")
 
         self.get_logger().info("RealSense ROS2 구독자와 로봇 컨트롤러가 초기화되었습니다.")

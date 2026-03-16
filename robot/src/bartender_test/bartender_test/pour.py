@@ -20,7 +20,7 @@ from .defines import (HOME_POSE, CHEERS_POSE, CONTACT_POSE, POUR_HORIZONTAL, POU
 
 class ActionNode(Node):
     def __init__(self):
-        super().__init__('robotender_pour', namespace='/')
+        super().__init__('robotender_pour', namespace='/dsr01')
         self.callback_group = ReentrantCallbackGroup()
         
         # State for Pouring
@@ -30,21 +30,21 @@ class ActionNode(Node):
         self.pouring_point_buffer = []
 
         # Subscriptions
-        self.create_subscription(Empty, '/robotender/snap_trigger', self.trigger_cb, 10, callback_group=self.callback_group)
-        self.create_subscription(JointState, '/dsr01/joint_states', self.cb_joint_states, 10, callback_group=self.callback_group)
+        self.create_subscription(Empty, 'robotender_snap/trigger', self.trigger_cb, 10, callback_group=self.callback_group)
+        self.create_subscription(JointState, 'joint_states', self.cb_joint_states, 10, callback_group=self.callback_group)
 
         # Clients
-        self.stop_cli = self.create_client(MoveStop, '/dsr01/motion/move_stop', callback_group=self.callback_group)
+        self.stop_cli = self.create_client(MoveStop, 'motion/move_stop', callback_group=self.callback_group)
 
         # Services
-        self.pour_srv = self.create_service(Trigger, '/robotender/pour/start', self.pour_callback, callback_group=self.callback_group)
-        self.warmup_srv = self.create_service(Trigger, '/robotender/pour/warmup', self.warmup_callback, callback_group=self.callback_group)
+        self.pour_srv = self.create_service(Trigger, 'robotender_pour/start', self.pour_callback, callback_group=self.callback_group)
+        self.warmup_srv = self.create_service(Trigger, 'robotender_pour/warmup', self.warmup_callback, callback_group=self.callback_group)
         
         # Timer for path recording (3Hz)
         self.record_timer = self.create_timer(0.33, self.record_loop, callback_group=self.callback_group)
 
         self.get_logger().info('--- Robotender Pour Node Initialized ---')
-        self.get_logger().info('Services: /robotender/pour/start, /robotender/pour/warmup')
+        self.get_logger().info('Services: /dsr01/robotender_pour/start, /dsr01/robotender_pour/warmup')
 
     def cb_joint_states(self, msg):
         if len(msg.position) >= 6:
@@ -174,8 +174,8 @@ class ActionNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = ActionNode()
-    ROBOT_ID, ROBOT_MODEL = "dsr01", "e0509"
-    # Set global DSR variables to ensure services point to /dsr01/...
+    # Use empty ROBOT_ID to force relative resolution under /dsr01 namespace
+    ROBOT_ID, ROBOT_MODEL = "", "e0509"
     import DR_init
     DR_init.__dsr__id = ROBOT_ID
     DR_init.__dsr__model = ROBOT_MODEL

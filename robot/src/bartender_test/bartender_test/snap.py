@@ -7,8 +7,8 @@ import termios
 
 class TriggerNode(Node):
     def __init__(self):
-        super().__init__('robotender_snap', namespace='/')
-        self.publisher_ = self.create_publisher(Empty, '/robotender/snap_trigger', 10)
+        super().__init__('robotender_snap', namespace='/dsr01')
+        self.publisher_ = self.create_publisher(Empty, 'robotender_snap/trigger', 10)
         self.get_logger().info("Manual SNAP Trigger Node started.")
         self.get_logger().info("Press SPACEBAR for Manual SNAP (Instant Recovery). Press 'q' to quit.")
 
