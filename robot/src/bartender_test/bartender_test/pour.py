@@ -175,7 +175,12 @@ def main(args=None):
     rclpy.init(args=args)
     node = ActionNode()
     ROBOT_ID, ROBOT_MODEL = "dsr01", "e0509"
-    DR_init.__dsr__id, DR_init.__dsr__model, DR_init.__dsr__node = ROBOT_ID, ROBOT_MODEL, node
+    # Set global DSR variables to ensure services point to /dsr01/...
+    import DR_init
+    DR_init.__dsr__id = ROBOT_ID
+    DR_init.__dsr__model = ROBOT_MODEL
+    DR_init.__dsr__node = node
+    
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     try:
