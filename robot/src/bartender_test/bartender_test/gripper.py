@@ -20,11 +20,10 @@ def modbus_fc06(slaveid, address, value):
     data_list = [slaveid, 6, (address >> 8) & 0xFF, address & 0xFF, (value >> 8) & 0xFF, value & 0xFF]
     return bytes(modbus_send_make(data_list))
 
-# 1. Reset & Open Port
-flange_serial_close()
-wait(0.1)
+# 1. Open Port
+# (Removed initial close to avoid alarm 2018 if already closed)
 flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
-wait(0.2)
+wait(0.3)
 
 # 2. Torque Enable (Slave 1, Addr 256, Val 1)
 flange_serial_write(modbus_fc06(1, 256, 1))
