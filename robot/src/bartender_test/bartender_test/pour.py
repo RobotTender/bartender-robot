@@ -20,7 +20,7 @@ from .defines import (HOME_POSE, CHEERS_POSE, CONTACT_POSE, POUR_HORIZONTAL, POU
 
 class ActionNode(Node):
     def __init__(self):
-        super().__init__('pour', namespace='/robotender')
+        super().__init__('robotender_pour', namespace='/')
         self.callback_group = ReentrantCallbackGroup()
         
         # State for Pouring
@@ -174,8 +174,8 @@ class ActionNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = ActionNode()
-    # Use absolute path for ROBOT_ID to force absolute service resolution (/dsr01/...)
-    ROBOT_ID, ROBOT_MODEL = "/dsr01", "e0509"
+    ROBOT_ID, ROBOT_MODEL = "dsr01", "e0509"
+    # Set global DSR variables to ensure services point to /dsr01/...
     import DR_init
     DR_init.__dsr__id = ROBOT_ID
     DR_init.__dsr__model = ROBOT_MODEL

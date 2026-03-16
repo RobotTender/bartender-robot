@@ -48,7 +48,7 @@ flange_serial_close()
 
 class GripperNode(Node):
     def __init__(self):
-        super().__init__('gripper', namespace='/robotender')
+        super().__init__('robotender_gripper', namespace='/')
         self.callback_group = ReentrantCallbackGroup()
         
         # DRL Start Client (Executes raw DRL code)
