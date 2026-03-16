@@ -357,6 +357,13 @@ def main(args=None):
     robot_controller = None
     try:
         robot_controller = RobotControllerNode()
+        
+        # Set global DSR variables for functional API consistency
+        import DR_init
+        DR_init.__dsr__id = "dsr01"
+        DR_init.__dsr__model = "e0509"
+        DR_init.__dsr__node = robot_controller
+        
         rclpy.spin(robot_controller)
     except Exception as e:
         print(f"노드 실행 중 오류: {e}")
