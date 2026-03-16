@@ -81,14 +81,15 @@ class GripperNode(Node):
             return False
 
     async def open_callback(self, request, response):
-        success = await self.execute_drl(0, force=400)
+        # Open (1100 stroke for RH-P12-RN)
+        success = await self.execute_drl(1100, force=400)
         response.success = success
         response.message = "Open command (One-Shot) finished" if success else "Failed to execute DRL"
         return response
 
     async def close_callback(self, request, response):
-        # We use a higher force for closing (800) to ensure stable grasp
-        success = await self.execute_drl(700, force=800) 
+        # Close (0 stroke for RH-P12-RN)
+        success = await self.execute_drl(0, force=800) 
         response.success = success
         response.message = "Close command (One-Shot) finished" if success else "Failed to execute DRL"
         return response
