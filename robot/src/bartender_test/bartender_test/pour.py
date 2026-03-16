@@ -30,15 +30,15 @@ class ActionNode(Node):
         self.pouring_point_buffer = []
 
         # Subscriptions
-        self.create_subscription(Empty, 'snap_trigger', self.trigger_cb, 10, callback_group=self.callback_group)
+        self.create_subscription(Empty, '/robotender/snap_trigger', self.trigger_cb, 10, callback_group=self.callback_group)
         self.create_subscription(JointState, '/dsr01/joint_states', self.cb_joint_states, 10, callback_group=self.callback_group)
 
         # Clients
         self.stop_cli = self.create_client(MoveStop, '/dsr01/motion/move_stop', callback_group=self.callback_group)
 
         # Services
-        self.pour_srv = self.create_service(Trigger, 'start', self.pour_callback, callback_group=self.callback_group)
-        self.warmup_srv = self.create_service(Trigger, 'warmup', self.warmup_callback, callback_group=self.callback_group)
+        self.pour_srv = self.create_service(Trigger, '/robotender/pour/start', self.pour_callback, callback_group=self.callback_group)
+        self.warmup_srv = self.create_service(Trigger, '/robotender/pour/warmup', self.warmup_callback, callback_group=self.callback_group)
         
         # Timer for path recording (3Hz)
         self.record_timer = self.create_timer(0.33, self.record_loop, callback_group=self.callback_group)

@@ -59,8 +59,8 @@ class GripperNode(Node):
         )
         
         # ROS Services
-        self.open_srv = self.create_service(Trigger, 'open', self.open_callback, callback_group=self.callback_group)
-        self.close_srv = self.create_service(Trigger, 'close', self.close_callback, callback_group=self.callback_group)
+        self.open_srv = self.create_service(Trigger, '/robotender/gripper/open', self.open_callback, callback_group=self.callback_group)
+        self.close_srv = self.create_service(Trigger, '/robotender/gripper/close', self.close_callback, callback_group=self.callback_group)
         
         self.get_logger().info('--- Autonomous Gripper Node (One-Shot Mode) Initialized ---')
 
