@@ -174,8 +174,8 @@ class ActionNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = ActionNode()
-    ROBOT_ID, ROBOT_MODEL = "dsr01", "e0509"
-    # Set global DSR variables to ensure services point to /dsr01/...
+    # Use absolute path for ROBOT_ID to force absolute service resolution (/dsr01/...)
+    ROBOT_ID, ROBOT_MODEL = "/dsr01", "e0509"
     import DR_init
     DR_init.__dsr__id = ROBOT_ID
     DR_init.__dsr__model = ROBOT_MODEL
