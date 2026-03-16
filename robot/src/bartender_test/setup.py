@@ -24,12 +24,13 @@ setup(
     entry_points={
         'console_scripts': [
             'gripper = bartender_test.gripper:main',
-            'action = bartender_test.action_node:main',
+            'pour = bartender_test.pour:main',
             'pose = bartender_test.pose:main',
             'movej = bartender_test.movej:main',
             'check_tcp = bartender_test.check_tcp:main',
             'monitor = bartender_test.monitor:main',
-            'trigger = bartender_test.trigger:main',
+            'snap = bartender_test.snap:main',
+            'pick = bartender_test.pick:main',
             'register_tool = bartender_test.register_tool:main',
         ],
     },

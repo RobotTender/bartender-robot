@@ -63,11 +63,18 @@ def _build_pick_command() -> str:
         "exec python3 -m bartender_test.pick"
     )
 
-def _build_action_command() -> str:
+def _build_pour_command() -> str:
     return (
         f"{_build_workspace_source_prefix()} && "
         f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
-        "exec python3 -m bartender_test.action_node listen"
+        "exec python3 -m bartender_test.pour"
+    )
+
+def _build_snap_command() -> str:
+    return (
+        f"{_build_workspace_source_prefix()} && "
+        f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
+        "exec python3 -m bartender_test.snap"
     )
 
 def _build_web_command(host: str, port: int) -> str:
@@ -126,8 +133,8 @@ def main() -> int:
         help="Optional camera command to run alongside the stack.",
     )
     parser.add_argument("--skip-web", action="store_true", help="Do not start Django server.")
-    parser.add_argument("--skip-pick", action="store_true", help="Do not start pick.py node.")
-    parser.add_argument("--skip-action", action="store_true", help="Do not start action listener node.")
+    parser.add_argument("--skip-pick", action="store_true", help="Do not start pick node.")
+    parser.add_argument("--skip-pour", action="store_true", help="Do not start pour node.")
     parser.add_argument("--web-host", default="127.0.0.1")
     parser.add_argument("--web-port", type=int, default=8000)
     args = parser.parse_args()
@@ -140,7 +147,7 @@ def main() -> int:
     if args.camera_cmd:
         base_processes.append(ManagedProcess("camera", args.camera_cmd, ROOT))
 
-    if not base_processes and args.skip_pick and args.skip_action and args.skip_web:
+    if not base_processes and args.skip_pick and args.skip_pour and args.skip_web:
         print("Nothing to start.")
         return 1
 
@@ -196,12 +203,12 @@ def main() -> int:
             started_processes.append(pick_spec)
             time.sleep(2.0) # Wait for pick node to initialize
 
-        # 4. Start action node
-        if not args.skip_action:
-            action_spec = ManagedProcess("action", _build_action_command(), ROOT)
-            start_process(action_spec)
-            started_processes.append(action_spec)
-            time.sleep(1.0) # Wait for action node to initialize
+        # 4. Start pour node
+        if not args.skip_pour:
+            pour_spec = ManagedProcess("pour", _build_pour_command(), ROOT)
+            start_process(pour_spec)
+            started_processes.append(pour_spec)
+            time.sleep(1.0) # Wait for pour node to initialize
 
         # 5. Start web server
         if not args.skip_web:
