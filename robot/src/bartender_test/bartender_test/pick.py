@@ -46,7 +46,7 @@ model = YOLO(str(MODEL_PATH))
 
 class RobotControllerNode(Node):
     def __init__(self):
-        super().__init__("pick", namespace="robotender")
+        super().__init__("pick", namespace="/robotender")
 
         self.bridge = CvBridge()
 

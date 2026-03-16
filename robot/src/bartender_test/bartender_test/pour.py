@@ -20,7 +20,7 @@ from .defines import (HOME_POSE, CHEERS_POSE, CONTACT_POSE, POUR_HORIZONTAL, POU
 
 class ActionNode(Node):
     def __init__(self):
-        super().__init__('pour', namespace='robotender')
+        super().__init__('pour', namespace='/robotender')
         self.callback_group = ReentrantCallbackGroup()
         
         # State for Pouring
