@@ -89,15 +89,16 @@ class RobotControllerNode(Node):
         )
         self.ts.registerCallback(self.synced_callback)
         self.order_sub = self.create_subscription(String, ORDER_TOPIC, self.order_callback, 10)
-        self.action_pub = self.create_publisher(String, ACTION_TOPIC, 10)
+        # self.action_pub = self.create_publisher(String, ACTION_TOPIC, 10) # Deprecated topic
 
-        # New Gripper Clients
+        # New Service Clients
         self.gripper_open_cli = self.create_client(Trigger, f'/{ROBOT_ID}/gripper/open')
-        self.gripper_close_cli = self.create_client(SetRobotMode, f'/{ROBOT_ID}/gripper/close')
+        self.gripper_close_cli = self.create_client(Trigger, f'/{ROBOT_ID}/gripper/close')
+        self.pour_start_cli = self.create_client(Trigger, f'/{ROBOT_ID}/pour/start')
 
         self.get_logger().info("컬러/뎁스/카메라정보 토픽 구독 대기 중...")
         self.get_logger().info(f"주문 토픽 구독 대기 중... {ORDER_TOPIC}")
-        self.get_logger().info("후속 액션 토픽 발행 준비... {ACTION_TOPIC}")
+        self.get_logger().info("후속 액션 서비스 준비... /dsr01/pour/start")
         self.get_logger().info("화면이 나오지 않으면 Launch 명령어를 확인하세요.")
 
         self.get_logger().info("RealSense ROS2 구독자와 로봇 컨트롤러가 초기화되었습니다.")
@@ -178,12 +179,20 @@ class RobotControllerNode(Node):
         return future.result().success
 
     def _gripper_close(self, force=800):
-        self.get_logger().info(f"Service Call: Gripper Close (Force={force})")
+        self.get_logger().info(f"Service Call: Gripper Close (Force fixed to 800 in ActionNode)")
         if not self.gripper_close_cli.wait_for_service(timeout_sec=5.0):
             self.get_logger().error("Gripper close service not available!")
             return False
-        # robot_mode is int8, used to pass the force value
-        future = self.gripper_close_cli.call_async(SetRobotMode.Request(robot_mode=int(force)))
+        future = self.gripper_close_cli.call_async(Trigger.Request())
+        while not future.done(): time.sleep(0.01)
+        return future.result().success
+
+    def _pour_start(self):
+        self.get_logger().info("Service Call: Pouring Start")
+        if not self.pour_start_cli.wait_for_service(timeout_sec=5.0):
+            self.get_logger().error("Pour service not available!")
+            return False
+        future = self.pour_start_cli.call_async(Trigger.Request())
         while not future.done(): time.sleep(0.01)
         return future.result().success
 
@@ -278,13 +287,17 @@ class RobotControllerNode(Node):
             print("--- 변환된 최종 3D 좌표 ---")
             print(f"flip 픽셀 좌표: (u_vis={u_vis}, v_vis={v_vis})")
             print(f"raw 픽셀 좌표 : (u_raw={u_raw}, v_raw={v_raw}), Depth: {depth_m*1000:.1f} mm")
-            print(f"로봇 목표 좌표: X={p_robot[0]:.1f}, Y={p_robot[1]:.1f}, Z={p_robot[2]:.1f}\n")
+            self.get_logger().info(f"로봇 목표 좌표: X={p_robot[0]:.1f}, Y={p_robot[1]:.1f}, Z={p_robot[2]:.1f}\n")
 
             self.move_robot_and_control_gripper(p_robot[0], p_robot[1], p_robot[2])
-            action_msg = String()
-            action_msg.data = json.dumps({"action": "pour", "count": 1, "drinks": items.get("drinks", ""), "recipe": items.get("recipe", {})}, ensure_ascii=False, separators=(",", ":"))
-            self.action_pub.publish(action_msg)
-            self.get_logger().info(f"후속 액션 요청 발행: {action_msg.data}")
+            
+            # Use service instead of topic
+            self.get_logger().info("--- 액션 요청 (Pour Service Call) ---")
+            success = self._pour_start()
+            if success:
+                self.get_logger().info("따르기 액션 성공적으로 완료")
+            else:
+                self.get_logger().error("따르기 액션 실패")
             print("=" * 50)
 
         except Exception as e:
