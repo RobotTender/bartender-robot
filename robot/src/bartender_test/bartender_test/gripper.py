@@ -14,11 +14,11 @@ def modbus_fc16(slaveid, startaddress, cnt, valuelist):
     for i in range(0, cnt):
         data_list.append((valuelist[i] >> 8) & 0xFF)
         data_list.append(valuelist[i] & 0xFF)
-    return bytes(modbus_send_make(data_list))
+    return bytes(modbus_send_make(bytes(data_list)))
 
 def modbus_fc06(slaveid, address, value):
     data_list = [slaveid, 6, (address >> 8) & 0xFF, address & 0xFF, (value >> 8) & 0xFF, value & 0xFF]
-    return bytes(modbus_send_make(data_list))
+    return bytes(modbus_send_make(bytes(data_list)))
 
 # 1. Open Port
 # (Removed initial close to avoid alarm 2018 if already closed)
