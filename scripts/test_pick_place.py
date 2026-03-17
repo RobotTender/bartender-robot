@@ -4,6 +4,7 @@ import os
 import time
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
 import numpy as np
 import cv2
 import json
@@ -14,17 +15,15 @@ from cv_bridge import CvBridge
 
 # ROS 2 messages/services
 from std_srvs.srv import Trigger
-from dsr_msgs2.srv import MoveJoint, MoveLine, GetCurrentPose
+from dsr_msgs2.srv import MoveJoint, MoveLine, GetCurrentPose, SetRobotMode
 from sensor_msgs.msg import Image, CameraInfo
 import message_filters
-
-# DSR functional API
-import DR_init
-from bartender_test.defines import PICK_PLACE_READY, CHEERS_POSE
 
 # Constants
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "e0509"
+
+from bartender_test.defines import PICK_PLACE_READY
 
 class PickPlaceTester(Node):
     def __init__(self, target_item='beer'):
@@ -41,7 +40,7 @@ class PickPlaceTester(Node):
         self.object_dict_reverse = {'juice': "0", 'beer': "1", 'soju': "2"}
         self.object_dict = {"0": 'juice', "1": 'beer', "2": 'soju'}
 
-        # Camera calibration (from pick.py)
+        # Camera calibration
         self.R = np.array([
             [-0.788489317968,  -0.614148198918, -0.0332653756482],
             [-0.0868309265704,  0.0576098432706,  0.994555929121],
@@ -49,9 +48,13 @@ class PickPlaceTester(Node):
         ], dtype=np.float64)
         self.t = np.array([521.115058698, 170.946228749, 834.749571453], dtype=np.float64)
 
-        # Service Clients for Gripper (using the persistent robotender_gripper node)
+        # Service Clients
         self.gripper_open_cli = self.create_client(Trigger, 'robotender_gripper/open')
         self.gripper_close_cli = self.create_client(Trigger, 'robotender_gripper/close')
+        self.movej_cli = self.create_client(MoveJoint, 'motion/move_joint')
+        self.movel_cli = self.create_client(MoveLine, 'motion/move_line')
+        self.pose_cli = self.create_client(GetCurrentPose, 'system/get_current_pose')
+        self.mode_cli = self.create_client(SetRobotMode, 'system/set_robot_mode')
 
         # Camera Subscribers
         self.color_sub = message_filters.Subscriber(self, Image, '/camera/camera_1/color/image_raw')
@@ -76,24 +79,43 @@ class PickPlaceTester(Node):
     def camera_to_robot(self, point_cam):
         return point_cam @ self.R + self.t
 
-    def _gripper_open(self):
-        self.get_logger().info("Gripper Open...")
-        self.gripper_open_cli.wait_for_service()
-        return self.gripper_open_cli.call_async(Trigger.Request())
+    def _call_trigger(self, cli):
+        cli.wait_for_service()
+        future = cli.call_async(Trigger.Request())
+        while rclpy.ok() and not future.done(): time.sleep(0.01)
+        return future.result()
 
-    def _gripper_close(self):
-        self.get_logger().info("Gripper Close...")
-        self.gripper_close_cli.wait_for_service()
-        return self.gripper_close_cli.call_async(Trigger.Request())
+    def _movej(self, pos, vel=60.0, acc=60.0):
+        self.movej_cli.wait_for_service()
+        req = MoveJoint.Request()
+        req.pos = [float(x) for x in pos]; req.vel = float(vel); req.acc = float(acc)
+        future = self.movej_cli.call_async(req)
+        while rclpy.ok() and not future.done(): time.sleep(0.01)
+        return future.result()
+
+    def _movel(self, pos, vel=40.0, acc=40.0):
+        self.movel_cli.wait_for_service()
+        req = MoveLine.Request()
+        req.pos = [float(x) for x in pos]; req.vel = [float(vel)]*2; req.acc = [float(acc)]*2
+        future = self.movel_cli.call_async(req)
+        while rclpy.ok() and not future.done(): time.sleep(0.01)
+        return future.result()
+
+    def _get_posx(self):
+        self.pose_cli.wait_for_service()
+        future = self.pose_cli.call_async(GetCurrentPose.Request(space_type=1))
+        while rclpy.ok() and not future.done(): time.sleep(0.01)
+        return list(future.result().pos)
 
     def run_test(self):
-        from DSR_ROBOT2 import (movej, movel, set_robot_mode, ROBOT_MODE_AUTONOMOUS, wait, get_current_posx)
-        set_robot_mode(ROBOT_MODE_AUTONOMOUS)
-        wait(0.5)
+        self.get_logger().info("Setting robot mode to AUTONOMOUS...")
+        self.mode_cli.wait_for_service()
+        self.mode_cli.call_async(SetRobotMode.Request(robot_mode=1))
+        time.sleep(0.5)
 
         # 1. Start from PICK_PLACE_READY
         self.get_logger().info("Step 1: Moving to PICK_PLACE_READY")
-        movej(PICK_PLACE_READY, vel=60, acc=60)
+        self._movej(PICK_PLACE_READY)
         
         # 2. Pick the target
         self.get_logger().info(f"Step 2: Detecting and Picking {self.target_item}")
@@ -106,7 +128,7 @@ class PickPlaceTester(Node):
 
         # 3. Come back to PICK_PLACE_READY
         self.get_logger().info("Step 3: Returning to PICK_PLACE_READY")
-        movej(PICK_PLACE_READY, vel=60, acc=60)
+        self._movej(PICK_PLACE_READY)
 
         # 4. Wait 3 seconds
         self.get_logger().info("Step 4: Waiting for 3 seconds")
@@ -118,35 +140,23 @@ class PickPlaceTester(Node):
 
         # 6. Come back to PICK_PLACE_READY
         self.get_logger().info("Step 6: Final return to PICK_PLACE_READY")
-        movej(PICK_PLACE_READY, vel=60, acc=60)
+        self._movej(PICK_PLACE_READY)
         self.get_logger().info("Test Completed Successfully")
 
     def detect_object(self):
-        self.get_logger().info("Waiting for camera frames...")
-        start_wait = time.time()
         while self.latest_cv_color is None or self.intrinsics is None:
             time.sleep(0.1)
-            rclpy.spin_once(self, timeout_sec=0.1)
-            if time.time() - start_wait > 5.0:
-                self.get_logger().error("Timeout waiting for camera frames")
-                return None
-
-        img_raw = self.latest_cv_color.copy()
+        img = cv2.flip(self.latest_cv_color.copy(), -1)
         depth_raw = self.latest_cv_depth_mm.copy()
-        img = cv2.flip(img_raw, -1)
         h, w = img.shape[:2]
-        
         class_id = self.object_dict_reverse[self.target_item]
         results = self.model(img, verbose=False)
-        
-        target = None
         for result in results:
             for box in result.boxes:
                 if str(int(box.cls[0].cpu().numpy())) == class_id and box.conf[0].cpu().numpy() > 0.5:
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype('int')
                     u_flip, v_flip = int((x1 + x2) / 2), int((y1 + y2) / 2)
                     u_raw, v_raw = w - 1 - u_flip, h - 1 - v_flip
-                    
                     roi_half = 5
                     x_min, x_max = max(0, u_raw - roi_half), min(w, u_raw + roi_half + 1)
                     y_min, y_max = max(0, v_raw - roi_half), min(h, v_raw + roi_half + 1)
@@ -154,91 +164,53 @@ class PickPlaceTester(Node):
                     valid_depth = depth_roi[depth_roi > 0]
                     if valid_depth.size == 0: continue
                     depth_m = float(np.median(valid_depth)) / 1000.0
-                    
-                    target = {"u_raw": u_raw, "v_raw": v_raw, "depth_m": depth_m}
-                    break
-        
-        if target:
-            x_cam, y_cam, z_cam = (target["u_raw"] - self.intrinsics.ppx) * target["depth_m"] / self.intrinsics.fx, \
-                                  (target["v_raw"] - self.intrinsics.ppy) * target["depth_m"] / self.intrinsics.fy, \
-                                  target["depth_m"]
-            p_cam = np.array([x_cam * 1000, y_cam * 1000, z_cam * 1000], dtype=np.float64)
-            p_robot = self.camera_to_robot(p_cam)
-            self.get_logger().info(f"Target found at Robot coords: {p_robot}")
-            return p_robot
+                    x_cam, y_cam, z_cam = (u_raw-self.intrinsics.ppx)*depth_m/self.intrinsics.fx, (v_raw-self.intrinsics.ppy)*depth_m/self.intrinsics.fy, depth_m
+                    return self.camera_to_robot(np.array([x_cam*1000, y_cam*1000, z_cam*1000]))
         return None
 
     def pick_motion(self, p_robot):
-        from DSR_ROBOT2 import (movel, movej, wait, get_current_posx)
         x, y, z = p_robot
-        
-        # 1. Approach Ready
         P_ready = [28.0, -35.0, 100.0, 77.0, 63.0, -154.0]
-        movej(P_ready, vel=40, acc=40)
-        
-        # 2. Open gripper
-        self._gripper_open()
-        wait(1.0)
-
-        # 3. Move to grasp
-        current_pos = list(get_current_posx()[0])
+        self._movej(P_ready, vel=40, acc=40)
+        self._call_trigger(self.gripper_open_cli)
+        time.sleep(1.0)
+        current_pos = self._get_posx()
         target_1 = [x - 20, y - 50, z, current_pos[3], current_pos[4], current_pos[5]]
         target_2 = [x - 20, y + 50, z - 20, current_pos[3], current_pos[4], current_pos[5]]
-        
-        movel(target_1, vel=40, acc=40)
-        movel(target_2, vel=40, acc=40)
-        wait(0.5)
-        
-        # 4. Close
-        self._gripper_close()
-        wait(3.0)
-        
-        # 5. Lift
+        self._movel(target_1, vel=40, acc=40)
+        self._movel(target_2, vel=40, acc=40)
+        time.sleep(0.5)
+        self._call_trigger(self.gripper_close_cli)
+        time.sleep(3.0)
         P_mid = [61.0, -20.0, 97.0, 96.0, -63.0, -195.0]
-        movej(P_mid, vel=40, acc=40)
+        self._movej(P_mid, vel=40, acc=40)
 
     def place_motion(self, p_robot):
-        from DSR_ROBOT2 import (movel, movej, wait, get_current_posx)
         x, y, z = p_robot
-
-        # 1. Move to lift/mid position
         P_mid = [61.0, -20.0, 97.0, 96.0, -63.0, -195.0]
-        movej(P_mid, vel=40, acc=40)
-
-        # 2. Move to placement point
-        current_pos = list(get_current_posx()[0])
+        self._movej(P_mid, vel=40, acc=40)
+        current_pos = self._get_posx()
         target_2 = [x - 20, y + 50, z - 20, current_pos[3], current_pos[4], current_pos[5]]
-        movel(target_2, vel=40, acc=40)
-        wait(0.5)
-
-        # 3. Open
-        self._gripper_open()
-        wait(2.0)
-
-        # 4. Retreat
+        self._movel(target_2, vel=40, acc=40)
+        time.sleep(0.5)
+        self._call_trigger(self.gripper_open_cli)
+        time.sleep(2.0)
         target_1 = [x - 20, y - 50, z, current_pos[3], current_pos[4], current_pos[5]]
-        movel(target_1, vel=40, acc=40)
+        self._movel(target_1, vel=40, acc=40)
 
 def main():
     target = sys.argv[1] if len(sys.argv) > 1 else 'beer'
     rclpy.init()
     tester = PickPlaceTester(target)
-    
-    import DR_init
-    DR_init.__dsr__id = ROBOT_ID
-    DR_init.__dsr__model = ROBOT_MODEL
-    DR_init.__dsr__node = tester
-
+    executor = MultiThreadedExecutor()
+    executor.add_node(tester)
     import threading
-    t = threading.Thread(target=tester.run_test)
+    t = threading.Thread(target=tester.run_test, daemon=True)
     t.start()
-    
     try:
-        while t.is_alive():
-            rclpy.spin_once(tester, timeout_sec=0.1)
+        executor.spin()
     except KeyboardInterrupt:
         pass
-    
     tester.destroy_node()
     rclpy.shutdown()
 
