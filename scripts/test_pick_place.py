@@ -182,13 +182,14 @@ class PickPlaceTester(Node):
         time.sleep(0.5)
         self._call_trigger(self.gripper_close_cli)
         time.sleep(3.0)
-        P_mid = [61.0, -20.0, 97.0, 96.0, -63.0, -195.0]
-        self._movej(P_mid, vel=40, acc=40)
+        # 5. Lift
+        from bartender_test.defines import HOME_POSE
+        self._movej(HOME_POSE, vel=40, acc=40)
 
     def place_motion(self, p_robot):
         x, y, z = p_robot
-        P_mid = [61.0, -20.0, 97.0, 96.0, -63.0, -195.0]
-        self._movej(P_mid, vel=40, acc=40)
+        from bartender_test.defines import HOME_POSE
+        self._movej(HOME_POSE, vel=40, acc=40)
         current_pos = self._get_posx()
         target_2 = [x - 20, y + 50, z - 20, current_pos[3], current_pos[4], current_pos[5]]
         self._movel(target_2, vel=40, acc=40)

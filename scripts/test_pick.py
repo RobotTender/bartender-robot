@@ -170,8 +170,9 @@ class PickTester(Node):
         time.sleep(0.5)
         self._call_trigger(self.gripper_close_cli)
         time.sleep(3.0)
-        P_mid = [61.0, -20.0, 97.0, 96.0, -63.0, -195.0]
-        self._movej(P_mid, vel=40, acc=40)
+        # 5. Lift
+        from bartender_test.defines import HOME_POSE
+        self._movej(HOME_POSE, vel=40, acc=40)
 
 def main():
     target = sys.argv[1] if len(sys.argv) > 1 else 'beer'
