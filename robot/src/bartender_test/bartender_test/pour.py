@@ -40,6 +40,9 @@ class ActionNode(Node):
         self.pour_srv = self.create_service(Trigger, 'robotender_pour/start', self.pour_callback, callback_group=self.callback_group)
         self.warmup_srv = self.create_service(Trigger, 'robotender_pour/warmup', self.warmup_callback, callback_group=self.callback_group)
         
+        # Service Clients
+        self.place_cli = self.create_client(Trigger, 'robotender_place/start', callback_group=self.callback_group)
+
         # Timer for path recording (3Hz)
         self.record_timer = self.create_timer(0.33, self.record_loop, callback_group=self.callback_group)
 
@@ -156,13 +159,20 @@ class ActionNode(Node):
                     reverse_path.append(cheers_j)
 
                 self.get_logger().info(f"Interrupted. Snapping back...")
-                movesj(reverse_path, vel=250, acc=250)
+                movesj(reverse_path, vel=200, acc=200)
                 response.success = True
                 response.message = "Pour interrupted and recovered"
             else:
                 self.get_logger().info(f"Pour finished naturally")
                 response.success = True
                 response.message = "Pour completed successfully"
+
+            # Signal Place node (Always signal after pouring is done, whether natural or interrupted)
+            if self.place_cli.wait_for_service(timeout_sec=1.0):
+                self.get_logger().info("Sending signal to Place node...")
+                self.place_cli.call_async(Trigger.Request())
+            else:
+                self.get_logger().warn("Place node service not available, skipping signal.")
 
         except Exception as e:
             self.get_logger().error(f"Pour Error: {e}")
