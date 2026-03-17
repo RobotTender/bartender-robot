@@ -1,5 +1,5 @@
 ## Working Context (March 17, 2026 - Manual Command Setup)
-- **Current Branch:** `robot-llm-combine-junsung`
+- **Current Branch:** `robot-llm-combine-place-junsung`
 - **Architecture Status:** 
     - **Persistent Node + Service** structure is the standard.
     - `robotender_pour` (`pour.py`): Handles complex motions (Pour, Warmup) with Snap Recovery.
