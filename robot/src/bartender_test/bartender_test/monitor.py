@@ -10,7 +10,7 @@ import select
 import termios
 import tty
 from rclpy.node import Node
-from std_msgs.msg import Empty, Float64MultiArray
+from std_msgs.msg import Empty, Float64MultiArray, Float32
 from sensor_msgs.msg import JointState
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
@@ -36,6 +36,7 @@ class UnifiedMonitor(Node):
         # Real-time Data (10Hz)
         self.joint_pos = [0.0] * 6
         self.tcp_pose = [0.0] * 6
+        self.liquid_volume = 0.0
         
         # Static Data (Update only when stable)
         self.motor_data_stable = [0.0] * 6
@@ -66,6 +67,7 @@ class UnifiedMonitor(Node):
         self.sub_js = self.create_subscription(JointState, 'joint_states', self.cb_joint_states, 10)
         self.sub_mot = self.create_subscription(Float64MultiArray, self.topic_map['jts_mot'], self.cb_mot, 10)
         self.sub_force = self.create_subscription(Float64MultiArray, self.topic_map['tcp_force'], self.cb_force, 10)
+        self.sub_volume = self.create_subscription(Float32, '/dsr01/robotender/liquid_volume', self.cb_volume, 10)
         
         self.msg_count = 0
         self.last_msg_time = 0.0
@@ -107,6 +109,9 @@ class UnifiedMonitor(Node):
     def cb_force(self, msg):
         for i in range(len(msg.data)):
             self.force_buffers[i].append(msg.data[i])
+
+    def cb_volume(self, msg):
+        self.liquid_volume = msg.data
 
     def update_stable_values(self):
         self.motor_data_stable = [sum(b)/len(b) if b else 0.0 for b in self.motor_buffers]
@@ -205,6 +210,7 @@ class UnifiedMonitor(Node):
         source_tag = "(TCP Sensor)" if not tcp_is_dead else "(JTS Estimate)"
         
         print(f"{prefix} UNIFIED WEIGHT     | \033[92m{unified_weight:>7.1f} g\033[0m {source_tag}")
+        print(f"{prefix} LIQUID VOLUME    | \033[96m{self.liquid_volume:>7.1f} ml\033[0m (Vision)")
         print(f"{prefix}" + "-" * 75)
 
         if self.is_tty:

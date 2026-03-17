@@ -3,6 +3,7 @@ from rclpy.node import Node
 
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
+from std_msgs.msg import Empty, Float32
 
 import cv2
 import random
@@ -12,7 +13,7 @@ from ultralytics import YOLO
 
 # ✅ YOLO Segmentation 모델로 교체하세요 (예: yolo11n-seg.pt 또는 커스텀 best.pt)
 # model = YOLO("yolo11n-seg.pt")
-model = YOLO("/home/been/bartender-robot/detection/weights/cam_2.pt")  # TODO: 경로 수정
+model = YOLO("/home/fastcampus/bartender-robot/detection/weights/cam_2.pt")  # Updated path to match workspace
 
 # 클래스별 색 (BGR)
 CLASS_COLORS = {
@@ -54,6 +55,14 @@ class DepthReader(Node):
         # EMA filter
         self.ema_alpha = 0.2
         self.estimated_ml_ema = None
+
+        # --- Automatic Snap Trigger Logic ---
+        self.trigger_pub = self.create_publisher(Empty, '/dsr01/robotender_snap/trigger', 10)
+        self.volume_pub = self.create_publisher(Float32, '/dsr01/robotender/liquid_volume', 10)
+        self.target_volume_ml = 180.0  # Target volume to stop pouring (ml)
+        self.snap_triggered = False    # To ensure we only trigger once per pour
+        self.low_volume_count = 0      # Used to reset the trigger flag when cup is empty
+        # -----------------------------------
 
         # 구독자 설정
         self.create_subscription(Image, '/camera/camera_2/color/image_raw', self.color_callback, 10)
@@ -269,6 +278,21 @@ class DepthReader(Node):
 
                 self.current_height_px_ema = height_px_ema
 
+                # ✅ Publish Volume for Monitoring
+                vol_msg = Float32()
+                vol_msg.data = float(volume_ml)
+                self.volume_pub.publish(vol_msg)
+
+                # ✅ Auto-Trigger Snap Logic
+                if volume_ml >= self.target_volume_ml and not self.snap_triggered:
+                    self.trigger_pub.publish(Empty())
+                    self.snap_triggered = True
+                    self.get_logger().info(f"--- AUTO SNAP TRIGGERED: {volume_ml:.1f}ml ---")
+                
+                # Reset low volume counter if liquid is detected
+                if volume_ml > 5.0:
+                    self.low_volume_count = 0
+
                 # # 수면선과 bottle 바닥선 시각화
                 # h, w = overlay.shape[:2]
                 # cv2.line(overlay, (0, waterline_y), (w - 1, waterline_y), (0, 255, 255), 2)
@@ -341,6 +365,13 @@ class DepthReader(Node):
                     lx1, ly1, lx2, ly2 = liquid_bbox_current
                     text1 = f"height={height_px:.1f}px / ema={height_px_ema:.1f}px"
                     text2 = f"volume={volume_ml:.1f}ml"
+                    
+                    # Target status display
+                    target_text = f"TARGET: {self.target_volume_ml}ml"
+                    if self.snap_triggered:
+                        target_text += " [OK]"
+                    cv2.putText(overlay, target_text, (lx1, max(30, ly1 - 40)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
                     # cv2.putText(overlay, text1, (lx1, min(h - 40, ly2 + 20)),
                     #             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
@@ -354,6 +385,14 @@ class DepthReader(Node):
                 #     f"waterline_y={waterline_y}, "
                 #     f"volume={volume_ml:.1f}ml"
                 # )
+        
+        # Reset Logic: If no liquid is detected or volume is very low, count frames to reset trigger for next pour
+        if liquid_mask_current is None:
+            self.low_volume_count += 1
+            if self.low_volume_count > 30: # Wait ~1 second at 30fps
+                if self.snap_triggered:
+                    self.get_logger().info("Ready for next pour (Trigger reset).")
+                self.snap_triggered = False
 
         cv2.namedWindow("RGB with Depth (YOLO-Seg)", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("RGB with Depth (YOLO-Seg)", 900, 520)

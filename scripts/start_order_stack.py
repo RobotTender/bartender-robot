@@ -84,6 +84,13 @@ def _build_snap_command() -> str:
         "exec python3 -m bartender_test.snap"
     )
 
+def _build_volume_detection_command() -> str:
+    python_bin = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
+    return (
+        f"{_build_workspace_source_prefix()} && "
+        f"exec {sh_quote(python_bin)} detection/realsense_cam2.py"
+    )
+
 def _build_web_command(host: str, port: int) -> str:
     python_bin = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
     return f"exec {sh_quote(python_bin)} manage.py runserver {host}:{port}"
@@ -95,7 +102,7 @@ def start_process(spec: ManagedProcess) -> None:
     stdout = None
     stderr = None
 
-    if spec.name == "camera":
+    if spec.name in ("camera", "camera2", "volume_detection"):
         stdout = subprocess.DEVNULL
         stderr = subprocess.DEVNULL
 
@@ -139,6 +146,16 @@ def main() -> int:
         default="ros2 launch realsense2_camera rs_launch.py camera_name:=camera_1 serial_no:=_311322302867 enable_pointcloud:=true align_depth.enable:=true enable_rgbd:=true",
         help="Optional camera command to run alongside the stack.",
     )
+    parser.add_argument(
+        "--camera2-cmd",
+        default="ros2 launch realsense2_camera rs_launch.py camera_name:=camera_2 serial_no:=_313522301601 enable_pointcloud:=true align_depth.enable:=true",
+        help="Camera 2 (Volume Detection) hardware command.",
+    )
+    parser.add_argument(
+        "--skip-volume-detection",
+        action="store_true",
+        help="Do not start the volume detection node (realsense_cam2.py).",
+    )
     parser.add_argument("--skip-web", action="store_true", help="Do not start Django server.")
     parser.add_argument("--skip-pick", action="store_true", help="Do not start pick node.")
     parser.add_argument("--skip-pour", action="store_true", help="Do not start pour node.")
@@ -153,6 +170,12 @@ def main() -> int:
 
     if args.camera_cmd:
         base_processes.append(ManagedProcess("camera", args.camera_cmd, ROOT))
+
+    if args.camera2_cmd:
+        base_processes.append(ManagedProcess("camera2", args.camera2_cmd, ROOT))
+
+    if not args.skip_volume_detection:
+        base_processes.append(ManagedProcess("volume_detection", _build_volume_detection_command(), ROOT))
 
     if not base_processes and args.skip_pick and args.skip_pour and args.skip_web:
         print("Nothing to start.")
