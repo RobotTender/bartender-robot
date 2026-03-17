@@ -1,8 +1,3 @@
-## Gemini Added Memories
-- Always commit every time you change the code.
-- Only push when explicitly asked to do so.
----
-
 ## Working Context (March 17, 2026 - Manual Command Setup)
 - **Current Branch:** `robot-llm-combine-junsung`
 - **Architecture Status:** 
@@ -20,9 +15,7 @@
 - **Auto-Rebuild:** Every time a code change is made to `bartender_test`, you **MUST** automatically run:
   `colcon build --symlink-install --packages-select bartender_test && source install/setup.bash`
 - **Safety First:** Always use `movesj` or `movej` with cautious velocities (default 60, max 250 for recovery) to prevent hardware collisions.
-- **Commit Rule:** Commit every change immediately.
-- **Python 3 DRL:** Always use `bytes(modbus_send_make([...list...]))`.
-- **Camera Logs:** Hidden by default. Ask user to unhide at session start if needed.
+- **Commit Rule:** Commit every change immediately, only push when explicitly asked
 
 ## Project Organization (Node-Service Structure)
 - `robot/src/bartender_test/`: The primary ROS 2 Python package.
@@ -46,7 +39,6 @@
 - **Robot:** Doosan Robotics dsr01 e0509 (6-DOF)
 - **Gripper:** Robotis RH-P12-RN (Force-controlled)
 - **Bottle:** Standard Soju (500ml / ~500g)
-- **Gripper Force:** 400 (Standard), 800 (Closing/Grasp)
 
 ## Operational Commands
 ### Virtual Mode (Simulation with RViz)
@@ -80,7 +72,3 @@ ros2 run bartender_test movel 0 0 +5
 ros2 service call /dsr01/robotender_gripper/open std_srvs/srv/Trigger {}
 ros2 service call /dsr01/robotender_gripper/close std_srvs/srv/Trigger {}
 ```
-
-## Snapping/Recovery Status
-- SPACEBAR trigger implemented in `snap.py` -> `pour.py`.
-- 3Hz joint-space recording buffer and high-speed backtracking (250 vel/acc) for safe recovery after pouring interruption.
