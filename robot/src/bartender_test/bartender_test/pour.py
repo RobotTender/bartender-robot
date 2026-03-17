@@ -167,6 +167,15 @@ class ActionNode(Node):
                 reverse_path.append(cheers_j)
 
             movesj(reverse_path, vel=200, acc=200)
+            
+            # Wait for 1 second after reaching cheers_pose
+            self.get_logger().info("Reached CHEERS_POSE. Waiting 1s...")
+            wait(1.0)
+
+            # Return to HOME_POSE
+            self.get_logger().info("Moving to HOME_POSE before signaling Place node...")
+            movej(HOME_POSE, vel=60, acc=60)
+
             response.success = True
             response.message = msg
 

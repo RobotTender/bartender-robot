@@ -1,5 +1,5 @@
 ## Working Context (March 17, 2026 - Manual Command Setup)
-- **Current Branch:** `robot-llm-combine-place-junsung`
+- **Current Branch:** `robot-llm-combine-junsung`
 - **Architecture Status:** 
     - **Persistent Node + Service** structure is the standard.
     - `robotender_pour` (`pour.py`): Handles complex motions (Pour, Warmup) with Snap Recovery.
@@ -15,7 +15,7 @@
 - **Auto-Rebuild:** Every time a code change is made to `bartender_test`, you **MUST** automatically run:
   `colcon build --symlink-install --packages-select bartender_test && source install/setup.bash`
 - **Safety First:** Always use `movesj` or `movej` with cautious velocities (default 60, max 250 for recovery) to prevent hardware collisions.
-- **Commit Rule:** Commit every change immediately, only push when explicitly asked
+- **Commit Rule:** commit and push when explicitly asked
 
 ## Project Organization (Node-Service Structure)
 - `robot/src/bartender_test/`: The primary ROS 2 Python package.

@@ -1,5 +1,6 @@
 import rclpy
 import time
+import threading
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -35,10 +36,21 @@ class PlaceNode(Node):
         if not self.gripper_open_cli.wait_for_service(timeout_sec=5.0):
             return False
         future = self.gripper_open_cli.call_async(Trigger.Request())
-        while rclpy.ok() and not future.done(): time.sleep(0.01)
-        return future.result().success
 
-    async def place_callback(self, request, response):
+        # Add a timeout to wait for the service response
+        timeout = 10.0
+        start_time = time.time()
+        while rclpy.ok() and not future.done():
+            if time.time() - start_time > timeout:
+                self.get_logger().warn("Gripper open service call timed out! Proceeding anyway...")
+                return True
+            time.sleep(0.01)
+        
+        if future.done():
+            return future.result().success
+        return False
+
+    def place_callback(self, request, response):
         self.get_logger().info('!!! Received PLACE signal !!!')
         
         if self.last_pick_pose is None:
@@ -47,9 +59,21 @@ class PlaceNode(Node):
             response.message = "No pick pose recorded"
             return response
 
+        # Run motion in a separate thread to avoid blocking the executor
+        threading.Thread(target=self._do_place_motion, daemon=True).start()
+        
+        response.success = True
+        response.message = "Place sequence started in background"
+        return response
+
+    def _do_place_motion(self):
+        # DSR functional API requires DR_init.__dsr__node to be set before import
         from DSR_ROBOT2 import (movej, movel, set_robot_mode, ROBOT_MODE_AUTONOMOUS, wait, get_current_posx)
         
         try:
+            self.get_logger().info("Place Motion Thread: Starting (Waiting 1s for previous node clear)...")
+            time.sleep(1.0) # Ensure previous node's move command is fully processed
+            
             set_robot_mode(ROBOT_MODE_AUTONOMOUS)
             wait(0.2)
 
@@ -61,6 +85,7 @@ class PlaceNode(Node):
             x, y, z = self.last_pick_pose
             current_posx = list(get_current_posx()[0])
             # Following the logic from test_pick_place.py
+            target_1 = [x - 20, y - 50, z, current_posx[3], current_posx[4], current_posx[5]]
             target_2 = [x - 20, y + 50, z - 20, current_posx[3], current_posx[4], current_posx[5]]
             
             self.get_logger().info(f"Step 2: Moving to placement point: {target_2}")
@@ -68,30 +93,38 @@ class PlaceNode(Node):
             wait(0.5)
 
             # 3. Open Gripper
-            self.get_logger().info("Step 3: Opening gripper")
-            self._gripper_open()
-            wait(2.0)
+            self.get_logger().info("Step 3: Opening gripper to release object")
+            success = self._gripper_open()
+            if not success:
+                self.get_logger().error("Failed to open gripper!")
+            
+            self.get_logger().info("Waiting 2s for gripper to release...")
+            time.sleep(2.0) # Ensure gripper is fully released
 
-            # 4. Return to PICK_PLACE_READY
-            self.get_logger().info("Step 4: Returning to PICK_PLACE_READY")
+            # 4. Retreat to approach point
+            self.get_logger().info("Step 4: Retreating to approach point")
+            try:
+                movel(target_1, vel=[40, 40], acc=[40, 40])
+            except Exception as e:
+                self.get_logger().warn(f"Retreat movel failed, trying movej to READY: {e}")
+                movej(PICK_PLACE_READY, vel=40, acc=40)
+
+            # 5. Return to PICK_PLACE_READY
+            self.get_logger().info("Step 5: Returning to PICK_PLACE_READY pose")
             movej(PICK_PLACE_READY, vel=60, acc=60)
 
-            # 5. Final Return to HOME_POSE
-            self.get_logger().info("Step 5: Returning to HOME_POSE")
+            # 6. Final Return to HOME_POSE
+            self.get_logger().info("Step 6: Returning to HOME_POSE (End of Place Motion)")
             movej(HOME_POSE, vel=60, acc=60)
             
-            response.success = True
-            response.message = "Place sequence completed successfully"
+            self.get_logger().info("Place Motion Thread: Completed successfully")
         except Exception as e:
-            self.get_logger().error(f"Place Error: {e}")
-            response.success = False
-            response.message = str(e)
-            
-        return response
+            self.get_logger().error(f"Place Motion Thread Error: {e}")
 
 def main(args=None):
     rclpy.init(args=args)
     node = PlaceNode()
+    # Use empty ROBOT_ID as in pour.py for relative namespace resolution
     ROBOT_ID, ROBOT_MODEL = "", "e0509"
     import DR_init
     DR_init.__dsr__id = ROBOT_ID

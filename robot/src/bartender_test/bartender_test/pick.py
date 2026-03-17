@@ -189,13 +189,13 @@ class RobotControllerNode(Node):
         return future.result().success
 
     def _pour_start(self):
-        self.get_logger().info("Service Call: Pouring Start")
+        self.get_logger().info("Service Call: Pouring Start (Non-blocking)")
         if not self.pour_start_cli.wait_for_service(timeout_sec=5.0):
             self.get_logger().error("Pour service not available!")
             return False
-        future = self.pour_start_cli.call_async(Trigger.Request())
-        while not future.done(): time.sleep(0.01)
-        return future.result().success
+        # Call asynchronously and return immediately
+        self.pour_start_cli.call_async(Trigger.Request())
+        return True
 
     def _movej(self, pos, vel=30.0, acc=30.0, mode=0, radius=0.0, blend_type=0, sync_type=0):
         from dsr_msgs2.srv import MoveJoint
@@ -297,13 +297,9 @@ class RobotControllerNode(Node):
 
             self.move_robot_and_control_gripper(p_robot[0], p_robot[1], p_robot[2])
             
-            # Use service instead of topic
-            self.get_logger().info("--- 액션 요청 (Pour Service Call) ---")
-            success = self._pour_start()
-            if success:
-                self.get_logger().info("따르기 액션 성공적으로 완료")
-            else:
-                self.get_logger().error("따르기 액션 실패")
+            # Use non-blocking service call to signal Pour node
+            self.get_logger().info("--- Signaling Pour node (Asynchronous) ---")
+            self._pour_start()
             print("=" * 50)
 
         except Exception as e:
@@ -350,6 +346,8 @@ class RobotControllerNode(Node):
             from .defines import PICK_PLACE_READY, HOME_POSE
             self._movej(PICK_PLACE_READY, VELOCITY, ACC)
             self._movej(HOME_POSE, VELOCITY, ACC)
+            self.get_logger().info("Reached HOME_POSE. Waiting 1s for stability...")
+            time.sleep(1.0)
 
         except Exception as e:
             self.get_logger().error(f"로봇 이동 및 그리퍼 제어 중 오류 발생: {e}")
