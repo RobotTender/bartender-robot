@@ -35,6 +35,17 @@
     - `bartender_test/defines.py`: Central repository for Poses (`posj`, `posx`) and physical constants.
 
 
+## Launch Section
+### Full Stack (Launch All Nodes)
+```bash
+python3 scripts/start_order_stack.py --with-bringup --bringup-cmd "ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.xx model:=e0509"
+```
+
+### Beer Only (Pick Test)
+```bash
+python3 scripts/test_pick_beer.py
+```
+
 ## Hardware Specification
 - **Robot:** Doosan Robotics dsr01 e0509 (6-DOF)
 - **Gripper:** Robotis RH-P12-RN (Force-controlled)
@@ -49,11 +60,6 @@ ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=virtual model:=e0509 gui:=
 ### Real Mode (Physical Robot)
 ```bash
 ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.xx model:=e0509
-```
-
-### Full Stack (Launch All Nodes)
-```bash
-python3 scripts/start_order_stack.py --with-bringup --bringup-cmd "ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.xx model:=e0509"
 ```
 
 ### Manual Control (One-Shot Commands)
