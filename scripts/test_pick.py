@@ -23,7 +23,7 @@ import message_filters
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "e0509"
 
-from bartender_test.defines import PICK_PLACE_READY
+from bartender_test.defines import PICK_PLACE_READY, HOME_POSE
 
 class PickTester(Node):
     def __init__(self, target_item='beer'):
@@ -125,10 +125,6 @@ class PickTester(Node):
             return
 
         self.pick_motion(p_robot)
-
-        # 3. Come back to PICK_PLACE_READY
-        self.get_logger().info("Step 3: Returning to PICK_PLACE_READY")
-        self._movej(PICK_PLACE_READY)
         self.get_logger().info("Test Completed Successfully")
 
     def detect_object(self):
@@ -170,8 +166,10 @@ class PickTester(Node):
         time.sleep(0.5)
         self._call_trigger(self.gripper_close_cli)
         time.sleep(3.0)
-        # 5. Lift
-        from bartender_test.defines import HOME_POSE
+        # 5. Lift and Retreat
+        self.get_logger().info("Moving to PICK_PLACE_READY...")
+        self._movej(PICK_PLACE_READY, vel=40, acc=40)
+        self.get_logger().info("Moving to HOME_POSE...")
         self._movej(HOME_POSE, vel=40, acc=40)
 
 def main():

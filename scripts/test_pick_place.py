@@ -182,8 +182,11 @@ class PickPlaceTester(Node):
         time.sleep(0.5)
         self._call_trigger(self.gripper_close_cli)
         time.sleep(3.0)
-        # 5. Lift
-        from bartender_test.defines import HOME_POSE
+        # 5. Lift and Retreat
+        from bartender_test.defines import HOME_POSE, PICK_PLACE_READY
+        self.get_logger().info("Moving to PICK_PLACE_READY...")
+        self._movej(PICK_PLACE_READY, vel=40, acc=40)
+        self.get_logger().info("Moving to HOME_POSE...")
         self._movej(HOME_POSE, vel=40, acc=40)
 
     def place_motion(self, p_robot):
