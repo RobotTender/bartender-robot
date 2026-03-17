@@ -80,7 +80,7 @@ class DepthReader(Node):
         # --- Automatic Snap Trigger Logic ---
         self.trigger_pub = self.create_publisher(Empty, '/dsr01/robotender_snap/trigger', 10)
         self.volume_pub = self.create_publisher(Float32, '/dsr01/robotender/liquid_volume', 10)
-        self.target_volume_ml = 180.0  # Target volume to stop pouring (ml)
+        self.target_volume_ml = 100.0  # Target volume to stop pouring (ml)
         self.snap_triggered = False    # To ensure we only trigger once per pour
         self.low_volume_count = 0      # Used to reset the trigger flag when cup is empty
         

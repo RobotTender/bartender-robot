@@ -17,7 +17,7 @@ from std_srvs.srv import Trigger
 from dsr_msgs2.srv import SetRobotMode, MoveJoint, MoveLine, GetCurrentPosx, GetRobotState
 
 import DR_init
-from .defines import CHEERS_POSE
+from .defines import CHEERS_POSE, HOME_POSE, PICK_PLACE_READY
 
 
 ROBOT_ID = "dsr01"
@@ -235,8 +235,7 @@ class RobotControllerNode(Node):
                 return
 
             self.get_logger().info("초기 자세")
-            home_posj = [69.5, -43.0, 102.0, 101.0, -72.0, -213.0]
-            self._movej(home_posj, vel=VELOCITY, acc=ACC)
+            self._movej(HOME_POSE, vel=VELOCITY, acc=ACC)
             self._gripper_open() # Replaced self.gripper.move(0)
             time.sleep(2)
 
@@ -320,8 +319,7 @@ class RobotControllerNode(Node):
         import time
         try:
             self.get_logger().info("잡기 전 자세")
-            P_ready = [28.0, -35.0, 100.0, 77.0, 63.0, -154.0]
-            self._movej(P_ready, VELOCITY, ACC)
+            self._movej(PICK_PLACE_READY, VELOCITY, ACC)
 
             from dsr_msgs2.srv import GetCurrentPose
             pose_cli = self.create_client(GetCurrentPose, '/dsr01/system/get_current_pose')
@@ -347,7 +345,6 @@ class RobotControllerNode(Node):
             time.sleep(3.0)
 
             self.get_logger().info("Moving to PICK_PLACE_READY then HOME_POSE")
-            from .defines import PICK_PLACE_READY, HOME_POSE
             self._movej(PICK_PLACE_READY, VELOCITY, ACC)
             self._movej(HOME_POSE, VELOCITY, ACC)
             self.get_logger().info("Reached HOME_POSE. Waiting 1s for stability...")
