@@ -173,20 +173,32 @@ class PickTester(Node):
         self._movej(HOME_POSE, vel=40, acc=40)
 
 def main():
-    target = sys.argv[1] if len(sys.argv) > 1 else 'beer'
+    if len(sys.argv) < 2:
+        print("Usage: python3 scripts/test_pick.py [juice|beer|soju]")
+        sys.exit(1)
+        
+    target = sys.argv[1].lower()
+    if target not in ['juice', 'beer', 'soju']:
+        print(f"Error: Invalid target '{target}'. Choose from [juice, beer, soju]")
+        sys.exit(1)
+
     rclpy.init()
     tester = PickTester(target)
     executor = MultiThreadedExecutor()
     executor.add_node(tester)
+    
     import threading
+    # Run the test logic in a separate thread so the executor can spin and handle callbacks
     t = threading.Thread(target=tester.run_test, daemon=True)
     t.start()
+    
     try:
         executor.spin()
     except KeyboardInterrupt:
         pass
-    tester.destroy_node()
-    rclpy.shutdown()
+    finally:
+        tester.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

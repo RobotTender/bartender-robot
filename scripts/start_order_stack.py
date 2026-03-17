@@ -102,7 +102,7 @@ def start_process(spec: ManagedProcess) -> None:
     stdout = None
     stderr = None
 
-    if spec.name in ("camera", "camera2", "volume_detection"):
+    if spec.name in ("camera", "camera2"):
         stdout = subprocess.DEVNULL
         stderr = subprocess.DEVNULL
 

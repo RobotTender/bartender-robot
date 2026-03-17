@@ -2,13 +2,16 @@ import rclpy
 import sys
 from rclpy.node import Node
 import DR_init
+from .defines import (POS1_XYZ, POS2_XYZ, POS3_XYZ, POS4_XYZ, POS5_XYZ)
 
 def main(args=None):
-    if len(sys.argv) != 4:
+    if len(sys.argv) < 2:
         print("Usage:")
-        print("  ros2 run bartender_test movel <dx_cm> <dy_cm> <dz_cm>")
-        print("\nExample (Move +3cm X, -2cm Y, +9cm Z):")
+        print("  ros2 run bartender_test movel <dx_cm> <dy_cm> <dz_cm>  (Relative move)")
+        print("  ros2 run bartender_test movel pos1|pos2|pos3|pos4|pos5 (Move to marker)")
+        print("\nExample:")
         print("  ros2 run bartender_test movel +3 -2 +9")
+        print("  ros2 run bartender_test movel pos1")
         return
 
     rclpy.init(args=args)
@@ -20,39 +23,54 @@ def main(args=None):
     from DSR_ROBOT2 import (movel, set_robot_mode, ROBOT_MODE_AUTONOMOUS, wait, get_current_posx)
 
     try:
-        dx_cm = float(sys.argv[1])
-        dy_cm = float(sys.argv[2])
-        dz_cm = float(sys.argv[3])
-        
-        # Convert cm to mm
-        dx_mm = dx_cm * 10.0
-        dy_mm = dy_cm * 10.0
-        dz_mm = dz_cm * 10.0
-
         # Must be in AUTONOMOUS mode to use movel
         set_robot_mode(ROBOT_MODE_AUTONOMOUS)
         wait(0.5)
 
         # Get current Cartesian position [X, Y, Z, A, B, C]
-        # posx is typically wrapped in a tuple/list, we take the [0] element if it returns a tuple with status, 
-        # but in DSR API get_current_posx()[0] gives the coordinates (a list of 6 floats).
-        current_posx = get_current_posx()[0]
-        
-        node.get_logger().info(f"Current posx: {current_posx}")
+        current_posx = list(get_current_posx()[0])
+        node.get_logger().info(f"Initial posx: {current_posx}")
 
-        # Modify only the X, Y, Z components
         target_posx = list(current_posx)
-        target_posx[0] += dx_mm
-        target_posx[1] += dy_mm
-        target_posx[2] += dz_mm
+        arg1 = sys.argv[1].lower()
 
-        node.get_logger().info(f"Target posx (shifting by {dx_mm}mm, {dy_mm}mm, {dz_mm}mm): {target_posx}")
+        if arg1 in ['pos1', 'pos2', 'pos3', 'pos4', 'pos5']:
+            if arg1 == 'pos1': coords = POS1_XYZ
+            elif arg1 == 'pos2': coords = POS2_XYZ
+            elif arg1 == 'pos3': coords = POS3_XYZ
+            elif arg1 == 'pos4': coords = POS4_XYZ
+            elif arg1 == 'pos5': coords = POS5_XYZ
+            
+            target_posx[0] = float(coords[0])
+            target_posx[1] = float(coords[1])
+            target_posx[2] = float(coords[2])
+            node.get_logger().info(f"Moving to absolute marker {arg1}: {target_posx[:3]}")
+        else:
+            if len(sys.argv) != 4:
+                print("Relative move requires 3 arguments: dx dy dz (in cm)")
+                return
+            
+            dx_mm = float(sys.argv[1]) * 10.0
+            dy_mm = float(sys.argv[2]) * 10.0
+            dz_mm = float(sys.argv[3]) * 10.0
+            
+            target_posx[0] += dx_mm
+            target_posx[1] += dy_mm
+            target_posx[2] += dz_mm
+            node.get_logger().info(f"Moving relative: shift by {dx_mm}, {dy_mm}, {dz_mm} mm")
+
+        node.get_logger().info(f"Target posx: {target_posx}")
 
         # Execute linear move keeping orientation exactly the same
         # Using vel=100 mm/s and acc=100 mm/s^2 for safe, smooth movement
         ret = movel(target_posx, vel=[100.0, 100.0], acc=[100.0, 100.0])
         
         node.get_logger().info(f"Move complete with return code: {ret}")
+        
+        # Print final position for easy copy-pasting to defines.py
+        final_posx = get_current_posx()[0]
+        node.get_logger().info(f"Final XYZ: {[round(x, 2) for x in final_posx[:3]]}")
+        node.get_logger().info(f"Full posx: {[round(x, 2) for x in final_posx]}")
 
     except Exception as e:
         node.get_logger().error(f"Error: {e}")
@@ -60,6 +78,9 @@ def main(args=None):
         if rclpy.ok():
             node.destroy_node()
             rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
 
 if __name__ == '__main__':
     main()
