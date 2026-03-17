@@ -126,9 +126,9 @@ class PickPlaceTester(Node):
 
         self.pick_motion(p_robot)
 
-        # 3. Come back to PICK_PLACE_READY
-        self.get_logger().info("Step 3: Returning to PICK_PLACE_READY")
-        self._movej(PICK_PLACE_READY)
+        # 3. Step 3 in test_pick_place was "Return to PICK_PLACE_READY", but now pick_motion does READY then HOME.
+        # So we can just stay at HOME during the 3s wait.
+        self.get_logger().info("Step 3: Staying at HOME for wait")
 
         # 4. Wait 3 seconds
         self.get_logger().info("Step 4: Waiting for 3 seconds")
