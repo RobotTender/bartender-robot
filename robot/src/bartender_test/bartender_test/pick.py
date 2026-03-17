@@ -12,7 +12,7 @@ from rclpy.node import Node
 import message_filters
 from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge, CvBridgeError
-from std_msgs.msg import String, Bool
+from std_msgs.msg import String, Bool, Float64MultiArray
 from std_srvs.srv import Trigger
 from dsr_msgs2.srv import SetRobotMode, MoveJoint, MoveLine, GetCurrentPosx, GetRobotState
 
@@ -89,6 +89,7 @@ class RobotControllerNode(Node):
         )
         self.ts.registerCallback(self.synced_callback)
         self.order_sub = self.create_subscription(String, ORDER_TOPIC, self.order_callback, 10)
+        self.last_pose_pub = self.create_publisher(Float64MultiArray, 'robotender_pick/last_pose', 10)
         # self.action_pub = self.create_publisher(String, ACTION_TOPIC, 10) # Deprecated topic
 
         # New Service Clients
@@ -289,6 +290,11 @@ class RobotControllerNode(Node):
             print(f"raw 픽셀 좌표 : (u_raw={u_raw}, v_raw={v_raw}), Depth: {depth_m*1000:.1f} mm")
             self.get_logger().info(f"로봇 목표 좌표: X={p_robot[0]:.1f}, Y={p_robot[1]:.1f}, Z={p_robot[2]:.1f}\n")
 
+            # Publish pick coordinates for Place node
+            pose_msg = Float64MultiArray()
+            pose_msg.data = [float(p_robot[0]), float(p_robot[1]), float(p_robot[2])]
+            self.last_pose_pub.publish(pose_msg)
+
             self.move_robot_and_control_gripper(p_robot[0], p_robot[1], p_robot[2])
             
             # Use service instead of topic
@@ -344,9 +350,10 @@ class RobotControllerNode(Node):
             self._movej(P_mid, VELOCITY, ACC)
             time.sleep(1.0)
 
-            self.get_logger().info("따르기 위한 자세를 취합니다.")
-            last_posj = [45.0, 0.0, 135.0, 90.0, -90.0, -135.0]
-            self._movej(last_posj, VELOCITY, ACC)
+            self.get_logger().info("Moving to PICK_PLACE_READY then HOME_POSE")
+            from .defines import PICK_PLACE_READY, HOME_POSE
+            self._movej(PICK_PLACE_READY, VELOCITY, ACC)
+            self._movej(HOME_POSE, VELOCITY, ACC)
 
         except Exception as e:
             self.get_logger().error(f"로봇 이동 및 그리퍼 제어 중 오류 발생: {e}")
