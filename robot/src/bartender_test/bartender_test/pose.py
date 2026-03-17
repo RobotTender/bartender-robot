@@ -3,7 +3,7 @@ import sys
 from rclpy.node import Node
 import DR_init
 from .defines import (HOME_POSE, CHEERS_POSE, POLE_POSE, POUR_HORIZONTAL, 
-                            POUR_DIAGONAL, POUR_VERTICAL, CONTACT_POSE, PICK_PLACE_READY)
+                            POUR_DIAGONAL, POUR_VERTICAL, CONTACT_POSE, PICK_PLACE_READY, PMID_POSE)
 
 def main(args=None):
     if len(sys.argv) < 2:
@@ -16,6 +16,7 @@ def main(args=None):
         print("  ros2 run bartender_test pose vertical")
         print("  ros2 run bartender_test pose pole")
         print("  ros2 run bartender_test pose pnp_ready")
+        print("  ros2 run bartender_test pose pmid")
         return
 
     rclpy.init(args=args)
@@ -36,6 +37,8 @@ def main(args=None):
             target_pose = HOME_POSE
         elif cmd == 'pnp_ready':
             target_pose = PICK_PLACE_READY
+        elif cmd == 'pmid':
+            target_pose = PMID_POSE
         elif cmd == 'cheers':
             target_pose = CHEERS_POSE
         elif cmd == 'contact':
