@@ -138,9 +138,6 @@ class PickPlaceTester(Node):
         self.get_logger().info("Step 5: Placing back to original coordinates")
         self.place_motion(p_robot)
 
-        # 6. Come back to PICK_PLACE_READY
-        self.get_logger().info("Step 6: Final return to PICK_PLACE_READY")
-        self._movej(PICK_PLACE_READY)
         self.get_logger().info("Test Completed Successfully")
 
     def detect_object(self):
@@ -190,17 +187,36 @@ class PickPlaceTester(Node):
         self._movej(HOME_POSE, vel=40, acc=40)
 
     def place_motion(self, p_robot):
+        from bartender_test.defines import HOME_POSE, PICK_PLACE_READY
         x, y, z = p_robot
-        from bartender_test.defines import HOME_POSE
-        self._movej(HOME_POSE, vel=40, acc=40)
+        
+        # 1. Move to PICK_PLACE_READY
+        self.get_logger().info("Moving to PICK_PLACE_READY before placement...")
+        self._movej(PICK_PLACE_READY, vel=40, acc=40)
+
+        # 2. Move to placement point
         current_pos = self._get_posx()
         target_2 = [x - 20, y + 50, z - 20, current_pos[3], current_pos[4], current_pos[5]]
+        self.get_logger().info(f"Moving to placement point: {target_2}")
         self._movel(target_2, vel=40, acc=40)
         time.sleep(0.5)
+
+        # 3. Open gripper
         self._call_trigger(self.gripper_open_cli)
         time.sleep(2.0)
+
+        # 4. Retreat to target_1 (approach/retreat point)
         target_1 = [x - 20, y - 50, z, current_pos[3], current_pos[4], current_pos[5]]
+        self.get_logger().info("Retreating...")
         self._movel(target_1, vel=40, acc=40)
+
+        # 5. Return to PICK_PLACE_READY
+        self.get_logger().info("Returning to PICK_PLACE_READY...")
+        self._movej(PICK_PLACE_READY, vel=40, acc=40)
+
+        # 6. Final Return to HOME_POSE
+        self.get_logger().info("Returning to HOME_POSE...")
+        self._movej(HOME_POSE, vel=40, acc=40)
 
 def main():
     target = sys.argv[1] if len(sys.argv) > 1 else 'beer'
