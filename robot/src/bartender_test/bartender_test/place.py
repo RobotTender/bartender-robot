@@ -72,17 +72,12 @@ class PlaceNode(Node):
             self._gripper_open()
             wait(2.0)
 
-            # 4. Retreat
-            target_1 = [x - 20, y - 50, z, current_posx[3], current_posx[4], current_posx[5]]
-            self.get_logger().info("Step 4: Retreating")
-            movel(target_1, vel=[40, 40], acc=[40, 40])
-
-            # 5. Return to PICK_PLACE_READY
-            self.get_logger().info("Step 5: Returning to PICK_PLACE_READY")
+            # 4. Return to PICK_PLACE_READY
+            self.get_logger().info("Step 4: Returning to PICK_PLACE_READY")
             movej(PICK_PLACE_READY, vel=60, acc=60)
 
-            # 6. Final Return to HOME_POSE
-            self.get_logger().info("Step 6: Returning to HOME_POSE")
+            # 5. Final Return to HOME_POSE
+            self.get_logger().info("Step 5: Returning to HOME_POSE")
             movej(HOME_POSE, vel=60, acc=60)
             
             response.success = True
