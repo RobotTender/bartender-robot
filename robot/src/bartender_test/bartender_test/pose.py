@@ -2,7 +2,8 @@ import rclpy
 import sys
 from rclpy.node import Node
 import DR_init
-from .defines import HOME_POSE, CHEERS_POSE, POLE_POSE, POUR_HORIZONTAL, POUR_DIAGONAL, POUR_VERTICAL, CONTACT_POSE
+from .defines import (HOME_POSE, CHEERS_POSE, POLE_POSE, POUR_HORIZONTAL, 
+                            POUR_DIAGONAL, POUR_VERTICAL, CONTACT_POSE)
 
 def main(args=None):
     if len(sys.argv) < 2:
@@ -49,7 +50,8 @@ def main(args=None):
             return
 
         node.get_logger().info(f"Moving to pose: {cmd} ({target_pose})")
-        ret = movej(target_pose, vel=20, acc=20)
+        # Velocity set to 60 as per Safety First mandate for general moves
+        ret = movej(target_pose, vel=60, acc=60)
         node.get_logger().info(f"Move complete with return code: {ret}")
 
     except Exception as e:

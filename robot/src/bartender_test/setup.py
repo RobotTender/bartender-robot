@@ -27,6 +27,7 @@ setup(
             'pour = bartender_test.pour:main',
             'pose = bartender_test.pose:main',
             'movej = bartender_test.movej:main',
+            'movel = bartender_test.movel:main',
             'check_tcp = bartender_test.check_tcp:main',
             'monitor = bartender_test.monitor:main',
             'snap = bartender_test.snap:main',

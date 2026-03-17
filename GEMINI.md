@@ -1,16 +1,17 @@
-# GEMINI.md - Persistent Mandates & Working Log (robot-llm-combine-junsung)
+## Gemini Added Memories
+- Always commit every time you change the code.
+- Only push when explicitly asked to do so.
+---
 
-## ⚠️ SCOPE BOUNDARY (CRITICAL)
-This project is part of a larger workspace. **You MUST ONLY modify files within `robot/src/bartender_test/`, `llm/`, `detection/` and this `GEMINI.md` file.** Your expertise is strictly limited to the "Robotender" bartender robot logic and its integration with LLM/Detection modules.
-
-## Working Context (March 16, 2026 - Branch Reset)
+## Working Context (March 17, 2026 - Manual Command Setup)
 - **Current Branch:** `robot-llm-combine-junsung`
 - **Architecture Status:** 
     - **Persistent Node + Service** structure is the standard.
-    - `robotender_action` (`action_node.py`): Handles complex motions (Pour, Warmup) with Snap Recovery.
+    - `robotender_pour` (`pour.py`): Handles complex motions (Pour, Warmup) with Snap Recovery.
     - `robotender_gripper` (`gripper.py`): Controls the Robotis RH-P12-RN via Autonomous DRL Injection (One-Shot).
     - `robotender_monitor` (`monitor.py`): Unified telemetry (Joints, Pose, Force, Weight).
-    - `robotender_trigger` (`trigger.py`): Spacebar listener for manual SNAP/Recovery.
+    - `robotender_snap` (`snap.py`): Spacebar listener for manual SNAP/Recovery.
+    - **One-Shot Nodes:** `pose`, `movej`, `movel` for manual control.
     - **LLM Integration:** `llm/web/order_engine/` contains the logic for order classification and making.
 
 ## Core Mandates
@@ -25,16 +26,21 @@ This project is part of a larger workspace. **You MUST ONLY modify files within 
 
 ## Project Organization (Node-Service Structure)
 - `robot/src/bartender_test/`: The primary ROS 2 Python package.
-    - `bartender_test/action_node.py` (**`robotender_action`**):
-        - Service: `/dsr01/pour/start` (Pouring with Snap Recovery).
-        - Service: `/dsr01/warmup/start` (Pose verification).
-        - Subscription: `pouring_trigger` (Manual SNAP).
+    - `bartender_test/pour.py` (**`robotender_pour`**):
+        - Service: `/dsr01/robotender_pour/start` (Pouring with Snap Recovery).
+        - Service: `/dsr01/robotender_pour/warmup` (Pose verification).
+        - Subscription: `robotender_snap/trigger` (Manual SNAP).
     - `bartender_test/gripper.py` (**`robotender_gripper`**):
-        - Service: `/dsr01/gripper/open` (Autonomous DRL injection).
-        - Service: `/dsr01/gripper/close` (Autonomous DRL injection).
+        - Service: `/dsr01/robotender_gripper/open` (Autonomous DRL injection).
+        - Service: `/dsr01/robotender_gripper/close` (Autonomous DRL injection).
     - `bartender_test/monitor.py` (**`robotender_monitor`**): Real-time display of joints, TCP pose, and weight.
-    - `bartender_test/trigger.py` (**`robotender_trigger`**): Physical interrupt node (Spacebar listener).
+    - `bartender_test/snap.py` (**`robotender_snap`**): Physical interrupt node (Spacebar listener).
+    - `bartender_test/pick.py` (**`robotender_pick`**): Vision-based picking and task coordination.
+    - `bartender_test/pose.py` (**`pose`**): One-shot move to predefined poses.
+    - `bartender_test/movej.py` (**`movej`**): One-shot joint-space movement.
+    - `bartender_test/movel.py` (**`movel`**): One-shot linear-space movement.
     - `bartender_test/defines.py`: Central repository for Poses (`posj`, `posx`) and physical constants.
+
 
 ## Hardware Specification
 - **Robot:** Doosan Robotics dsr01 e0509 (6-DOF)
@@ -58,6 +64,23 @@ ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.68 mo
 python3 scripts/start_order_stack.py --with-bringup --bringup-cmd "ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.68 model:=e0509"
 ```
 
+### Manual Control (One-Shot Commands)
+```bash
+# Move to predefined poses (home, cheers, contact, horizontal, diagonal, vertical, pole)
+ros2 run bartender_test pose cheers
+
+# Joint-space movement (relative or absolute)
+ros2 run bartender_test movej j4 rel 10
+ros2 run bartender_test movej 0 0 90 0 90 0
+
+# Linear-space movement (dx, dy, dz in cm)
+ros2 run bartender_test movel 0 0 +5
+
+# Gripper control
+ros2 run bartender_test gripper open
+ros2 run bartender_test gripper close 800
+```
+
 ## Snapping/Recovery Status
-- SPACEBAR trigger implemented in `trigger.py` -> `action_node.py`.
+- SPACEBAR trigger implemented in `snap.py` -> `pour.py`.
 - 3Hz joint-space recording buffer and high-speed backtracking (250 vel/acc) for safe recovery after pouring interruption.
