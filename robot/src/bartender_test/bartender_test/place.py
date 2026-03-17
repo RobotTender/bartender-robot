@@ -98,8 +98,8 @@ class PlaceNode(Node):
             if not success:
                 self.get_logger().error("Failed to open gripper!")
             
-            self.get_logger().info("Waiting 2s for gripper to release...")
-            time.sleep(2.0) # Ensure gripper is fully released
+            self.get_logger().info("Waiting 0.5s for gripper to release...")
+            time.sleep(0.5) # Ensure gripper is fully released
 
             # 4. Retreat to approach point
             self.get_logger().info("Step 4: Retreating to approach point")
