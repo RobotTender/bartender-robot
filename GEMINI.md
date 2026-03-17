@@ -56,12 +56,12 @@ ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=virtual model:=e0509 gui:=
 
 ### Real Mode (Physical Robot)
 ```bash
-ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.68 model:=e0509
+ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.xx model:=e0509
 ```
 
 ### Full Stack (Launch All Nodes)
 ```bash
-python3 scripts/start_order_stack.py --with-bringup --bringup-cmd "ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.68 model:=e0509"
+python3 scripts/start_order_stack.py --with-bringup --bringup-cmd "ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.xx model:=e0509"
 ```
 
 ### Manual Control (One-Shot Commands)
@@ -76,9 +76,9 @@ ros2 run bartender_test movej 0 0 90 0 90 0
 # Linear-space movement (dx, dy, dz in cm)
 ros2 run bartender_test movel 0 0 +5
 
-# Gripper control
-ros2 run bartender_test gripper open
-ros2 run bartender_test gripper close 800
+# Gripper control (Service calls to persistent robotender_gripper node)
+ros2 service call /dsr01/robotender_gripper/open std_srvs/srv/Trigger {}
+ros2 service call /dsr01/robotender_gripper/close std_srvs/srv/Trigger {}
 ```
 
 ## Snapping/Recovery Status
