@@ -346,10 +346,6 @@ class RobotControllerNode(Node):
             self.get_logger().info("그리퍼가 닫힐 때까지 대기합니다 (3초)...")
             time.sleep(3.0)
 
-            P_mid = [61.0, -20.0, 97.0, 96.0, -63.0, -195.0]
-            self._movej(P_mid, VELOCITY, ACC)
-            time.sleep(1.0)
-
             self.get_logger().info("Moving to PICK_PLACE_READY then HOME_POSE")
             from .defines import PICK_PLACE_READY, HOME_POSE
             self._movej(PICK_PLACE_READY, VELOCITY, ACC)
