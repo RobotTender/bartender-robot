@@ -70,6 +70,13 @@ def _build_pour_command() -> str:
         "exec python3 -m bartender_test.pour"
     )
 
+def _build_place_command() -> str:
+    return (
+        f"{_build_workspace_source_prefix()} && "
+        f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
+        "exec python3 -m bartender_test.place"
+    )
+
 def _build_snap_command() -> str:
     return (
         f"{_build_workspace_source_prefix()} && "
@@ -209,6 +216,11 @@ def main() -> int:
             start_process(pour_spec)
             started_processes.append(pour_spec)
             time.sleep(1.0) # Wait for pour node to initialize
+
+            place_spec = ManagedProcess("place", _build_place_command(), ROOT)
+            start_process(place_spec)
+            started_processes.append(place_spec)
+            time.sleep(1.0) # Wait for place node to initialize
 
         # 5. Start web server
         if not args.skip_web:
