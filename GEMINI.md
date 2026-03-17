@@ -2,8 +2,9 @@
 - **Current Branch:** `robot-llm-combine-junsung`
 - **Architecture Status:** 
     - **Persistent Node + Service** structure is the standard.
-    - `robotender_pour` (`pour.py`): Handles complex motions (Pour, Warmup) with Snap Recovery.
-    - `robotender_gripper` (`gripper.py`): Controls the Robotis RH-P12-RN via Autonomous DRL Injection (One-Shot).
+    - `robotender_pour` (**`pour.py`**): Handles complex motions (Pour, Warmup) with Snap Recovery.
+    - `robotender_place` (**`place.py`**): Handles the placement of bottles after pouring.
+    - `robotender_gripper` (**`gripper.py`**): Controls the Robotis RH-P12-RN via Autonomous DRL Injection (One-Shot).
     - `robotender_monitor` (`monitor.py`): Unified telemetry (Joints, Pose, Force, Weight).
     - `robotender_snap` (`snap.py`): Spacebar listener for manual SNAP/Recovery.
     - **One-Shot Nodes:** `pose`, `movej`, `movel` for manual control.
@@ -29,6 +30,9 @@
     - `bartender_test/monitor.py` (**`robotender_monitor`**): Real-time display of joints, TCP pose, and weight.
     - `bartender_test/snap.py` (**`robotender_snap`**): Physical interrupt node (Spacebar listener).
     - `bartender_test/pick.py` (**`robotender_pick`**): Vision-based picking and task coordination.
+    - `bartender_test/place.py` (**`robotender_place`**):
+        - Service: `/dsr01/robotender_place/start` (Placement with threaded motion).
+        - Subscription: `robotender_pick/last_pose` (Coordinates from pick phase).
     - `bartender_test/pose.py` (**`pose`**): One-shot move to predefined poses.
     - `bartender_test/movej.py` (**`movej`**): One-shot joint-space movement.
     - `bartender_test/movel.py` (**`movel`**): One-shot linear-space movement.
