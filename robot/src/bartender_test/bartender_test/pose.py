@@ -74,7 +74,7 @@ def main(args=None):
         node.get_logger().info(f"Move complete with return code: {ret}")
 
         # Print current status for adjustment
-        final_posj = get_current_posj()[0]
+        final_posj = get_current_posj()
         final_posx = get_current_posx()[0]
         node.get_logger().info(f"Final JOINTs: {[round(j, 2) for j in final_posj]}")
         node.get_logger().info(f"Final XYZ: {[round(x, 2) for x in final_posx[:3]]}")

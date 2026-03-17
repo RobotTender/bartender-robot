@@ -45,9 +45,9 @@
 python3 scripts/start_order_stack.py --with-bringup --bringup-cmd "ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.xx model:=e0509"
 ```
 
-### Beer Only (Pick Test)
+### Order Injection (Tests Post-Order Stack)
 ```bash
-python3 scripts/test_pick_beer.py
+python3 scripts/test_post_order.py [beer|soju|juice]
 ```
 
 ## Hardware Specification

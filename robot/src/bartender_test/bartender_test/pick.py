@@ -245,7 +245,7 @@ class RobotControllerNode(Node):
             img = cv2.flip(img_raw, -1)
             self.latest_cv_vis = cv2.flip(img_raw.copy(), -1)
             h, w = img.shape[:2]
-            object_loc_dict = {'0': [], '1': [], '2': []}
+            object_loc_dict = {'0': None, '1': None, '2': None}
 
             results = model(img)
             for result in results:
@@ -270,7 +270,11 @@ class RobotControllerNode(Node):
                     cv2.rectangle(self.latest_cv_vis, (x1, y1), (x2, y2), color, 2)
                     cv2.putText(self.latest_cv_vis, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
-            target = object_loc_dict[class_id]
+            target = object_loc_dict.get(class_id)
+            if not target:
+                self.get_logger().error(f"주문한 {object_dict.get(class_id, class_id)} 제품을 찾을 수 없습니다!")
+                return
+
             depth_mm = target["depth_mm"]
             if depth_mm == 0:
                 print(f"해당 {model.names[class_id]}의 깊이를 측정할 수 없습니다 (값: 0)")

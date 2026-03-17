@@ -16,7 +16,7 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 from .defines import (HOME_POSE, CHEERS_POSE, CONTACT_POSE, POUR_HORIZONTAL, POUR_DIAGONAL, POUR_VERTICAL, POLE_POSE,
-                            POS2_XYZ, POS3_XYZ, POS4_XYZ)
+                            POS1_XYZ, POS2_XYZ, POS3_XYZ, POS4_XYZ, POS5_XYZ)
 
 class ActionNode(Node):
     def __init__(self):
@@ -103,13 +103,14 @@ class ActionNode(Node):
             wait(0.2)
 
             # Setup Trajectories
+            p0 = posx(POS1_XYZ + [float(x) for x in fkin(CHEERS_POSE, ref=0)][3:])
             p1 = posx([float(x) for x in fkin(CHEERS_POSE, ref=0)])
             p2 = posx(POS2_XYZ + [float(x) for x in fkin(CONTACT_POSE, ref=0)][3:])
             p3 = posx(POS3_XYZ + [float(x) for x in fkin(POUR_HORIZONTAL, ref=0)][3:])
-            p5 = posx([float(x) for x in fkin(POUR_VERTICAL, ref=0)])
             p4 = posx(list(POS4_XYZ) + [float(x) for x in fkin(POUR_DIAGONAL, ref=0)][3:])
+            p5 = posx(list(POS5_XYZ) + [float(x) for x in fkin(POUR_VERTICAL, ref=0)][3:])
             
-            approach_path = [p1, p2]
+            approach_path = [p0, p1, p2]
             pour_path = [p2, p3, p4, p5]
 
             # 1. Move to Cheers
