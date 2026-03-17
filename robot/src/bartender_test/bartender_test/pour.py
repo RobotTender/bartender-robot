@@ -136,36 +136,39 @@ class ActionNode(Node):
 
             # 4. Handle Recovery or Finish
             if self.trigger_received:
-                curr_j = get_current_posj()
-                if duration < 2.5: target_backtrack_size = 1
-                elif duration < 5.0: target_backtrack_size = 2
-                else: target_backtrack_size = 3
-
-                recorded_full = self.pouring_point_buffer[::-1]
-                num_rec = len(recorded_full)
-                reverse_path = [curr_j]
-                
-                if num_rec > target_backtrack_size:
-                    step = num_rec // target_backtrack_size
-                    for i in range(0, num_rec, step):
-                        p = recorded_full[i]
-                        if any(abs(a-b) > 0.1 for a,b in zip(reverse_path[-1], p)):
-                            reverse_path.append(p)
-                else:
-                    reverse_path.extend(recorded_full)
-                
-                cheers_j = posj(CHEERS_POSE)
-                if any(abs(a-b) > 0.1 for a,b in zip(reverse_path[-1], cheers_j)):
-                    reverse_path.append(cheers_j)
-
                 self.get_logger().info(f"Interrupted. Snapping back...")
-                movesj(reverse_path, vel=200, acc=200)
-                response.success = True
-                response.message = "Pour interrupted and recovered"
+                msg = "Pour interrupted and recovered"
             else:
-                self.get_logger().info(f"Pour finished naturally")
-                response.success = True
-                response.message = "Pour completed successfully"
+                self.get_logger().info(f"Pour finished naturally. Waiting 3s before manual snap...")
+                wait(3.0)
+                msg = "Pour completed successfully with manual snap"
+
+            # Common Backtrack Logic (Snap Recovery or Manual Snap)
+            curr_j = get_current_posj()
+            if duration < 2.5: target_backtrack_size = 1
+            elif duration < 5.0: target_backtrack_size = 2
+            else: target_backtrack_size = 3
+
+            recorded_full = self.pouring_point_buffer[::-1]
+            num_rec = len(recorded_full)
+            reverse_path = [curr_j]
+            
+            if num_rec > target_backtrack_size:
+                step = num_rec // target_backtrack_size
+                for i in range(0, num_rec, step):
+                    p = recorded_full[i]
+                    if any(abs(a-b) > 0.1 for a,b in zip(reverse_path[-1], p)):
+                        reverse_path.append(p)
+            else:
+                reverse_path.extend(recorded_full)
+            
+            cheers_j = posj(CHEERS_POSE)
+            if any(abs(a-b) > 0.1 for a,b in zip(reverse_path[-1], cheers_j)):
+                reverse_path.append(cheers_j)
+
+            movesj(reverse_path, vel=200, acc=200)
+            response.success = True
+            response.message = msg
 
             # Signal Place node (Always signal after pouring is done, whether natural or interrupted)
             if self.place_cli.wait_for_service(timeout_sec=1.0):
