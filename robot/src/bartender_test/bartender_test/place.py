@@ -1,12 +1,15 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import ReentrantCallbackGroup
 from std_srvs.srv import Trigger
 from .defines import PICK_PLACE_READY
 
 class PlaceNode(Node):
     def __init__(self):
         super().__init__('robotender_place', namespace='/dsr01')
-        self.srv = self.create_service(Trigger, 'robotender_place/start', self.place_callback)
+        self.callback_group = ReentrantCallbackGroup()
+        self.srv = self.create_service(Trigger, 'robotender_place/start', self.place_callback, callback_group=self.callback_group)
         self.get_logger().info('--- Robotender Place Node Initialized ---')
 
     async def place_callback(self, request, response):
@@ -42,8 +45,10 @@ def main(args=None):
     DR_init.__dsr__model = ROBOT_MODEL
     DR_init.__dsr__node = node
     
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
