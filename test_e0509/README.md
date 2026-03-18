@@ -6,6 +6,60 @@
   - `/IsaacLab/source/isaaclab_tasks/isaaclab_tasks/direct/test_e0509`
 - 즉, `direct` 아래에 `test_e0509` 폴더 전체(현재 폴더)를 그대로 넣어야 합니다.
 
+## 환경 시나리오 요약 (Grip Bottle 기준)
+
+이전 브랜치 README에서 쓰던 "환경 맥락"을 유지해서 정리하면 아래와 같습니다.
+
+- 로봇 에셋:
+  - `USD/e0509/e0509_model.usd`
+- 워크스페이스 에셋:
+  - `USD/table_hole.usd`
+  - `USD/tables_3.usd`
+- 오브젝트 에셋:
+  - `USD/soju.usd`, `USD/orange.usd`, `USD/beer.usd`
+
+배치/해석 포인트:
+
+- 코드 변수명은 `table_*`지만, 프로젝트 해석은 "선반 상면/선반 중심" 기준으로 봐도 됩니다.
+- 상면 기준값(현재 설정): `(x, y, z) = (0.00, 0.67, 1.30) m`
+  - `x = 0.00` (`table_top_center_xy[0]`)
+  - `y = 0.67` (`table_top_center_xy[1]`, `tcp_y_offset_obs` 기준)
+  - `z = 1.30` (`table_top_z`, `tcp_height_obs` 기준)
+- `table_hole.usd`, `tables_3.usd`는 둘 다 scene에 로드되며, 로봇은 같은 env 안에서 별도 articulation으로 배치됩니다.
+
+오브젝트 스폰 규칙(Grip):
+
+- 매 reset마다 병 3개 중 1개가 active로 랜덤 선택됩니다.
+- active 병(soju/orange/beer)만 선반 상면 스폰 영역 안에서 랜덤 `(x, y, yaw)`로 배치됩니다.
+- 나머지 2개는 파킹 좌표(작업영역 밖)로 이동됩니다.
+- one-hot도 active 병에 맞춰 같이 갱신됩니다.
+
+## 환경 시나리오 요약 (Move Bottle 기준)
+
+MoveBottle은 GripBottleEnv를 상속하므로, 기본 scene 에셋(로봇/선반 USD 경로)은 동일하게 사용합니다.
+
+핵심 차이:
+
+- `use_virtual_bottle = True`가 기본값입니다.
+- 물리 병 3개는 reset 시 파킹 위치로 이동(+가시성 off)하고, 학습 대상 병은 TCP 기준 가상 오브젝트로 계산됩니다.
+- reset 시작 자세는 랜덤 IK가 아니라 고정 시작 자세(`move_start_joint_pos`)를 사용합니다.
+- 시작 시 그리퍼는 닫힘 상태(`start_gripper_close_ratio=1.0`, `lock_gripper_closed=True`) 기준입니다.
+
+목표 자세(단계별):
+
+- Stage1 (`MoveBottleStage1EnvCfg`):
+  - 목표 조인트: `(90, -45, 90, 0, 45, -90)` deg
+  - 목적: 고정 시작자세에서 standby 근방으로 안정 이동
+- Stage2/Stage3 (`MoveBottleStage2EnvCfg`, `MoveBottleStage3EnvCfg`):
+  - 목표 조인트: `(45, 0, 135, -90, 90, 135)` deg
+  - 목적: 운반 중 자세/충돌/기울기 제약을 포함한 목표 자세 도달
+
+Move 관측에서 추가된 항목의 의미:
+
+- `tcp_height_obs`: 선반 상면(`z=1.30`) 대비 TCP 높이
+- `tcp_y_offset_obs`: 선반 중심선(`y=0.67`) 대비 TCP y 편차
+- 둘 다 매 step 현재 EE/TCP 상태에서 실시간 계산됩니다.
+
 ## 관측/액션 정의
 
 ### 1) Grip Bottle (`Isaac-E0509-Grip-Bottle-Direct-v0`)
