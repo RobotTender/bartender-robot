@@ -18,6 +18,7 @@ from std_srvs.srv import Trigger
 from robotender_msgs.srv import GripperControl
 from dsr_msgs2.srv import MoveJoint, MoveLine, GetCurrentPose, SetRobotMode
 from sensor_msgs.msg import Image, CameraInfo
+from std_msgs.msg import Float64MultiArray
 import message_filters
 
 # Constants
@@ -28,7 +29,7 @@ VELOCITY, ACC = 30.0, 30.0
 from bartender_test.defines import (
     PICK_PLACE_READY, HOME_POSE,
     GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN,
-    JUICE, BEER, SOJU,
+    INDEX_JUICE, INDEX_BEER, INDEX_SOJU,
     GRIPPER_POSITIONS, GRIPPER_FORCES,
     PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET
 )
@@ -75,6 +76,9 @@ class PickTester(Node):
         self.ts = message_filters.ApproximateTimeSynchronizer([self.color_sub, self.depth_sub, self.info_sub], 10, 0.1)
         self.ts.registerCallback(self.synced_callback)
 
+        # Publisher for coordination with Place node
+        self.last_pose_pub = self.create_publisher(Float64MultiArray, 'robotender_pick/last_pose', 10)
+
         self.get_logger().info(f"PickTester initialized for target: {target_item}, mode: {test_mode}")
 
     def synced_callback(self, color_msg, depth_msg, info_msg):
@@ -119,7 +123,7 @@ class PickTester(Node):
             return self._gripper_move(pos, force)
         except Exception as e:
             self.get_logger().error(f"Gripper close error: {e}, using default soju settings")
-            return self._gripper_move(GRIPPER_POSITIONS[SOJU], GRIPPER_FORCES[SOJU])
+            return self._gripper_move(GRIPPER_POSITIONS[INDEX_SOJU], GRIPPER_FORCES[INDEX_SOJU])
 
     def _movej(self, pos, vel=VELOCITY, acc=ACC):
         self.movej_cli.wait_for_service()
@@ -169,8 +173,22 @@ class PickTester(Node):
             return
 
         self.get_logger().info(f"로봇 목표 좌표: X={p_robot[0]:.1f}, Y={p_robot[1]:.1f}, Z={p_robot[2]:.1f}")
+        
+        # Publish coordinates for Place node synchronization
+        pose_msg = Float64MultiArray()
+        pose_msg.data = [float(p_robot[0]), float(p_robot[1]), float(p_robot[2])]
+        self.last_pose_pub.publish(pose_msg)
+        self.get_logger().info("Published last_pick_pose for Place node.")
+
         self.pick_motion(p_robot, self.target_item, self.test_mode)
         
+        print("\n" + "="*50)
+        print("PICK TEST SUMMARY")
+        print(f"Target Item: {self.target_item}")
+        print(f"Detected Pose (X Y Z): {p_robot[0]:.1f} {p_robot[1]:.1f} {p_robot[2]:.1f}")
+        print(f"Command for Place: python3 scripts/test_place.py {p_robot[0]:.1f} {p_robot[1]:.1f} {p_robot[2]:.1f}")
+        print("="*50 + "\n")
+
         self.get_logger().info("Test Completed Successfully. Shutting down...")
         time.sleep(1.0)
         os._exit(0) # Force exit the process from the thread
@@ -233,8 +251,8 @@ class PickTester(Node):
         # Full motion continues
         time.sleep(0.5)
         self._gripper_close(item_name)
-        self.get_logger().info("그리퍼가 닫힐 때까지 대기합니다 (3초)...")
-        time.sleep(3.0)
+        self.get_logger().info("그리퍼가 닫힐 때까지 대기합니다 (5초)...")
+        time.sleep(5.0)
         
         # Step 2.5: Lift (3cm)
         target_pos_lift = [target_x, target_y, current_pos[2] + 30.0, current_pos[3], current_pos[4], current_pos[5]]

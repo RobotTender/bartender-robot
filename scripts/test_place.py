@@ -109,10 +109,11 @@ class PlaceTester(Node):
         
         # Get current Cartesian pose for relative lift
         curr = self._get_posx()
+        z_ready = curr[2]
         
         # 2. Lift up 3cm
         self.get_logger().info("Step 2: Lifting up 3cm")
-        z_safe = curr[2] + 30.0
+        z_safe = z_ready + 30.0
         self._movel([curr[0], curr[1], z_safe, curr[3], curr[4], curr[5]], vel=40.0, acc=ACC)
 
         # 3. X-Alignment (at safe height)
@@ -126,19 +127,24 @@ class PlaceTester(Node):
         self.get_logger().info(f"Step 4: Y-Entry to {target_y:.1f}")
         self._movel([target_x, target_y, z_safe, curr[3], curr[4], curr[5]], vel=40.0, acc=ACC)
 
-        # 5. Lift down to original Z (where object was when pick)
-        self.get_logger().info(f"Step 5: Lifting down to original Z: {z_pick:.1f}")
-        self._movel([target_x, target_y, z_pick, curr[3], curr[4], curr[5]], vel=40.0, acc=ACC)
+        # 5. Lift down 3.0cm to original placement height
+        z_place = z_safe - 30.0
+        self.get_logger().info(f"Step 5: Lifting down 3.0cm to Z: {z_place:.1f}")
+        self._movel([target_x, target_y, z_place, curr[3], curr[4], curr[5]], vel=40.0, acc=ACC)
+        
+        self.get_logger().info("Waiting 0.5s before release...")
         time.sleep(0.5)
 
         # 6. Release grip
         self.get_logger().info("Step 6: Releasing gripper")
         self._gripper_open()
-        time.sleep(0.5)
+        
+        self.get_logger().info("Waiting 3s after release before retreat...")
+        time.sleep(3.0)
 
-        # 7. Reverse: Y-Alignment (Exit) at pick height
+        # 7. Reverse: Y-Alignment (Exit) at place height
         self.get_logger().info("Step 7: Retreat (Y-Exit)")
-        self._movel([target_x, curr[1], z_pick, curr[3], curr[4], curr[5]], vel=40.0, acc=ACC)
+        self._movel([target_x, curr[1], z_place, curr[3], curr[4], curr[5]], vel=40.0, acc=ACC)
 
         # 8. Return to PICK_PLACE_READY
         self.get_logger().info("Step 8: Returning to PICK_PLACE_READY")

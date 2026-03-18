@@ -21,9 +21,8 @@ import DR_init
 from .defines import (
     CHEERS_POSE, HOME_POSE, PICK_PLACE_READY,
     GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN,
-    GRIPPER_POSITION_SOJU, GRIPPER_FORCE_SOJU,
-    GRIPPER_POSITION_BEER, GRIPPER_FORCE_BEER,
-    GRIPPER_POSITION_JUICE, GRIPPER_FORCE_JUICE,
+    INDEX_JUICE, INDEX_BEER, INDEX_SOJU,
+    GRIPPER_POSITIONS, GRIPPER_FORCES,
     PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET
 )
 
@@ -193,15 +192,20 @@ class RobotControllerNode(Node):
         return self._gripper_move(GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN)
 
     def _gripper_close(self, item_name):
-        if item_name == 'soju':
-            return self._gripper_move(GRIPPER_POSITION_SOJU, GRIPPER_FORCE_SOJU)
-        elif item_name == 'beer':
-            return self._gripper_move(GRIPPER_POSITION_BEER, GRIPPER_FORCE_BEER)
-        elif item_name == 'juice':
-            return self._gripper_move(GRIPPER_POSITION_JUICE, GRIPPER_FORCE_JUICE)
-        else:
-            self.get_logger().error(f"Unknown item: {item_name}, using default soju settings")
-            return self._gripper_move(GRIPPER_POSITION_SOJU, GRIPPER_FORCE_SOJU)
+        # Convert item name to index
+        try:
+            cls_id_str = object_dict_reverse.get(item_name)
+            if cls_id_str is None:
+                raise ValueError(f"Unknown item: {item_name}")
+            
+            idx = int(cls_id_str)
+            pos = GRIPPER_POSITIONS[idx]
+            force = GRIPPER_FORCES[idx]
+            return self._gripper_move(pos, force)
+        except Exception as e:
+            self.get_logger().error(f"Gripper close error: {e}, using default soju settings")
+            # Default to SOJU index
+            return self._gripper_move(GRIPPER_POSITIONS[INDEX_SOJU], GRIPPER_FORCES[INDEX_SOJU])
 
     def _pour_start(self):
         self.get_logger().info("Service Call: Pouring Start (Non-blocking)")
@@ -363,8 +367,8 @@ class RobotControllerNode(Node):
             time.sleep(0.5)
             # gripper 주류 잡기
             self._gripper_close(item_name) 
-            self.get_logger().info("그리퍼가 닫힐 때까지 대기합니다 (3초)...")
-            time.sleep(3.0)
+            self.get_logger().info("그리퍼가 닫힐 때까지 대기합니다 (5초)...")
+            time.sleep(5.0)
 
             # Step 2.5: Lift (3cm)
             target_pos_lift = [target_x, target_y, current_pos[2] + 30.0, current_pos[3], current_pos[4], current_pos[5]]
