@@ -1,4 +1,4 @@
-## Working Context (March 17, 2026 - Manual Command Setup)
+## Working Context (March 18, 2026 - Waypoint Recovery & Bottle Config)
 - **Current Branch:** `robot-llm-detection-combine-junsung`
 - **Architecture Status:** 
     - **Persistent Node + Service** structure is the standard.
@@ -41,6 +41,10 @@
     - `bartender_test/movel.py` (**`movel`**): One-shot linear-space movement.
     - `bartender_test/defines.py`: Central repository for Poses (`posj`, `posx`) and physical constants.
 
+
+# Future Tasks
+- **Recovery Motion Redesign:** Verify that the waypoint-based tracking (reversing only through passed milestones) is working correctly during interrupts.
+- **Predefined Pose Verification:** Ensure that pouring with bottle-specific coordinates (`pos_contact`, `pos_horizontal`, etc.) works as intended for Juice, Beer, and Soju.
 
 ## Launch Section
 ### Full Stack (Launch All Nodes)

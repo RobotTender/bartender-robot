@@ -21,8 +21,7 @@ import DR_init
 from .defines import (
     CHEERS_POSE, HOME_POSE, PICK_PLACE_READY,
     GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN,
-    INDEX_JUICE, INDEX_BEER, INDEX_SOJU,
-    GRIPPER_POSITIONS, GRIPPER_FORCES,
+    BOTTLE_CONFIG, BOTTLE_ID_MAP, ORDER_TOPIC,
     PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET
 )
 
@@ -30,14 +29,10 @@ from .defines import (
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "e0509"
 VELOCITY, ACC = 30, 30
-ORDER_TOPIC = "/bartender/order_detail"
 ACTION_TOPIC = "/bartender/action_request"
 
 DR_init.__dsr__id = ROBOT_ID
 DR_init.__dsr__model = ROBOT_MODEL
-
-object_dict = {"0": 'juice', "1": 'beer', "2": 'soju'}
-object_dict_reverse = {'juice': "0", 'beer': "1", 'soju': "2"}
 
 # 클래스별 색 (BGR)
 CLASS_COLORS = {
@@ -192,20 +187,20 @@ class RobotControllerNode(Node):
         return self._gripper_move(GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN)
 
     def _gripper_close(self, item_name):
-        # Convert item name to index
+        # Convert item name to config
         try:
-            cls_id_str = object_dict_reverse.get(item_name)
-            if cls_id_str is None:
+            config = BOTTLE_CONFIG.get(item_name)
+            if config is None:
                 raise ValueError(f"Unknown item: {item_name}")
             
-            idx = int(cls_id_str)
-            pos = GRIPPER_POSITIONS[idx]
-            force = GRIPPER_FORCES[idx]
+            pos = config['gripper_pos']
+            force = config['gripper_force']
             return self._gripper_move(pos, force)
         except Exception as e:
             self.get_logger().error(f"Gripper close error: {e}, using default soju settings")
-            # Default to SOJU index
-            return self._gripper_move(GRIPPER_POSITIONS[INDEX_SOJU], GRIPPER_FORCES[INDEX_SOJU])
+            # Default to SOJU config
+            soju_cfg = BOTTLE_CONFIG['soju']
+            return self._gripper_move(soju_cfg['gripper_pos'], soju_cfg['gripper_force'])
 
     def _pour_start(self):
         self.get_logger().info("Service Call: Pouring Start (Non-blocking)")
@@ -242,7 +237,9 @@ class RobotControllerNode(Node):
 
     def process_grip(self, items):
         self.get_logger().info(f"Received item command: {self.items}")
-        class_id = object_dict_reverse[[x for x in items["recipe"].keys()][0]]
+        # Identify target bottle name from recipe
+        target_name = [x for x in items["recipe"].keys()][0]
+        class_id = str(BOTTLE_CONFIG[target_name]['id'])
         volume = [y for y in items["recipe"].values()][0]
 
         try:
@@ -263,7 +260,7 @@ class RobotControllerNode(Node):
             img = cv2.flip(img_raw, -1)
             self.latest_cv_vis = cv2.flip(img_raw.copy(), -1)
             h, w = img.shape[:2]
-            object_loc_dict = {'0': None, '1': None, '2': None}
+            object_loc_dict = {str(cfg['id']): None for cfg in BOTTLE_CONFIG.values()}
 
             results = model(img)
             for result in results:
@@ -282,7 +279,10 @@ class RobotControllerNode(Node):
                     valid_depth = depth_roi[depth_roi > 0]
                     if valid_depth.size == 0: continue
                     object_depth = float(np.median(valid_depth))
-                    label = f"{object_dict[cls_id]} / {object_depth*0.001:.2f}m"
+                    
+                    bottle_name = BOTTLE_ID_MAP.get(cls_id, f"unknown({cls_id})")
+                    label = f"{bottle_name} / {object_depth*0.001:.2f}m"
+                    
                     color = CLASS_COLORS.get(int(cls_id), (255, 255, 255))
                     object_loc_dict[cls_id] = {"u_flip": u_flip, "v_flip": v_flip, "u_raw": u_raw, "v_raw": v_raw, "depth_mm": object_depth}
                     cv2.rectangle(self.latest_cv_vis, (x1, y1), (x2, y2), color, 2)
@@ -290,7 +290,7 @@ class RobotControllerNode(Node):
 
             target = object_loc_dict.get(class_id)
             if not target:
-                self.get_logger().error(f"주문한 {object_dict.get(class_id, class_id)} 제품을 찾을 수 없습니다!")
+                self.get_logger().error(f"주문한 {target_name} 제품을 찾을 수 없습니다!")
                 return
 
             depth_mm = target["depth_mm"]
@@ -317,7 +317,7 @@ class RobotControllerNode(Node):
             pose_msg.data = [float(p_robot[0]), float(p_robot[1]), float(p_robot[2])]
             self.last_pose_pub.publish(pose_msg)
 
-            self.move_robot_and_control_gripper(p_robot[0], p_robot[1], p_robot[2], object_dict[class_id])
+            self.move_robot_and_control_gripper(p_robot[0], p_robot[1], p_robot[2], target_name)
             
             # Use non-blocking service call to signal Pour node
             self.get_logger().info("--- Signaling Pour node (Asynchronous) ---")

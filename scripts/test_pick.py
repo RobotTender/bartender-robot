@@ -18,7 +18,7 @@ from std_srvs.srv import Trigger
 from robotender_msgs.srv import GripperControl
 from dsr_msgs2.srv import MoveJoint, MoveLine, GetCurrentPose, SetRobotMode
 from sensor_msgs.msg import Image, CameraInfo
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64MultiArray, String
 import message_filters
 
 # Constants
@@ -29,8 +29,7 @@ VELOCITY, ACC = 30.0, 30.0
 from bartender_test.defines import (
     PICK_PLACE_READY, HOME_POSE,
     GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN,
-    INDEX_JUICE, INDEX_BEER, INDEX_SOJU,
-    GRIPPER_POSITIONS, GRIPPER_FORCES,
+    BOTTLE_CONFIG, BOTTLE_ID_MAP, ORDER_TOPIC,
     PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET
 )
 
@@ -51,8 +50,11 @@ class PickTester(Node):
         # Load YOLO
         model_path = Path(__file__).resolve().parents[1] / "detection" / "weights" / "cam_1.pt"
         self.model = YOLO(str(model_path))
-        self.object_dict_reverse = {'juice': "0", 'beer': "1", 'soju': "2"}
-        self.object_dict = {"0": 'juice', "1": 'beer', "2": 'soju'}
+        
+        # Mapping from name to YOLO ID (string)
+        self.object_dict_reverse = {name: str(cfg['id']) for name, cfg in BOTTLE_CONFIG.items()}
+        # Mapping from YOLO ID (string) to name
+        self.object_dict = BOTTLE_ID_MAP
 
         # Camera calibration
         self.R = np.array([
@@ -76,7 +78,8 @@ class PickTester(Node):
         self.ts = message_filters.ApproximateTimeSynchronizer([self.color_sub, self.depth_sub, self.info_sub], 10, 0.1)
         self.ts.registerCallback(self.synced_callback)
 
-        # Publisher for coordination with Place node
+        # Publisher for coordination with Pour/Place nodes
+        self.order_pub = self.create_publisher(String, ORDER_TOPIC, 10)
         self.last_pose_pub = self.create_publisher(Float64MultiArray, 'robotender_pick/last_pose', 10)
 
         self.get_logger().info(f"PickTester initialized for target: {target_item}, mode: {test_mode}")
@@ -111,19 +114,19 @@ class PickTester(Node):
         return self._gripper_move(GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN)
 
     def _gripper_close(self, item_name):
-        # Convert item name to index
+        # Convert item name to config
         try:
-            cls_id_str = self.object_dict_reverse.get(item_name)
-            if cls_id_str is None:
+            config = BOTTLE_CONFIG.get(item_name)
+            if config is None:
                 raise ValueError(f"Unknown item: {item_name}")
             
-            idx = int(cls_id_str)
-            pos = GRIPPER_POSITIONS[idx]
-            force = GRIPPER_FORCES[idx]
+            pos = config['gripper_pos']
+            force = config['gripper_force']
             return self._gripper_move(pos, force)
         except Exception as e:
             self.get_logger().error(f"Gripper close error: {e}, using default soju settings")
-            return self._gripper_move(GRIPPER_POSITIONS[INDEX_SOJU], GRIPPER_FORCES[INDEX_SOJU])
+            soju_cfg = BOTTLE_CONFIG['soju']
+            return self._gripper_move(soju_cfg['gripper_pos'], soju_cfg['gripper_force'])
 
     def _movej(self, pos, vel=VELOCITY, acc=ACC):
         self.movej_cli.wait_for_service()
@@ -148,6 +151,12 @@ class PickTester(Node):
         return list(future.result().pos)
 
     def run_test(self):
+        # Notify other nodes about the current bottle type
+        order_msg = String()
+        order_msg.data = json.dumps({"recipe": {self.target_item: 50}})
+        self.order_pub.publish(order_msg)
+        self.get_logger().info(f"Published order for {self.target_item} to {ORDER_TOPIC}")
+
         self.get_logger().info("Setting robot mode to AUTONOMOUS...")
         self.mode_cli.wait_for_service()
         self.mode_cli.call_async(SetRobotMode.Request(robot_mode=1))

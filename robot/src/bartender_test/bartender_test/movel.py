@@ -2,16 +2,16 @@ import rclpy
 import sys
 from rclpy.node import Node
 import DR_init
-from .defines import (POS1_XYZ, POS2_XYZ, POS3_XYZ, POS4_XYZ, POS5_XYZ)
+from .defines import (POS_CHEERS, BOTTLE_CONFIG)
 
 def main(args=None):
     if len(sys.argv) < 2:
         print("Usage:")
         print("  ros2 run bartender_test movel <dx_cm> <dy_cm> <dz_cm>  (Relative move)")
-        print("  ros2 run bartender_test movel pos1|pos2|pos3|pos4|pos5 (Move to marker)")
+        print("  ros2 run bartender_test movel pos_cheers|pos_contact|pos_horizontal|pos_diagonal|pos_vertical (Defaults to soju)")
         print("\nExample:")
         print("  ros2 run bartender_test movel +3 -2 +9")
-        print("  ros2 run bartender_test movel pos1")
+        print("  ros2 run bartender_test movel pos_cheers")
         return
 
     rclpy.init(args=args)
@@ -34,12 +34,14 @@ def main(args=None):
         target_posx = list(current_posx)
         arg1 = sys.argv[1].lower()
 
-        if arg1 in ['pos1', 'pos2', 'pos3', 'pos4', 'pos5']:
-            if arg1 == 'pos1': coords = POS1_XYZ
-            elif arg1 == 'pos2': coords = POS2_XYZ
-            elif arg1 == 'pos3': coords = POS3_XYZ
-            elif arg1 == 'pos4': coords = POS4_XYZ
-            elif arg1 == 'pos5': coords = POS5_XYZ
+        if arg1 in ['pos_cheers', 'pos_contact', 'pos_horizontal', 'pos_diagonal', 'pos_vertical', 'pos1', 'pos2', 'pos3', 'pos4', 'pos5']:
+            # Default to soju for manual commands
+            soju_cfg = BOTTLE_CONFIG['soju']
+            if arg1 in ['pos_cheers', 'pos1']: coords = POS_CHEERS
+            elif arg1 in ['pos_contact', 'pos2']: coords = soju_cfg['pos_contact']
+            elif arg1 in ['pos_horizontal', 'pos3']: coords = soju_cfg['pos_horizontal']
+            elif arg1 in ['pos_diagonal', 'pos4']: coords = soju_cfg['pos_diagonal']
+            elif arg1 in ['pos_vertical', 'pos5']: coords = soju_cfg['pos_vertical']
             
             target_posx[0] = float(coords[0])
             target_posx[1] = float(coords[1])

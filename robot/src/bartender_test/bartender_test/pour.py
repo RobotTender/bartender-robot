@@ -3,12 +3,13 @@ import sys
 import threading
 import time
 import math
+import json
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
 import DR_init
 
-from std_msgs.msg import Empty
+from std_msgs.msg import Empty, String
 from std_srvs.srv import Trigger
 from dsr_msgs2.srv import MoveStop
 from sensor_msgs.msg import JointState
@@ -16,7 +17,7 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 from .defines import (HOME_POSE, CHEERS_POSE, CONTACT_POSE, POUR_HORIZONTAL, POUR_DIAGONAL, POUR_VERTICAL, POLE_POSE,
-                            POS1_XYZ, POS2_XYZ, POS3_XYZ, POS4_XYZ, POS5_XYZ)
+                            POS_CHEERS, BOTTLE_CONFIG, ORDER_TOPIC)
 
 class ActionNode(Node):
     def __init__(self):
@@ -26,12 +27,16 @@ class ActionNode(Node):
         # State for Pouring
         self.trigger_received = False
         self.recording = False
-        self.current_posj = [0.0] * 6
-        self.pouring_point_buffer = []
+        self.current_posx = [0.0] * 6
+        self.passed_waypoints = []
+        self.target_waypoints = []
+        self.current_bottle_type = 'soju' # Default
 
         # Subscriptions
         self.create_subscription(Empty, 'robotender_snap/trigger', self.trigger_cb, 10, callback_group=self.callback_group)
-        self.create_subscription(JointState, 'joint_states', self.cb_joint_states, 10, callback_group=self.callback_group)
+        from dsr_msgs2.msg import RobotState
+        self.create_subscription(RobotState, 'state', self.cb_robot_state, 10, callback_group=self.callback_group)
+        self.create_subscription(String, ORDER_TOPIC, self.order_cb, 10, callback_group=self.callback_group)
 
         # Clients
         self.stop_cli = self.create_client(MoveStop, 'motion/move_stop', callback_group=self.callback_group)
@@ -49,9 +54,18 @@ class ActionNode(Node):
         self.get_logger().info('--- Robotender Pour Node Initialized ---')
         self.get_logger().info('Services: /dsr01/robotender_pour/start, /dsr01/robotender_pour/warmup')
 
-    def cb_joint_states(self, msg):
-        if len(msg.position) >= 6:
-            self.current_posj = [math.degrees(v) for v in msg.position[:6]]
+    def cb_robot_state(self, msg):
+        self.current_posx = list(msg.current_posx)
+
+    def order_cb(self, msg: String):
+        try:
+            items = json.loads(msg.data)
+            if "recipe" in items:
+                # Get the first item from the recipe
+                self.current_bottle_type = [x for x in items["recipe"].keys()][0]
+                self.get_logger().info(f"Target bottle type set to: {self.current_bottle_type}")
+        except Exception as e:
+            self.get_logger().error(f"Order parse error in Pour node: {e}")
 
     def trigger_cb(self, msg):
         if self.recording:
@@ -65,9 +79,16 @@ class ActionNode(Node):
                 self.get_logger().error("MoveStop service not available!")
 
     def record_loop(self):
-        if self.recording:
-            from DSR_ROBOT2 import posj
-            self.pouring_point_buffer.append(posj(self.current_posj))
+        if self.recording and self.target_waypoints:
+            # Check if we've passed the next target waypoint (XYZ only)
+            target = self.target_waypoints[0]
+            dist = math.sqrt(sum((a - b) ** 2 for a, b in zip(self.current_posx[:3], target[:3])))
+            
+            # If within 20mm of the waypoint, consider it "passed"
+            if dist < 20.0:
+                wp = self.target_waypoints.pop(0)
+                self.passed_waypoints.append(wp)
+                self.get_logger().info(f"Passed waypoint! Waypoints passed: {len(self.passed_waypoints)}")
 
     async def warmup_callback(self, request, response):
         self.get_logger().info('Starting Warmup Sequence...')
@@ -94,48 +115,60 @@ class ActionNode(Node):
         return response
 
     async def pour_callback(self, request, response):
-        self.get_logger().info('Starting Pour Sequence...')
-        from DSR_ROBOT2 import (movej, movesx, movesj, posx, posj, fkin, set_robot_mode, 
+        # Get bottle-specific configuration
+        config = BOTTLE_CONFIG.get(self.current_bottle_type)
+        if config is None:
+            self.get_logger().warn(f"Unknown bottle type '{self.current_bottle_type}', defaulting to soju")
+            config = BOTTLE_CONFIG['soju']
+            active_type = 'soju (fallback)'
+        else:
+            active_type = self.current_bottle_type
+
+        self.get_logger().info(f'--- Starting Pour Sequence for: {active_type} ---')
+        self.get_logger().info(f'Using pos_contact: {config["pos_contact"]}')
+        self.get_logger().info(f'Using pos_horizontal: {config["pos_horizontal"]}')
+
+        from DSR_ROBOT2 import (movej, movel, movesx, movesj, posx, posj, fkin, set_robot_mode, 
                                 ROBOT_MODE_AUTONOMOUS, wait, get_current_posj)
         
         try:
             set_robot_mode(ROBOT_MODE_AUTONOMOUS)
             wait(0.2)
 
-            # Setup Trajectories
-            p0 = posx(POS1_XYZ + [float(x) for x in fkin(CHEERS_POSE, ref=0)][3:])
-            p1 = posx([float(x) for x in fkin(CHEERS_POSE, ref=0)])
-            p2 = posx(POS2_XYZ + [float(x) for x in fkin(CONTACT_POSE, ref=0)][3:])
-            p3 = posx(POS3_XYZ + [float(x) for x in fkin(POUR_HORIZONTAL, ref=0)][3:])
-            p4 = posx(list(POS4_XYZ) + [float(x) for x in fkin(POUR_DIAGONAL, ref=0)][3:])
-            p5 = posx(list(POS5_XYZ) + [float(x) for x in fkin(POUR_VERTICAL, ref=0)][3:])
+            # Setup Trajectory Points
+            p2 = posx(config['pos_contact'] + [float(x) for x in fkin(CONTACT_POSE, ref=0)][3:])
+            p3 = posx(config['pos_horizontal'] + [float(x) for x in fkin(POUR_HORIZONTAL, ref=0)][3:])
+            p4 = posx(config['pos_diagonal'] + [float(x) for x in fkin(POUR_DIAGONAL, ref=0)][3:])
+            p5 = posx(config['pos_vertical'] + [float(x) for x in fkin(POUR_VERTICAL, ref=0)][3:])
             
-            approach_path = [p0, p1, p2]
-            pour_path = [p2, p3, p4, p5]
+            spline_path = [p3, p4, p5]
 
-            # 1. Move to Cheers
+            # 1. Move to Cheers (Joint Space Start)
+            self.get_logger().info("Moving to CHEERS_POSE")
             movej(CHEERS_POSE, vel=60, acc=60)
             
-            # 2. Approach
+            # 2. Execute Pour Sequence with Waypoint Tracking
             self.trigger_received = False
-            movesx(approach_path, vel=100, acc=100)
+            self.passed_waypoints = []
+            # We track p2, p3, p4, p5. Note: p2 is the first target.
+            self.target_waypoints = [config['pos_contact'], config['pos_horizontal'], config['pos_diagonal'], config['pos_vertical']]
             
-            if self.trigger_received:
-                 movej(CHEERS_POSE, vel=100, acc=100)
-                 response.success = False
-                 response.message = "Triggered during approach"
-                 return response
-
-            # 3. Pour with Recording
-            self.pouring_point_buffer = []
             self.recording = True
             start_time = time.time()
-            movesx(pour_path, vel=100, acc=100)
+
+            # Step A: Linear Move to Contact (Targeting config['pos_contact'])
+            self.get_logger().info(f"Approaching contact for {active_type}...")
+            movel(p2, vel=[100, 100], acc=[100, 100])
+            
+            # Step B: Spline Move through Pour Positions
+            if not self.trigger_received:
+                self.get_logger().info("Executing pouring spline...")
+                movesx(spline_path, vel=100, acc=100)
+            
             end_time = time.time()
             self.recording = False
-            duration = end_time - start_time
 
-            # 4. Handle Recovery or Finish
+            # 3. Handle Recovery or Finish
             if self.trigger_received:
                 self.get_logger().info(f"Interrupted. Snapping back...")
                 msg = "Pour interrupted and recovered"
@@ -144,30 +177,34 @@ class ActionNode(Node):
                 wait(3.0)
                 msg = "Pour completed successfully with manual snap"
 
-            # Common Backtrack Logic (Snap Recovery or Manual Snap)
-            curr_j = get_current_posj()
-            if duration < 2.5: target_backtrack_size = 1
-            elif duration < 5.0: target_backtrack_size = 2
-            else: target_backtrack_size = 3
-
-            recorded_full = self.pouring_point_buffer[::-1]
-            num_rec = len(recorded_full)
-            reverse_path = [curr_j]
+            # Waypoint-based Backtrack Logic
+            from DSR_ROBOT2 import get_current_posx, fkin, posx
+            curr_x = list(get_current_posx()[0])
             
-            if num_rec > target_backtrack_size:
-                step = num_rec // target_backtrack_size
-                for i in range(0, num_rec, step):
-                    p = recorded_full[i]
-                    if any(abs(a-b) > 0.1 for a,b in zip(reverse_path[-1], p)):
-                        reverse_path.append(p)
-            else:
-                reverse_path.extend(recorded_full)
+            # reverse_path: current -> [passed waypoints in reverse] -> Cheers
+            reverse_path = [posx(curr_x)]
             
-            cheers_j = posj(CHEERS_POSE)
-            if any(abs(a-b) > 0.1 for a,b in zip(reverse_path[-1], cheers_j)):
-                reverse_path.append(cheers_j)
+            # Add passed waypoints in reverse
+            # Note: self.passed_waypoints contains XYZ lists. We need to attach correct orientation.
+            # We'll map them back to p2, p3, p4, p5 for orientation.
+            wp_map = {
+                tuple(config['pos_contact']): p2,
+                tuple(config['pos_horizontal']): p3,
+                tuple(config['pos_diagonal']): p4,
+                tuple(config['pos_vertical']): p5
+            }
 
-            movesj(reverse_path, vel=200, acc=200)
+            for wp_xyz in reversed(self.passed_waypoints):
+                target_p = wp_map.get(tuple(wp_xyz))
+                if target_p:
+                    reverse_path.append(target_p)
+            
+            # Final point: CHEERS_POSE
+            cheers_x = posx([float(x) for x in fkin(CHEERS_POSE, ref=0)])
+            reverse_path.append(cheers_x)
+
+            self.get_logger().info(f"Snapping back through {len(reverse_path)-1} waypoints using movesx...")
+            movesx(reverse_path, vel=[200, 200], acc=[200, 200])
             
             # Wait for 1 second after reaching cheers_pose
             self.get_logger().info("Reached CHEERS_POSE. Waiting 1s...")

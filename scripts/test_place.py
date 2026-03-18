@@ -127,9 +127,9 @@ class PlaceTester(Node):
         self.get_logger().info(f"Step 4: Y-Entry to {target_y:.1f}")
         self._movel([target_x, target_y, z_safe, curr[3], curr[4], curr[5]], vel=40.0, acc=ACC)
 
-        # 5. Lift down 3.0cm to original placement height
-        z_place = z_safe - 30.0
-        self.get_logger().info(f"Step 5: Lifting down 3.0cm to Z: {z_place:.1f}")
+        # 5. Lift down 2.5cm to original placement height
+        z_place = z_safe - 25.0
+        self.get_logger().info(f"Step 5: Lifting down 2.5cm to Z: {z_place:.1f}")
         self._movel([target_x, target_y, z_place, curr[3], curr[4], curr[5]], vel=40.0, acc=ACC)
         
         self.get_logger().info("Waiting 0.5s before release...")

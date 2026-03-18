@@ -11,24 +11,53 @@ POUR_VERTICAL = [38.76, -35.80, 146.74, 87.76, -84.18, 22.06]
 POLE_POSE = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 # Cartesian Markers (mm)
-POS1_XYZ = [278.48, 34.52, 313.75]   # Red
-POS2_XYZ = [314.06, 70.10, 101.99]   # Orange (was mid_p1p2)
-POS3_XYZ = [354.78, 90.82, 226.54]   # Yellow (was pos2)
-POS4_XYZ = [312.68, 48.73, 339.57]   # Green  (was mid_p2p3)
-POS5_XYZ = [223.48, -40.48, 373.73]  # Blue   (was pos3)
+POS_CHEERS = [278.48, 34.52, 313.75]   # Red (Entry position - Shared)
 
-# Object Indices
+# Bottle Configurations: [JUICE, BEER, SOJU]
+# Each bottle has its own gripper settings and pouring trajectory points
+BOTTLE_CONFIG = {
+    'juice': {
+        'id': 0,
+        'gripper_pos': 800,
+        'gripper_force': 400,
+        'pos_contact': [314.06, 70.10, 101.99],
+        'pos_horizontal': [354.78, 90.82, 226.54],
+        'pos_diagonal': [312.68, 48.73, 339.57],
+        'pos_vertical': [223.48, -40.48, 373.73]
+    },
+    'beer': {
+        'id': 1,
+        'gripper_pos': 550,
+        'gripper_force': 150,
+        'pos_contact': [319.06, 45.1, 167.0],
+        'pos_horizontal': [304.78, 20.82, 251.55],
+        'pos_diagonal': [277.66, -6.29, 284.56],
+        'pos_vertical': [233.48, -40.48, 333.73]
+    },
+    'soju': {
+        'id': 2,
+        'gripper_pos': 400,
+        'gripper_force': 175,
+        'pos_contact': [314.06, 70.10, 101.99],
+        'pos_horizontal': [354.78, 90.82, 226.54],
+        'pos_diagonal': [312.68, 48.73, 339.57],
+        'pos_vertical': [223.48, -40.48, 373.73]
+    }
+}
+
+# Helper for ID-based lookup (YOLO classes)
+BOTTLE_ID_MAP = {str(cfg['id']): name for name, cfg in BOTTLE_CONFIG.items()}
+
+# Backward Compatibility & Easy Access
 INDEX_JUICE = 0
 INDEX_BEER = 1
 INDEX_SOJU = 2
 
 # Gripper Constants (Position 0-1100, Force 0-1000)
 GRIPPER_POSITION_OPEN = 0
-GRIPPER_FORCE_OPEN = 100
+GRIPPER_FORCE_OPEN = 75
 
-# Indexed Gripper Values: [JUICE, BEER, SOJU]
-GRIPPER_POSITIONS = [800, 550, 400]
-GRIPPER_FORCES = [400, 150, 175]
+ORDER_TOPIC = "/bartender/order_detail"
 
 # Global Motion Constants
 PICK_PLACE_Z = 650
