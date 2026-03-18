@@ -51,6 +51,11 @@ def create_safety_arg_parser() -> argparse.ArgumentParser:
 
 def run_safety(args: argparse.Namespace) -> None:
     cfg = PolicyConfig()
+    loop_hz = float(args.hz)
+    if loop_hz <= 0.0:
+        raise ValueError(f"--hz는 0보다 커야 합니다. 입력={args.hz}")
+    cfg.set_control_hz(loop_hz)
+
     joint_lower = parse_comma_floats(args.joint_lower_rad, expected_len=6)
     joint_upper = parse_comma_floats(args.joint_upper_rad, expected_len=6)
     controller = ActionController(cfg=cfg, joint_lower_rad=joint_lower, joint_upper_rad=joint_upper)
@@ -63,7 +68,6 @@ def run_safety(args: argparse.Namespace) -> None:
             current_joint_pos_rad=initial_robot.joint_pos_rad,
             current_gripper_close_ratio=initial_robot.gripper_close_ratio,
         )
-        loop_hz = float(args.hz)
         loop_dt = 1.0 / loop_hz
         run_preflight_motion_check(
             robot_io=robot_io,

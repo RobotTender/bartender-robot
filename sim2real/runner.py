@@ -179,6 +179,11 @@ def build_robot_io(mode: str, class_index: int, args: argparse.Namespace) -> Rob
         return ROS2RobotIO(cfg=ros2_cfg)
 
     if mode_key == "real":
+        loop_hz = float(args.hz)
+        if loop_hz <= 0.0:
+            raise ValueError(f"--hz는 0보다 커야 합니다. 입력={args.hz}")
+        servo_time_s = float(args.servo_time_s) if args.servo_time_s is not None else (1.0 / loop_hz)
+
         gripper_cfg = ModbusGripperConfig(
             protocol=str(args.gripper_protocol),
             enabled=bool(args.gripper_enabled),
@@ -218,7 +223,7 @@ def build_robot_io(mode: str, class_index: int, args: argparse.Namespace) -> Rob
             robot_model=str(args.doosan_model),
             robot_host=str(args.doosan_host),
             robot_port=int(args.doosan_port),
-            servo_time_s=float(args.servo_time_s),
+            servo_time_s=servo_time_s,
             servo_vel_deg_s=float(args.servo_vel_deg_s),
             servo_acc_deg_s2=float(args.servo_acc_deg_s2),
             use_posx_orientation=bool(args.use_posx_orientation),
@@ -237,6 +242,12 @@ def build_robot_io(mode: str, class_index: int, args: argparse.Namespace) -> Rob
 
 def run(args: argparse.Namespace) -> None:
     cfg = PolicyConfig()
+    loop_hz = float(args.hz)
+    if loop_hz <= 0.0:
+        raise ValueError(f"--hz는 0보다 커야 합니다. 입력={args.hz}")
+    cfg.set_control_hz(loop_hz)
+    loop_dt = 1.0 / loop_hz
+
     device = torch.device(args.device)
     hidden_override = parse_int_csv(args.policy_hidden_sizes) if args.policy_hidden_sizes else None
     policy = ActorPolicy.from_checkpoint(
@@ -304,8 +315,6 @@ def run(args: argparse.Namespace) -> None:
             current_gripper_close_ratio=initial_robot.gripper_close_ratio,
         )
 
-        loop_hz = float(args.hz)
-        loop_dt = 1.0 / loop_hz
         step = 0
         if bool(args.preflight_cycle_check):
             run_preflight_cycle_check(
@@ -352,7 +361,12 @@ def create_arg_parser() -> argparse.ArgumentParser:
         default="dummy",
         help="I/O backend mode (dummy/virtual/sim are same)",
     )
-    parser.add_argument("--hz", type=float, default=60.0, help="Control frequency")
+    parser.add_argument(
+        "--hz",
+        type=float,
+        default=60.0,
+        help="Control frequency (루프 주기/증분 control_dt 동기화 기준)",
+    )
     parser.add_argument("--max-steps", type=int, default=0, help="0 means run forever")
     parser.add_argument(
         "--preflight-cycle-check",
@@ -488,7 +502,12 @@ def create_arg_parser() -> argparse.ArgumentParser:
         default=0,
         help="Doosan controller port (0이면 SDK 기본값 사용)",
     )
-    parser.add_argument("--servo-time-s", type=float, default=1.0 / 60.0, help="servoj 도달 시간(s)")
+    parser.add_argument(
+        "--servo-time-s",
+        type=float,
+        default=None,
+        help="servoj 도달 시간(s). 미지정 시 1/--hz를 자동 사용",
+    )
     parser.add_argument("--servo-vel-deg-s", type=float, default=90.0, help="servoj 속도 제한(deg/s)")
     parser.add_argument("--servo-acc-deg-s2", type=float, default=180.0, help="servoj 가속도 제한(deg/s^2)")
     parser.add_argument("--use-posx-orientation", action="store_true", help="get_current_posx 자세를 quaternion에 반영")

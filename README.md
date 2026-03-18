@@ -37,6 +37,14 @@ python run_sim2real_e0509.py --mode dummy --checkpoint model_1000.pt --print-pol
 
 정상 동작하면 step 로그가 출력됩니다.
 
+제어주기 설정:
+
+- `--hz`로 루프 주기를 지정합니다. (기본 60)
+- 현재 코드는 `--hz`를 바꾸면 다음이 함께 바뀝니다.
+  - 루프 sleep 주기
+  - 액션 증분 적분 시간(`control_dt`)
+  - `mode=real`에서 `--servo-time-s` 미지정 시 기본 `servoj t = 1/--hz`
+
 시작 전 1회 주기 점검(preflight):
 
 - 기본으로 ON (`--preflight-cycle-check`)
@@ -189,6 +197,7 @@ runtime = Sim2RealRuntime(
     Sim2RealRuntimeConfig(
         checkpoint="model_1000.pt",
         device="cpu",  # 또는 "cuda:0"
+        control_hz=60.0,
     )
 )
 print(runtime.summary())
@@ -302,6 +311,7 @@ python run_sim2real_e0509.py \
 
 - 조인트: 증분 적분 후 절대 목표각(`joint_targets`, rad)
 - 그리퍼: 0~1 비율(`gripper_target`)
+- 조인트 증분 스케일은 `control_dt`를 사용하며, CLI 실행 시 `control_dt = 1/--hz`로 자동 동기화됩니다.
 
 ---
 
@@ -380,6 +390,7 @@ ROS2 + DrlStart 그리퍼(두산 환경):
 python run_sim2real_e0509.py \
   --mode ros2 \
   --checkpoint model_1000.pt \
+  --hz 60 \
   --print-policy-info \
   --ros2-gripper-command-mode drl_service \
   --ros2-drl-namespace dsr01
@@ -391,6 +402,7 @@ ROS2 + 외부 인지/외부 그리퍼 제어(정책 이식 최소 구성):
 python run_sim2real_e0509.py \
   --mode ros2 \
   --checkpoint model_1000.pt \
+  --hz 60 \
   --print-policy-info \
   --no-ros2-enable-gripper-output
 ```
@@ -401,11 +413,17 @@ python run_sim2real_e0509.py \
 python run_sim2real_e0509.py \
   --mode real \
   --checkpoint model_1000.pt \
+  --hz 60 \
   --doosan-robot-id dsr01 \
   --doosan-model e0509 \
   --doosan-host 192.168.137.100 \
   --doosan-port 12345
 ```
+
+참고:
+
+- `mode=real`에서 `--servo-time-s`를 생략하면 `1/--hz`가 자동 적용됩니다.
+- 필요하면 `--servo-time-s`로 수동 고정할 수 있습니다.
 
 통합 파이썬 코드 임베드:
 

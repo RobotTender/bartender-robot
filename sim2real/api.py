@@ -57,6 +57,7 @@ class Sim2RealRuntimeConfig:
         3.1415927,
         3.1415927,
     )
+    control_hz: float | None = None
 
     policy_cfg: PolicyConfig = field(default_factory=PolicyConfig)
 
@@ -73,6 +74,8 @@ class Sim2RealRuntime:
     def __init__(self, cfg: Sim2RealRuntimeConfig):
         self.cfg = cfg
         self.device = torch.device(cfg.device)
+        if cfg.control_hz is not None:
+            cfg.policy_cfg.set_control_hz(float(cfg.control_hz))
 
         self.policy = ActorPolicy.from_checkpoint(
             checkpoint_path=Path(cfg.checkpoint),
@@ -127,10 +130,11 @@ class Sim2RealRuntime:
         self._initialized = False
 
     def summary(self) -> str:
+        effective_hz = 1.0 / max(float(self.cfg.policy_cfg.control_dt), 1.0e-9)
         return (
             f"policy=({self.policy.summary()}), "
             f"obs_joint_dim={self.obs_joint_dim}, obs_custom_extra_dim={int(self.cfg.obs_custom_extra_dim)}, "
-            f"device={self.device.type}"
+            f"control_hz={effective_hz:.3f}, device={self.device.type}"
         )
 
     def reset(self, initial_robot_state: RobotState, initial_object_state: ObjectState) -> None:

@@ -59,6 +59,19 @@ class PolicyConfig:
     def control_dt(self) -> float:
         return self.sim_dt * self.decimation
 
+    def set_control_dt(self, dt_s: float) -> None:
+        dt = float(dt_s)
+        if dt <= 0.0:
+            raise ValueError(f"control dt must be > 0, got {dt_s}")
+        self.sim_dt = dt
+        self.decimation = 1
+
+    def set_control_hz(self, hz: float) -> None:
+        freq = float(hz)
+        if freq <= 0.0:
+            raise ValueError(f"control hz must be > 0, got {hz}")
+        self.set_control_dt(1.0 / freq)
+
 
 @dataclass
 class RobotState:
