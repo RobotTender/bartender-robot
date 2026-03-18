@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 """
-E0509 Pick-Place-K environment.
+E0509 bottle environments.
 """
 
 import gymnasium as gym
@@ -13,18 +13,6 @@ from . import agents
 ##
 # Register Gym environments.
 ##
-
-gym.register(
-    id="Isaac-E0509-Pick-Place-K-Direct-v0",
-    entry_point=f"{__name__}.e0509_pick_place_k_env:E0509PickPlaceKEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.e0509_pick_place_k_env:E0509PickPlaceKEnvCfg",
-        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_e0509_pick_place_k_ppo_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:E0509PickPlaceKPPORunnerCfg",
-        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_e0509_pick_place_k_ppo_cfg.yaml",
-    },
-)
 
 gym.register(
     id="Isaac-E0509-Grip-Bottle-Direct-v0",
