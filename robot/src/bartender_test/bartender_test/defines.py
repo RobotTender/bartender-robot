@@ -10,12 +10,6 @@ POUR_DIAGONAL = [41.83, -5.00, 134.35, 87.99, -87.55, -0.61]
 POUR_VERTICAL = [38.76, -35.80, 146.74, 87.76, -84.18, 22.06]
 POLE_POSE = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-# Bottle & Grasp Parameters
-BOTTLE_HEIGHT = 240.0        # mm
-BOTTLE_FULL_LIQUID = 500.0   # g
-BOTTLE_EMPTY_WEIGHT = 0.0    # g (PET bottle is below sensor threshold)
-GRASP_Z_FROM_BOTTOM = 80.0   # mm
-
 # Cartesian Markers (mm)
 POS1_XYZ = [278.48, 34.52, 313.75]   # Red
 POS2_XYZ = [314.06, 70.10, 101.99]   # Orange (was mid_p1p2)
