@@ -248,10 +248,17 @@ def run(args: argparse.Namespace) -> None:
     cfg.set_control_hz(loop_hz)
     loop_dt = 1.0 / loop_hz
 
+    checkpoint_raw = str(args.checkpoint).strip()
+    if not checkpoint_raw:
+        raise ValueError("--checkpoint가 비어 있습니다. 실행할 .pt 경로를 지정하세요.")
+    checkpoint_path = Path(checkpoint_raw).expanduser()
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(f"체크포인트 파일을 찾을 수 없습니다: {checkpoint_path}")
+
     device = torch.device(args.device)
     hidden_override = parse_int_csv(args.policy_hidden_sizes) if args.policy_hidden_sizes else None
     policy = ActorPolicy.from_checkpoint(
-        Path(args.checkpoint),
+        checkpoint_path,
         device=device,
         activation=args.policy_activation,
         obs_dim_override=args.policy_obs_dim,
@@ -260,7 +267,7 @@ def run(args: argparse.Namespace) -> None:
     )
 
     if bool(args.print_policy_info):
-        print(f"[policy] checkpoint={args.checkpoint}")
+        print(f"[policy] checkpoint={checkpoint_path}")
         print(f"[policy] {policy.summary()}")
 
     joint_lower = parse_comma_floats(args.joint_lower_rad, expected_len=6)
@@ -351,8 +358,8 @@ def run(args: argparse.Namespace) -> None:
 
 
 def create_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run sim2real inference with model_1000.pt")
-    parser.add_argument("--checkpoint", type=str, default="model_1000.pt", help="PyTorch checkpoint path")
+    parser = argparse.ArgumentParser(description="Run sim2real inference with a policy checkpoint (.pt)")
+    parser.add_argument("--checkpoint", type=str, default="", help="PyTorch checkpoint path (예: /path/to/model.pt)")
     parser.add_argument("--device", type=str, default="cpu", help="cpu or cuda:0")
     parser.add_argument(
         "--mode",

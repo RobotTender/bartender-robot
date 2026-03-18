@@ -21,7 +21,7 @@ from .core import (
 
 @dataclass
 class Sim2RealRuntimeConfig:
-    checkpoint: str | Path = "model_1000.pt"
+    checkpoint: str | Path | None = None
     device: str = "cpu"
 
     # Optional policy overrides
@@ -77,8 +77,15 @@ class Sim2RealRuntime:
         if cfg.control_hz is not None:
             cfg.policy_cfg.set_control_hz(float(cfg.control_hz))
 
+        checkpoint_raw = None if cfg.checkpoint is None else str(cfg.checkpoint).strip()
+        if not checkpoint_raw:
+            raise ValueError("Sim2RealRuntimeConfig.checkpoint를 지정하세요. 예: '/path/to/model.pt'")
+        checkpoint_path = Path(checkpoint_raw).expanduser()
+        if not checkpoint_path.is_file():
+            raise FileNotFoundError(f"체크포인트 파일을 찾을 수 없습니다: {checkpoint_path}")
+
         self.policy = ActorPolicy.from_checkpoint(
-            checkpoint_path=Path(cfg.checkpoint),
+            checkpoint_path=checkpoint_path,
             device=self.device,
             activation=cfg.policy_activation,
             obs_dim_override=cfg.policy_obs_dim,

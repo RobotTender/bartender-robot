@@ -30,8 +30,15 @@
 실장비나 ROS2 없이 동작 확인:
 
 ```bash
-python run_sim2real_e0509.py --mode dummy --checkpoint model_1000.pt --print-policy-info
+python run_sim2real_e0509.py --mode dummy --checkpoint test_model.pt --print-policy-info
 ```
+
+이 저장소의 `test_model.pt`는 빠른 연동 점검용 샘플 체크포인트입니다.
+
+- 정책 로딩/관측 생성/액션 변환 파이프라인이 정상 실행되는지 확인하는 용도
+- 실제 작업 성능을 보장하는 실전 모델은 아님
+- 실전에서는 원하는 학습 파일로 `--checkpoint`만 바꿔 실행
+- 체크포인트 파일명은 자유이며(`.pt`), `rsl_rl` 기본 설정으로 학습하면 자동 저장 파일명이 `model_XXXX.pt` 형태로 생성됨
 
 `--mode virtual` 또는 `--mode sim`도 동일하게 동작합니다.
 
@@ -70,7 +77,7 @@ python run_sim2real_e0509.py --mode dummy --checkpoint model_1000.pt --print-pol
 ```bash
 python sim2real_safety_test.py \
   --mode real \
-  --checkpoint /path/to/model.pt \
+  --checkpoint /path/to/model_XXXX.pt \
   --safety-motion-mode hold
 ```
 
@@ -79,7 +86,7 @@ python sim2real_safety_test.py \
 ```bash
 python sim2real_safety_test.py \
   --mode real \
-  --checkpoint /path/to/model.pt \
+  --checkpoint /path/to/model_XXXX.pt \
   --safety-motion-mode joint_delta \
   --safety-motion-joint-number 6 \
   --safety-motion-delta-deg 10
@@ -141,7 +148,7 @@ ROS2 노드들이 아래 토픽을 제공해야 합니다.
 ```bash
 python run_sim2real_e0509.py \
   --mode ros2 \
-  --checkpoint model_1000.pt \
+  --checkpoint /path/to/model_XXXX.pt \
   --print-policy-info
 ```
 
@@ -152,7 +159,7 @@ python run_sim2real_e0509.py \
 ```bash
 python run_sim2real_e0509.py \
   --mode ros2 \
-  --checkpoint model_1000.pt \
+  --checkpoint /path/to/model_XXXX.pt \
   --ros2-joint-state-topic /my_robot/joint_states \
   --ros2-joint-cmd-topic /my_robot/joint_cmd
 ```
@@ -164,7 +171,7 @@ python run_sim2real_e0509.py \
 ```bash
 python run_sim2real_e0509.py \
   --mode ros2 \
-  --checkpoint model_1000.pt \
+  --checkpoint /path/to/model_XXXX.pt \
   --ros2-gripper-command-mode drl_service \
   --ros2-drl-namespace dsr01
 ```
@@ -195,7 +202,7 @@ import numpy as np
 
 runtime = Sim2RealRuntime(
     Sim2RealRuntimeConfig(
-        checkpoint="model_1000.pt",
+        checkpoint="/path/to/model_XXXX.pt",
         device="cpu",  # 또는 "cuda:0"
         control_hz=60.0,
     )
@@ -284,7 +291,7 @@ custom extra 값 입력 경로:
 ```bash
 python run_sim2real_e0509.py \
   --mode dummy \
-  --checkpoint /path/to/model.pt \
+  --checkpoint /path/to/model_XXXX.pt \
   --obs-joint-dim 6 \
   --no-obs-include-gripper-state
 ```
@@ -389,7 +396,7 @@ ROS2 + DrlStart 그리퍼(두산 환경):
 ```bash
 python run_sim2real_e0509.py \
   --mode ros2 \
-  --checkpoint model_1000.pt \
+  --checkpoint /path/to/model_XXXX.pt \
   --hz 60 \
   --print-policy-info \
   --ros2-gripper-command-mode drl_service \
@@ -401,7 +408,7 @@ ROS2 + 외부 인지/외부 그리퍼 제어(정책 이식 최소 구성):
 ```bash
 python run_sim2real_e0509.py \
   --mode ros2 \
-  --checkpoint model_1000.pt \
+  --checkpoint /path/to/model_XXXX.pt \
   --hz 60 \
   --print-policy-info \
   --no-ros2-enable-gripper-output
@@ -412,7 +419,7 @@ python run_sim2real_e0509.py \
 ```bash
 python run_sim2real_e0509.py \
   --mode real \
-  --checkpoint model_1000.pt \
+  --checkpoint /path/to/model_XXXX.pt \
   --hz 60 \
   --doosan-robot-id dsr01 \
   --doosan-model e0509 \
