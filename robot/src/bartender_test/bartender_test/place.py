@@ -6,7 +6,10 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
 from std_srvs.srv import Trigger
 from std_msgs.msg import Float64MultiArray
-from .defines import PICK_PLACE_READY, HOME_POSE, PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET
+from .defines import (
+    PICK_PLACE_READY, HOME_POSE, 
+    PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET
+)
 
 class PlaceNode(Node):
     def __init__(self):
@@ -81,57 +84,56 @@ class PlaceNode(Node):
             self.get_logger().info("Step 1: Moving to PICK_PLACE_READY")
             movej(PICK_PLACE_READY, vel=60, acc=60)
 
-            # 2. Move to placement point (derived from last_pick_pose)
-            x, y, z = self.last_pick_pose
-            current_posx = list(get_current_posx()[0])
+            # Get current Cartesian pose for relative lift
+            curr = list(get_current_posx()[0])
             
+            # 2. Lift up 3cm
+            self.get_logger().info("Step 2: Lifting up 3cm")
+            z_safe = curr[2] + 30.0
+            movel([curr[0], curr[1], z_safe, curr[3], curr[4], curr[5]], vel=[40, 40], acc=[40, 40])
+
+            # 3. X-Alignment (at safe height)
+            x, y, z_pick = self.last_pick_pose
             target_x = x + PICK_PLACE_X_OFFSET
             target_y = y + PICK_PLACE_Y_OFFSET
-            target_z = z - 20 # Lowering slightly for placement as per existing logic
+            
+            self.get_logger().info(f"Step 3: X-Alignment to {target_x:.1f}")
+            movel([target_x, curr[1], z_safe, curr[3], curr[4], curr[5]], vel=[40, 40], acc=[40, 40])
 
-            # Step 1: X-Alignment
-            # Align ONLY the X axis while keeping Y, Z, and orientation from READY pose.
-            target_pos_x = [target_x, current_posx[1], current_posx[2], current_posx[3], current_posx[4], current_posx[5]]
-            self.get_logger().info(f"Step 1: X-Alignment to {target_x:.1f}")
-            movel(target_pos_x, vel=[40, 40], acc=[40, 40])
+            # 4. Y-Alignment (at safe height)
+            self.get_logger().info(f"Step 4: Y-Entry to {target_y:.1f}")
+            movel([target_x, target_y, z_safe, curr[3], curr[4], curr[5]], vel=[40, 40], acc=[40, 40])
 
-            # Step 2: Y-Entry & Z-Drop
-            # Enter the placement position by changing ONLY Y and Z.
-            target_pos_yz = [target_x, target_y, target_z, current_posx[3], current_posx[4], current_posx[5]]
-            self.get_logger().info(f"Step 2: Y-Entry and Z-Drop to {target_y:.1f}, {target_z:.1f}")
-            movel(target_pos_yz, vel=[40, 40], acc=[40, 40])
+            # 5. Lift down to original Z (where object was when pick)
+            self.get_logger().info(f"Step 5: Lifting down to original Z: {z_pick:.1f}")
+            movel([target_x, target_y, z_pick, curr[3], curr[4], curr[5]], vel=[40, 40], acc=[40, 40])
             wait(0.5)
 
-            # 3. Open Gripper
-            self.get_logger().info("Step 3: Opening gripper to release object")
+            # 6. Release grip
+            self.get_logger().info("Step 6: Releasing gripper")
             success = self._gripper_open()
             if not success:
                 self.get_logger().error("Failed to open gripper!")
             
             self.get_logger().info("Waiting 0.5s for gripper to release...")
-            time.sleep(0.5) # Ensure gripper is fully released
+            time.sleep(0.5) 
 
-            # 4. Retreat (Decoupled reversal)
-            self.get_logger().info("Step 4: Retreat (Z-Up and Y-Exit)")
-            # First move back up and out along Y
-            target_pos_exit = [target_x, current_posx[1], current_posx[2], current_posx[3], current_posx[4], current_posx[5]]
-            try:
-                movel(target_pos_exit, vel=[40, 40], acc=[40, 40])
-            except Exception as e:
-                self.get_logger().warn(f"Retreat movel failed, trying movej to READY: {e}")
-                movej(PICK_PLACE_READY, vel=40, acc=40)
+            # 7. Reverse: Y-Alignment (Exit) at pick height
+            self.get_logger().info("Step 7: Retreat (Y-Exit)")
+            movel([target_x, curr[1], z_pick, curr[3], curr[4], curr[5]], vel=[40, 40], acc=[40, 40])
 
-            # 5. Return to PICK_PLACE_READY
-            self.get_logger().info("Step 5: Returning to PICK_PLACE_READY pose")
+            # 8. Return to PICK_PLACE_READY
+            self.get_logger().info("Step 8: Returning to PICK_PLACE_READY")
             movej(PICK_PLACE_READY, vel=60, acc=60)
 
-            # 6. Final Return to HOME_POSE
-            self.get_logger().info("Step 6: Returning to HOME_POSE (End of Place Motion)")
+            # 9. Return to HOME_POSE
+            self.get_logger().info("Step 9: Returning to HOME_POSE (End of Place Motion)")
             movej(HOME_POSE, vel=60, acc=60)
             
             self.get_logger().info("Place Motion Thread: Completed successfully")
         except Exception as e:
-            self.get_logger().error(f"Place Motion Thread Error: {e}")
+            import traceback
+            self.get_logger().error(f"Place Motion Thread Error: {e}\n{traceback.format_exc()}")
 
 def main(args=None):
     rclpy.init(args=args)

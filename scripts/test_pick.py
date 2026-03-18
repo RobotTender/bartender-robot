@@ -28,9 +28,8 @@ VELOCITY, ACC = 30.0, 30.0
 from bartender_test.defines import (
     PICK_PLACE_READY, HOME_POSE,
     GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN,
-    GRIPPER_POSITION_SOJU, GRIPPER_FORCE_SOJU,
-    GRIPPER_POSITION_BEER, GRIPPER_FORCE_BEER,
-    GRIPPER_POSITION_JUICE, GRIPPER_FORCE_JUICE,
+    JUICE, BEER, SOJU,
+    GRIPPER_POSITIONS, GRIPPER_FORCES,
     PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET
 )
 
@@ -108,15 +107,19 @@ class PickTester(Node):
         return self._gripper_move(GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN)
 
     def _gripper_close(self, item_name):
-        if item_name == 'soju':
-            return self._gripper_move(GRIPPER_POSITION_SOJU, GRIPPER_FORCE_SOJU)
-        elif item_name == 'beer':
-            return self._gripper_move(GRIPPER_POSITION_BEER, GRIPPER_FORCE_BEER)
-        elif item_name == 'juice':
-            return self._gripper_move(GRIPPER_POSITION_JUICE, GRIPPER_FORCE_JUICE)
-        else:
-            self.get_logger().error(f"Unknown item: {item_name}, using default soju settings")
-            return self._gripper_move(GRIPPER_POSITION_SOJU, GRIPPER_FORCE_SOJU)
+        # Convert item name to index
+        try:
+            cls_id_str = self.object_dict_reverse.get(item_name)
+            if cls_id_str is None:
+                raise ValueError(f"Unknown item: {item_name}")
+            
+            idx = int(cls_id_str)
+            pos = GRIPPER_POSITIONS[idx]
+            force = GRIPPER_FORCES[idx]
+            return self._gripper_move(pos, force)
+        except Exception as e:
+            self.get_logger().error(f"Gripper close error: {e}, using default soju settings")
+            return self._gripper_move(GRIPPER_POSITIONS[SOJU], GRIPPER_FORCES[SOJU])
 
     def _movej(self, pos, vel=VELOCITY, acc=ACC):
         self.movej_cli.wait_for_service()
