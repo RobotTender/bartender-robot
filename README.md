@@ -31,23 +31,6 @@ Analysis of the codebase (specifically `realsense_cam2.py`) confirms that the or
 ### Snap Recovery & Motion Interruption
 A key challenge was interrupting the "blocking" pouring motion (`movesx`) when the target volume is reached or the spacebar is pressed.
 
-**How Interruption Works:**
-1.  **Concurrency Architecture**: The `robotender_pour` node utilizes a ROS 2 `MultiThreadedExecutor` combined with a `ReentrantCallbackGroup`. This allows the subscription callback (`trigger_cb`) to execute in parallel even while the main service thread is "blocked" waiting for the robot to complete a `movesx` or `movej` command.
-2.  **MoveStop Service**: When a trigger is detected, the `trigger_cb` immediately calls the `/dsr01/motion/move_stop` service (Stop Mode 2: `DR_SSTOP`). This causes the robot controller to abort the current motion trajectory immediately, which in turn causes the blocking `movesx()` call in the main thread to return.
-
-**Step-by-Step Interruption Flow:**
-1.  **Thread A (Motion)**: Sends a command to the Robot Controller: "Start moving (`movesx`) and block until finished."
-2.  **Thread B (Monitor)**: Independently listens for a "Snap" message from the vision system or spacebar.
-3.  **Snap Event**: Thread B receives the trigger and immediately sends a `MoveStop` command to the Robot Controller.
-4.  **Controller Action**: The Robot Controller kills the active motion trajectory instantly.
-5.  **Motion Release**: The Robot Controller signals back to Thread A that the requested motion has ended (interrupted).
-6.  **Recovery Phase**: Thread A "wakes up," detects the interruption, and immediately executes the **Recovery Path** (Backtracking).
-
-**How Recovery Works:**
-1.  **Real-time Path Recording**: While pouring (`self.recording = True`), a background timer records the robot's joint poses (`posj`) at 3Hz into a buffer.
-2.  **Dynamic Backtracking**: Once the motion is stopped, the node calculates a recovery path by reversing the recorded buffer. To ensure smooth motion, the buffer is downsampled to a target size (1-3 points depending on duration) and the current pose and `CHEERS_POSE` are added.
-3.  **High-Velocity Snap**: The robot executes this reverse path using `movesj` at high velocity (200 deg/s) to quickly "snap" back to a safe posture (`CHEERS_POSE`), effectively preventing liquid overspill.
-
 ---
 
 ## 2. Robot Control System
@@ -93,8 +76,9 @@ The `robotender_pour` node handles the trajectory execution for pouring and the 
 6.  **Recovery Phase**: Thread A "wakes up," detects the interruption, and immediately executes the **Recovery Path** (Backtracking).
 
 **Recovery Execution:**
-*   **Real-time Recording**: While pouring, a background timer records joint poses at 3Hz.
-*   **High-Velocity Snap**: Upon interruption, the node downsamples the recorded buffer and executes a reverse path using `movesj` at **200 deg/s** to quickly snap back to `CHEERS_POSE`.
+1.  **Real-time Path Recording**: While pouring (`self.recording = True`), a background timer records the robot's joint poses (`posj`) at 3Hz into a buffer.
+2.  **Dynamic Backtracking**: Once the motion is stopped, the node calculates a recovery path by reversing the recorded buffer. To ensure smooth motion, the buffer is downsampled to a target size (1-3 points depending on duration) and the current pose and `CHEERS_POSE` are added.
+3.  **High-Velocity Snap**: The robot executes this reverse path using `movesj` at high velocity (200 deg/s) to quickly "snap" back to a safe posture (`CHEERS_POSE`), effectively preventing liquid overspill.
 
 ### 2.4 Place Node (`place.py`)
 The `robotender_place` node is responsible for returning the bottle after pouring is complete.
