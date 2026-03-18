@@ -6,7 +6,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
 from std_srvs.srv import Trigger
 from std_msgs.msg import Float64MultiArray
-from .defines import PICK_PLACE_READY, HOME_POSE
+from .defines import PICK_PLACE_READY, HOME_POSE, PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET
 
 class PlaceNode(Node):
     def __init__(self):
@@ -84,12 +84,22 @@ class PlaceNode(Node):
             # 2. Move to placement point (derived from last_pick_pose)
             x, y, z = self.last_pick_pose
             current_posx = list(get_current_posx()[0])
-            # Following the logic from test_pick_place.py
-            target_1 = [x - 20, y - 50, z, current_posx[3], current_posx[4], current_posx[5]]
-            target_2 = [x - 20, y + 50, z - 20, current_posx[3], current_posx[4], current_posx[5]]
             
-            self.get_logger().info(f"Step 2: Moving to placement point: {target_2}")
-            movel(target_2, vel=[40, 40], acc=[40, 40])
+            target_x = x + PICK_PLACE_X_OFFSET
+            target_y = y + PICK_PLACE_Y_OFFSET
+            target_z = z - 20 # Lowering slightly for placement as per existing logic
+
+            # Step 1: X-Alignment
+            # Align ONLY the X axis while keeping Y, Z, and orientation from READY pose.
+            target_pos_x = [target_x, current_posx[1], current_posx[2], current_posx[3], current_posx[4], current_posx[5]]
+            self.get_logger().info(f"Step 1: X-Alignment to {target_x:.1f}")
+            movel(target_pos_x, vel=[40, 40], acc=[40, 40])
+
+            # Step 2: Y-Entry & Z-Drop
+            # Enter the placement position by changing ONLY Y and Z.
+            target_pos_yz = [target_x, target_y, target_z, current_posx[3], current_posx[4], current_posx[5]]
+            self.get_logger().info(f"Step 2: Y-Entry and Z-Drop to {target_y:.1f}, {target_z:.1f}")
+            movel(target_pos_yz, vel=[40, 40], acc=[40, 40])
             wait(0.5)
 
             # 3. Open Gripper
@@ -101,10 +111,12 @@ class PlaceNode(Node):
             self.get_logger().info("Waiting 0.5s for gripper to release...")
             time.sleep(0.5) # Ensure gripper is fully released
 
-            # 4. Retreat to approach point
-            self.get_logger().info("Step 4: Retreating to approach point")
+            # 4. Retreat (Decoupled reversal)
+            self.get_logger().info("Step 4: Retreat (Z-Up and Y-Exit)")
+            # First move back up and out along Y
+            target_pos_exit = [target_x, current_posx[1], current_posx[2], current_posx[3], current_posx[4], current_posx[5]]
             try:
-                movel(target_1, vel=[40, 40], acc=[40, 40])
+                movel(target_pos_exit, vel=[40, 40], acc=[40, 40])
             except Exception as e:
                 self.get_logger().warn(f"Retreat movel failed, trying movej to READY: {e}")
                 movej(PICK_PLACE_READY, vel=40, acc=40)

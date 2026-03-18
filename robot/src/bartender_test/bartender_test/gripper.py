@@ -3,6 +3,7 @@ import time
 from rclpy.node import Node
 from dsr_msgs2.srv import DrlStart
 from std_srvs.srv import Trigger
+from robotender_msgs.srv import GripperControl
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
 
@@ -21,7 +22,6 @@ def modbus_fc06(slaveid, address, value):
     return bytes(modbus_send_make(bytes(data_list)))
 
 # 1. Open Port
-# (Removed initial close to avoid alarm 2018 if already closed)
 flange_serial_open(baudrate=57600, bytesize=DR_EIGHTBITS, parity=DR_PARITY_NONE, stopbits=DR_STOPBITS_ONE)
 wait(0.3)
 
@@ -38,7 +38,6 @@ flange_serial_write(modbus_fc06(1, 275, {force}))
 wait(0.2)
 
 # 5. Move (Slave 1, Addr 282, Val {stroke})
-# Stroke: 1100 (Open), 0 (Closed)
 flange_serial_write(modbus_fc16(1, 282, 2, [{stroke}, 0]))
 wait(1.5)
 
@@ -61,6 +60,7 @@ class GripperNode(Node):
         # ROS Services
         self.open_srv = self.create_service(Trigger, 'robotender_gripper/open', self.open_callback, callback_group=self.callback_group)
         self.close_srv = self.create_service(Trigger, 'robotender_gripper/close', self.close_callback, callback_group=self.callback_group)
+        self.move_srv = self.create_service(GripperControl, 'robotender_gripper/move', self.move_callback, callback_group=self.callback_group)
         
         self.get_logger().info('--- Autonomous Gripper Node (One-Shot Mode) Initialized ---')
 
@@ -95,6 +95,13 @@ class GripperNode(Node):
         success = await self.execute_drl(1100, force=800) 
         response.success = success
         response.message = "Close command (One-Shot) finished" if success else "Failed to execute DRL"
+        return response
+
+    async def move_callback(self, request, response):
+        # Move with custom position and force
+        success = await self.execute_drl(request.position, force=request.force)
+        response.success = success
+        response.message = f"Move command (Pos={request.position}, Force={request.force}) finished" if success else "Failed to execute DRL"
         return response
 
 def main(args=None):

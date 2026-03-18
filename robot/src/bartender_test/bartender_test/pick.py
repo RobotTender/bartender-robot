@@ -14,10 +14,18 @@ from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge, CvBridgeError
 from std_msgs.msg import String, Bool, Float64MultiArray
 from std_srvs.srv import Trigger
+from robotender_msgs.srv import GripperControl
 from dsr_msgs2.srv import SetRobotMode, MoveJoint, MoveLine, GetCurrentPosx, GetRobotState
 
 import DR_init
-from .defines import CHEERS_POSE, HOME_POSE, PICK_PLACE_READY
+from .defines import (
+    CHEERS_POSE, HOME_POSE, PICK_PLACE_READY,
+    GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN,
+    GRIPPER_POSITION_SOJU, GRIPPER_FORCE_SOJU,
+    GRIPPER_POSITION_BEER, GRIPPER_FORCE_BEER,
+    GRIPPER_POSITION_JUICE, GRIPPER_FORCE_JUICE,
+    PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET
+)
 
 
 ROBOT_ID = "dsr01"
@@ -93,8 +101,7 @@ class RobotControllerNode(Node):
         # self.action_pub = self.create_publisher(String, ACTION_TOPIC, 10) # Deprecated topic
 
         # New Service Clients
-        self.gripper_open_cli = self.create_client(Trigger, 'robotender_gripper/open')
-        self.gripper_close_cli = self.create_client(Trigger, 'robotender_gripper/close')
+        self.gripper_move_cli = self.create_client(GripperControl, 'robotender_gripper/move')
         self.pour_start_cli = self.create_client(Trigger, 'robotender_pour/start')
 
         self.get_logger().info("컬러/뎁스/카메라정보 토픽 구독 대기 중...")
@@ -170,23 +177,31 @@ class RobotControllerNode(Node):
             self.get_logger().info("카메라 내장 파라미터(Intrinsics) 수신 완료.")
 
 
-    def _gripper_open(self):
-        self.get_logger().info("Service Call: Gripper Open")
-        if not self.gripper_open_cli.wait_for_service(timeout_sec=5.0):
-            self.get_logger().error("Gripper open service not available!")
+    def _gripper_move(self, pos, force):
+        self.get_logger().info(f"Service Call: Gripper Move (Pos={pos}, Force={force})")
+        if not self.gripper_move_cli.wait_for_service(timeout_sec=5.0):
+            self.get_logger().error("Gripper move service not available!")
             return False
-        future = self.gripper_open_cli.call_async(Trigger.Request())
+        req = GripperControl.Request()
+        req.position = int(pos)
+        req.force = int(force)
+        future = self.gripper_move_cli.call_async(req)
         while not future.done(): time.sleep(0.01)
         return future.result().success
 
-    def _gripper_close(self, force=800):
-        self.get_logger().info(f"Service Call: Gripper Close (Force fixed to 800 in ActionNode)")
-        if not self.gripper_close_cli.wait_for_service(timeout_sec=5.0):
-            self.get_logger().error("Gripper close service not available!")
-            return False
-        future = self.gripper_close_cli.call_async(Trigger.Request())
-        while not future.done(): time.sleep(0.01)
-        return future.result().success
+    def _gripper_open(self):
+        return self._gripper_move(GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN)
+
+    def _gripper_close(self, item_name):
+        if item_name == 'soju':
+            return self._gripper_move(GRIPPER_POSITION_SOJU, GRIPPER_FORCE_SOJU)
+        elif item_name == 'beer':
+            return self._gripper_move(GRIPPER_POSITION_BEER, GRIPPER_FORCE_BEER)
+        elif item_name == 'juice':
+            return self._gripper_move(GRIPPER_POSITION_JUICE, GRIPPER_FORCE_JUICE)
+        else:
+            self.get_logger().error(f"Unknown item: {item_name}, using default soju settings")
+            return self._gripper_move(GRIPPER_POSITION_SOJU, GRIPPER_FORCE_SOJU)
 
     def _pour_start(self):
         self.get_logger().info("Service Call: Pouring Start (Non-blocking)")
@@ -298,7 +313,7 @@ class RobotControllerNode(Node):
             pose_msg.data = [float(p_robot[0]), float(p_robot[1]), float(p_robot[2])]
             self.last_pose_pub.publish(pose_msg)
 
-            self.move_robot_and_control_gripper(p_robot[0], p_robot[1], p_robot[2])
+            self.move_robot_and_control_gripper(p_robot[0], p_robot[1], p_robot[2], object_dict[class_id])
             
             # Use non-blocking service call to signal Pour node
             self.get_logger().info("--- Signaling Pour node (Asynchronous) ---")
@@ -315,10 +330,10 @@ class RobotControllerNode(Node):
             self.state = "IDLE"
             self.get_logger().info("Grip process finished, state reset to IDLE.")
 
-    def move_robot_and_control_gripper(self, x, y, z):
+    def move_robot_and_control_gripper(self, x, y, z, item_name):
         import time
         try:
-            self.get_logger().info("잡기 전 자세")
+            self.get_logger().info(f"잡기 전 자세 (대상: {item_name})")
             self._movej(PICK_PLACE_READY, VELOCITY, ACC)
 
             from dsr_msgs2.srv import GetCurrentPose
@@ -330,19 +345,36 @@ class RobotControllerNode(Node):
             while not pose_future.done(): time.sleep(0.01)
             current_pos = list(pose_future.result().pos)
 
-            target_pos_list_1 = [x - 20, y - 50, z, current_pos[3], current_pos[4], current_pos[5]]
-            target_pos_list_2 = [x - 20, y + 50, z - 20, current_pos[3], current_pos[4], current_pos[5]]
+            target_x = x + PICK_PLACE_X_OFFSET
+            target_y = y + PICK_PLACE_Y_OFFSET
             
-            self.get_logger().info("목표 지점으로 접근합니다")
-            self._movel(target_pos_list_1, vel=[40.0, 40.0], acc=[ACC, ACC])
-            self.get_logger().info(f"목표 지점으로 이동합니다: {target_pos_list_2}")
-            self._movel(target_pos_list_2, vel=[40.0, 40.0], acc=[ACC, ACC])
+            # Step 1: X-Alignment
+            # Align ONLY the X axis while keeping Y, Z, and orientation from the READY pose.
+            target_pos_x = [target_x, current_pos[1], current_pos[2], current_pos[3], current_pos[4], current_pos[5]]
+            self.get_logger().info(f"Step 1: X-Alignment to {target_x:.1f}")
+            self._movel(target_pos_x, vel=[40.0, 40.0], acc=[ACC, ACC])
+
+            # Step 2: Y-Entry
+            # Enter the bottle's position by changing ONLY the Y axis to target.
+            target_pos_y = [target_x, target_y, current_pos[2], current_pos[3], current_pos[4], current_pos[5]]
+            self.get_logger().info(f"Step 2: Y-Entry to {target_y:.1f}")
+            self._movel(target_pos_y, vel=[40.0, 40.0], acc=[ACC, ACC])
 
             time.sleep(0.5)
-            # gripper 주류 잡기 - Replaced self.gripper.move(550) with service call
-            self._gripper_close(800) 
+            # gripper 주류 잡기
+            self._gripper_close(item_name) 
             self.get_logger().info("그리퍼가 닫힐 때까지 대기합니다 (3초)...")
             time.sleep(3.0)
+
+            # Step 2.5: Lift (3cm)
+            target_pos_lift = [target_x, target_y, current_pos[2] + 30.0, current_pos[3], current_pos[4], current_pos[5]]
+            self.get_logger().info("Step 2.5: Lifting 3cm")
+            self._movel(target_pos_lift, vel=[40.0, 40.0], acc=[ACC, ACC])
+
+            # Step 3: Retreat (Decoupled reversal) at the lifted height
+            target_pos_retreat = [target_x, current_pos[1], current_pos[2] + 30.0, current_pos[3], current_pos[4], current_pos[5]]
+            self.get_logger().info("Step 3: Retreat (Y-Exit)")
+            self._movel(target_pos_retreat, vel=[40.0, 40.0], acc=[ACC, ACC])
 
             self.get_logger().info("Moving to PICK_PLACE_READY then HOME_POSE")
             self._movej(PICK_PLACE_READY, VELOCITY, ACC)

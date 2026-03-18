@@ -16,6 +16,9 @@
 - **Auto-Rebuild:** Every time a code change is made to `bartender_test`, you **MUST** automatically run:
   `colcon build --symlink-install --packages-select bartender_test && source install/setup.bash`
 - **Safety First:** Always use `movesj` or `movej` with cautious velocities (default 60, max 250 for recovery) to prevent hardware collisions.
+- **Pick Approach Strategy:** The `robotender_pick` node **MUST** use a **Decoupled Grid Approach** for picking objects:
+    1.  **Step 1 (X-Alignment):** From `PICK_PLACE_READY`, use `movel` to align only the **X** axis while keeping Y, Z, and orientation from the ready pose.
+    2.  **Step 2 (Y-Entry):** Use `movel` to enter the bottle's position by changing only the **Y** axis to the target.
 - **Commit Rule:** commit and push when explicitly asked
 
 ## Project Organization (Node-Service Structure)
