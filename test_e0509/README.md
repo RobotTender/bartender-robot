@@ -11,12 +11,12 @@
 이전 브랜치 README에서 쓰던 "환경 맥락"을 유지해서 정리하면 아래와 같습니다.
 
 - 로봇 에셋:
-  - `USD/e0509/e0509_model.usd`
+  - `USD/e0509/e0509_model.usd`: Doosan E0509 암 + RH-P12-RN(A) 그리퍼 결합 모델(암 `joint_1~joint_6`, 그리퍼 `rh_r1_joint` 기준 제어)
 - 워크스페이스 에셋:
-  - `USD/table_hole.usd`
-  - `USD/tables_3.usd`
+  - `USD/table_hole.usd`: 로봇이 얹히는 작업대(워크스페이스) 모델
+  - `USD/tables_3.usd`: 실제 환경을 반영한 선반/테이블 배경 모델(오브젝트 위치 맥락/충돌 공간 반영)
 - 오브젝트 에셋:
-  - `USD/soju.usd`, `USD/orange.usd`, `USD/beer.usd`
+  - `USD/soju.usd`, `USD/orange.usd`, `USD/beer.usd`: 랜덤 active 병 후보 3종
 
 배치/해석 포인트:
 
