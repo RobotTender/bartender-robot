@@ -28,9 +28,6 @@ Analysis of the codebase (specifically `realsense_cam2.py`) confirms that the or
 *   **Initial Calibration (Auto-Tare)**: A calibration step was added to capture the cup's state when it is first placed. The system waits for a stable detection of an empty cup (stability-based trigger) to lock the `total_cup_height_px` and the `fixed_bottle_bottom_y` coordinate. This allows for flexible cup positioning within the detection area.
 *   **Auto-Snap Trigger**: Once the estimated volume reaches the target (e.g., 100ml), the detection node automatically publishes a trigger signal to the robot to stop pouring and initiate recovery.
 
-### Snap Recovery & Motion Interruption
-A key challenge was interrupting the "blocking" pouring motion (`movesx`) when the target volume is reached or the spacebar is pressed.
-
 ---
 
 ## 2. Robot Control System
