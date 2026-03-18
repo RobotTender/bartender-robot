@@ -51,6 +51,30 @@
   - Move: `22`
 - Move Stage1/Stage2/Stage3는 보상/게이트 설정이 다르고, 관측/액션 인터페이스는 같은 `MoveBottleEnv`를 사용합니다.
 
+## 조인트 제한각 표 (`q_low`, `q_high`)
+
+`q_low`, `q_high`는 고정 `±180°`가 아니라 아래 순서로 결정됩니다.
+
+1. 로봇 USD의 `soft_joint_pos_limits`를 기본값으로 가져옴
+2. 수동 제한이 켜져 있으면(`use_*_abs_limit=True`) 해당 조인트를 추가로 클램프
+3. 최종 `q_low`, `q_high`는 "기본 soft limit"과 "수동 제한"의 교집합
+
+추가 수동 제한(기본 설정):
+
+| 조인트 | GripBottle | MoveBottle(Stage1/2/3) |
+|---|---:|---:|
+| Joint 1 | ±115° (±2.0071 rad) | ±115° (±2.0071 rad) |
+| Joint 2 | soft limit 사용 | ±95° (±1.6581 rad) |
+| Joint 3 | soft limit 사용 | soft limit 사용 |
+| Joint 4 | soft limit 사용 | ±120° (±2.0944 rad) |
+| Joint 5 | soft limit 사용 | soft limit 사용 |
+| Joint 6 | soft limit 사용 | soft limit 사용 |
+
+참고:
+
+- E0509 설정에서 soft limit이 사실상 ±180°로 잡힌 조인트가 많아 "대부분 ±180°처럼 보일" 수는 있습니다.
+- 하지만 MoveBottle은 Joint 2/4가 추가 제한되므로, 외부 런타임에서 동일 정규화를 쓰려면 이 제한도 같이 맞춰야 합니다.
+
 ## 입력값 넣는 방법 (중요)
 
 이 폴더의 Env는 IsaacLab 시뮬레이터 내부 상태로 관측을 자동 생성합니다.  
@@ -78,6 +102,10 @@
 - 오브젝트 위치 `obj_pos[3]` (m)
 - 오브젝트 up의 z성분 `obj_up_z` (또는 up 벡터)
 - 오브젝트 클래스 one-hot(soju/orange/beer)
+  - `[1, 0, 0]` = soju
+  - `[0, 1, 0]` = orange
+  - `[0, 0, 1]` = beer
+  - 클래스 인덱스 기준도 동일(`0=soju, 1=orange, 2=beer`)
 
 관측 생성 수식:
 
@@ -98,7 +126,14 @@
 - 목표 조인트 `q_goal[6]` (Env 설정값, rad)
 - TCP Y축의 world Z 정렬값 계산에 필요한 EE 자세
 - EE 선속도 크기 `||v_ee||` (m/s)
-- TCP 높이(테이블 상면 기준), TCP y 오프셋(테이블 중심 y 기준)
+- TCP 높이(`tcp_height_obs`): 선반 상면 기준 높이
+  - 코드 변수명은 `table_top_z`지만, 현재 프로젝트에서는 선반 상면으로 사용
+  - 현재 기준값: 상면 `z = 1.30 m`
+  - 매 step 실시간 계산: `tcp_height_from_shelf = tcp_z - shelf_top_z`
+- TCP y 오프셋(`tcp_y_offset_obs`): 선반 중심선 대비 y 편차
+  - 현재 기준값: 선반 중심 `y = 0.67 m`
+  - 매 step 실시간 계산: `tcp_y_offset = tcp_y - shelf_center_y`
+  - 의미: TCP가 선반 중심선에서 y축으로 얼마나 벗어났는지(부호 포함)
 
 관측 생성 수식:
 
@@ -107,8 +142,8 @@
 3. `goal_err = clip((q - q_goal) / (q_high - q_low), -1, 1)` (6차원)
 4. `y_parallel_obs = clip(sign * tcp_y_world_z, -1, 1)` (`preferred_tcp_y_world_z_sign` 반영)
 5. `ee_speed_obs = clip(||v_ee|| / success_max_ee_speed, 0, 5)`
-6. `tcp_height_obs = clip((tcp_height_from_table) / obs_tcp_height_scale_m, -5, 5)`
-7. `tcp_y_offset_obs = clip((tcp_y - table_center_y) / obs_tcp_y_offset_scale_m, -5, 5)`
+6. `tcp_height_obs = clip((tcp_height_from_shelf) / obs_tcp_height_scale_m, -5, 5)`
+7. `tcp_y_offset_obs = clip((tcp_y - shelf_center_y) / obs_tcp_y_offset_scale_m, -5, 5)`
 8. `obs = [q_norm(6), qd_norm(6), goal_err(6), y_parallel(1), ee_speed(1), tcp_height(1), tcp_y_offset(1)]`
 9. `obs = clip(obs, -5, 5)`
 
