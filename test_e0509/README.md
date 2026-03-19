@@ -5,6 +5,7 @@
 - 배치 경로:
   - `/IsaacLab/source/isaaclab_tasks/isaaclab_tasks/direct/test_e0509`
 - 즉, `direct` 아래에 `test_e0509` 폴더 전체(현재 폴더)를 그대로 넣어야 합니다.
+- 학습/체크포인트 운영 메모는 `TRAINING.md`를 참고하세요.
 
 ## 환경 시나리오 요약 (Grip Bottle 기준)
 
@@ -15,12 +16,14 @@
 - 워크스페이스 에셋:
   - `USD/table_hole.usd`: 로봇이 얹히는 작업대(워크스페이스) 모델
   - `USD/tables_3.usd`: 실제 환경을 반영한 선반/테이블 배경 모델(오브젝트 위치 맥락/충돌 공간 반영)
+    - 모델 내부 고정 오프셋: `(-55, 1120, 728) mm` (`(-0.055, 1.120, 0.728) m`)
 - 오브젝트 에셋:
   - `USD/soju.usd`, `USD/orange.usd`, `USD/beer.usd`: 랜덤 active 병 후보 3종
 
 배치/해석 포인트:
 
 - 코드 변수명은 `table_*`지만, 프로젝트 해석은 "선반 상면/선반 중심" 기준으로 봐도 됩니다.
+- 로봇 기준 설치 높이: `z = 0.73 m` (마운트 상면 기준)
 - 상면 기준값(현재 설정): `(x, y, z) = (0.00, 0.67, 1.30) m`
   - `x = 0.00` (`table_top_center_xy[0]`)
   - `y = 0.67` (`table_top_center_xy[1]`, `tcp_y_offset_obs` 기준)
@@ -62,7 +65,7 @@ Move 관측에서 추가된 항목의 의미:
 
 ## 관측/액션 정의
 
-### 1) Grip Bottle (`Isaac-E0509-Grip-Bottle-Direct-v0`)
+### 1. Grip Bottle (`Isaac-E0509-Grip-Bottle-Direct-v0`)
 
 - `action_space = 6`
 - `observation_space = 20`
@@ -79,7 +82,7 @@ Move 관측에서 추가된 항목의 의미:
 5. `16`    object_up_z
 6. `17:20` active_bottle_one_hot `(soju, orange, beer)`
 
-### 2) Move Bottle (`Isaac-E0509-Move-Bottle-Direct-v0`, Stage1/2/3 공통 Env)
+### 2. Move Bottle (`Isaac-E0509-Move-Bottle-Direct-v0`, Stage1/2/3 공통 Env)
 
 - `action_space = 6`
 - `observation_space = 22`

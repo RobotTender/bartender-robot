@@ -7,7 +7,7 @@ Usage:
   ./eval_stage_checkpoints.sh --run_dir <RUN_DIR> [options]
 
 Required:
-  --run_dir <path>          Run directory that contains nn/model_XXXX.pt
+  --run_dir <path>          Run directory that contains model_XXXX.pt
                             Example:
                             logs/rsl_rl/move_bottle_stage1/2026-03-17_10-00-00_move_bottle_stage1_v5
 
@@ -121,12 +121,6 @@ if [[ ! -d "$RUN_DIR" ]]; then
   exit 1
 fi
 
-NN_DIR="$RUN_DIR/nn"
-if [[ ! -d "$NN_DIR" ]]; then
-  echo "[ERROR] nn directory not found in run_dir: $NN_DIR"
-  exit 1
-fi
-
 echo "[INFO] Root       : $ROOT_DIR"
 echo "[INFO] Run dir    : $RUN_DIR"
 echo "[INFO] Task       : $TASK"
@@ -136,7 +130,7 @@ echo "[INFO] Iter range : $FROM_ITER..$TO_ITER (step $STEP_ITER)"
 echo "[INFO] Video len  : $VIDEO_LENGTH"
 
 for iter in $(seq "$FROM_ITER" "$STEP_ITER" "$TO_ITER"); do
-  ckpt="$NN_DIR/model_${iter}.pt"
+  ckpt="$RUN_DIR/model_${iter}.pt"
   if [[ ! -f "$ckpt" ]]; then
     continue
   fi

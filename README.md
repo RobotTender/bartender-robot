@@ -38,7 +38,8 @@ python run_sim2real_e0509.py --mode dummy --checkpoint test_model.pt --print-pol
 - 정책 로딩/관측 생성/액션 변환 파이프라인이 정상 실행되는지 확인하는 용도
 - 실제 작업 성능을 보장하는 실전 모델은 아님
 - 실전에서는 원하는 학습 파일로 `--checkpoint`만 바꿔 실행
-- 체크포인트 파일명은 자유이며(`.pt`), `rsl_rl` 기본 설정으로 학습하면 자동 저장 파일명이 `model_XXXX.pt` 형태로 생성됨
+- sim2real 실행기는 이름과 상관없이 원하는 `.pt` 체크포인트를 읽을 수 있음
+- `rsl_rl`로 학습하면 체크포인트는 보통 `model_XXXX.pt` 형식으로 저장되며, 내부 문서/스크립트도 그 형식을 기준으로 설명함
 
 `--mode virtual` 또는 `--mode sim`도 동일하게 동작합니다.
 
