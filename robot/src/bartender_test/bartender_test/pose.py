@@ -2,8 +2,7 @@ import rclpy
 import sys
 from rclpy.node import Node
 import DR_init
-from .defines import (HOME_POSE, CHEERS_POSE, POLE_POSE, POUR_HORIZONTAL, 
-                            POUR_DIAGONAL, POUR_VERTICAL, CONTACT_POSE, PICK_PLACE_READY,
+from .defines import (HOME_POSE, CHEERS_POSE, POLE_POSE, PICK_PLACE_READY,
                             POS_CHEERS, BOTTLE_CONFIG)
 
 def main(args=None):
@@ -19,7 +18,7 @@ def main(args=None):
     node = rclpy.create_node('pose_node', namespace=ROBOT_ID)
     DR_init.__dsr__id, DR_init.__dsr__model, DR_init.__dsr__node = ROBOT_ID, ROBOT_MODEL, node
 
-    from DSR_ROBOT2 import (movej, movel, set_robot_mode, ROBOT_MODE_AUTONOMOUS, wait, get_current_posj, get_current_posx, fkin)
+    from DSR_ROBOT2 import (movej, movel, posx, posj, set_robot_mode, ROBOT_MODE_AUTONOMOUS, wait, get_current_posj, get_current_posx, fkin)
 
     try:
         set_robot_mode(ROBOT_MODE_AUTONOMOUS)
@@ -46,34 +45,26 @@ def main(args=None):
                 print(f"Unknown bottle type: {bottle}")
                 return
             
-            # Map command to config key and global joint pose for orientation
-            if cmd == 'contact':
-                xyz = config['pos_contact']
-                ref_pose = CONTACT_POSE
-            elif cmd == 'horizontal':
-                xyz = config['pos_horizontal']
-                ref_pose = POUR_HORIZONTAL
-            elif cmd == 'diagonal':
-                xyz = config['pos_diagonal']
-                ref_pose = POUR_DIAGONAL
-            elif cmd == 'vertical':
-                xyz = config['pos_vertical']
-                ref_pose = POUR_VERTICAL
-
-            # Build target posx: XYZ from config + RxRyRz from ref_pose (fkin)
-            orientation = [float(x) for x in fkin(ref_pose, ref=0)][3:]
-            target_cart_pose = list(xyz) + orientation
-            node.get_logger().info(f"Cartesian Target for {cmd} ({bottle}): {target_cart_pose[:3]} with orientation {target_cart_pose[3:]}")
+            # Map command to config key
+            x_key = f'posx_{cmd}'
+            j_key = f'posj_{cmd}'
+            
+            if x_key in config:
+                target_cart_pose = config[x_key]
+                node.get_logger().info(f"Targeting {cmd} for {bottle} via {x_key}")
+            else:
+                print(f"Key {x_key} not found for {bottle}")
+                return
         else:
             print(f"Unknown pose: {cmd}")
             return
 
         if target_joint_pose:
             node.get_logger().info(f"Moving to JOINT pose: {cmd} ({target_joint_pose})")
-            ret = movej(target_joint_pose, vel=60, acc=60)
+            ret = movej(target_joint_pose, vel=30, acc=30)
         else:
             node.get_logger().info(f"Moving to CARTESIAN pose: {cmd} ({target_cart_pose[:3]})")
-            ret = movel(target_cart_pose, vel=[100.0, 100.0], acc=[100.0, 100.0])
+            ret = movel(target_cart_pose, vel=[30.0, 30.0], acc=[30.0, 30.0])
             
         node.get_logger().info(f"Move complete with return code: {ret}")
 

@@ -65,7 +65,7 @@ def main(args=None):
 
         # Execute linear move keeping orientation exactly the same
         # Using vel=100 mm/s and acc=100 mm/s^2 for safe, smooth movement
-        ret = movel(target_posx, vel=[100.0, 100.0], acc=[100.0, 100.0])
+        ret = movel(target_posx, vel=[30.0, 30.0], acc=[30.0, 30.0])
         
         node.get_logger().info(f"Move complete with return code: {ret}")
         
