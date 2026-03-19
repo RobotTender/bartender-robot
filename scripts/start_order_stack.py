@@ -158,7 +158,7 @@ def main() -> int:
     )
     parser.add_argument("--skip-web", action="store_true", help="Do not start Django server.")
     parser.add_argument("--skip-pick", action="store_true", help="Do not start pick node.")
-    parser.add_argument("--skip-pour", action="store_true", help="Do not start pour node.")
+    parser.add_argument("--with-pour", action="store_true", help="Start pour node.")
     parser.add_argument("--web-host", default="127.0.0.1")
     parser.add_argument("--web-port", type=int, default=8000)
     args = parser.parse_args()
@@ -177,7 +177,7 @@ def main() -> int:
     if not args.skip_volume_detection:
         base_processes.append(ManagedProcess("volume_detection", _build_volume_detection_command(), ROOT))
 
-    if not base_processes and args.skip_pick and args.skip_pour and args.skip_web:
+    if not base_processes and args.skip_pick and not args.with_pour and args.skip_web:
         print("Nothing to start.")
         return 1
 
@@ -234,16 +234,16 @@ def main() -> int:
             time.sleep(2.0) # Wait for pick node to initialize
 
         # 4. Start pour node
-        if not args.skip_pour:
+        if args.with_pour:
             pour_spec = ManagedProcess("pour", _build_pour_command(), ROOT)
             start_process(pour_spec)
             started_processes.append(pour_spec)
             time.sleep(1.0) # Wait for pour node to initialize
 
-            place_spec = ManagedProcess("place", _build_place_command(), ROOT)
-            start_process(place_spec)
-            started_processes.append(place_spec)
-            time.sleep(1.0) # Wait for place node to initialize
+            # place_spec = ManagedProcess("place", _build_place_command(), ROOT)
+            # start_process(place_spec)
+            # started_processes.append(place_spec)
+            # time.sleep(1.0) # Wait for place node to initialize
 
         # 5. Start web server
         if not args.skip_web:

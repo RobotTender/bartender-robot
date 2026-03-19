@@ -45,15 +45,18 @@ def main(args=None):
                 print(f"Unknown bottle type: {bottle}")
                 return
             
-            # Map command to config key
-            x_key = f'posx_{cmd}'
+            # Map command to config keys
             j_key = f'posj_{cmd}'
+            x_key = f'posx_{cmd}'
             
-            if x_key in config:
+            if j_key in config:
+                target_joint_pose = config[j_key]
+                node.get_logger().info(f"Targeting {cmd} for {bottle} via JOINT {j_key}")
+            elif x_key in config:
                 target_cart_pose = config[x_key]
-                node.get_logger().info(f"Targeting {cmd} for {bottle} via {x_key}")
+                node.get_logger().info(f"Targeting {cmd} for {bottle} via CARTESIAN {x_key}")
             else:
-                print(f"Key {x_key} not found for {bottle}")
+                print(f"Neither {j_key} nor {x_key} found for {bottle}")
                 return
         else:
             print(f"Unknown pose: {cmd}")
