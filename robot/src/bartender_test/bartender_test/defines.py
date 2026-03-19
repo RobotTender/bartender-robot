@@ -1,13 +1,8 @@
 # Named Joint Poses (Joint angles in degrees)
 # Order: J1, J2, J3, J4, J5, J6
-
-HOME_POSE = [69.5, -43.0, 102.0, 101.0, -72.0, -213.0]
-PICK_PLACE_READY = [28.00, -36.23, 103.71, 78.25, 62.47, -156.73]
-CHEERS_POSE = [45.0, 0.0, 135.0, 90.0, -90.0, -135.0]
-POLE_POSE = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-
-# Cartesian Markers (mm)
-POS_CHEERS = [278.48, 34.52, 313.75]   # Red (Entry position - Shared)
+POSJ_HOME = [69.5, -43.0, 102.0, 101.0, -72.0, -213.0]
+POSJ_PICK_PLACE_READY = [28.00, -36.23, 103.71, 78.25, 62.47, -156.73]
+POSJ_CHEERS = [45.0, 0.0, 135.0, 90.0, -90.0, -135.0]
 
 # Bottle Configurations: [JUICE, BEER, SOJU]
 # Each bottle has its own gripper settings and pouring trajectory points
@@ -57,15 +52,13 @@ BOTTLE_CONFIG = {
 BOTTLE_ID_MAP = {str(cfg['id']): name for name, cfg in BOTTLE_CONFIG.items()}
 
 # Backward Compatibility & Easy Access
-INDEX_JUICE = 0
-INDEX_BEER = 1
-INDEX_SOJU = 2
+#INDEX_JUICE = 0
+#INDEX_BEER = 1
+#INDEX_SOJU = 2
 
 # Gripper Constants (Position 0-1100, Force 0-1000)
 GRIPPER_POSITION_OPEN = 0
 GRIPPER_FORCE_OPEN = 75
-
-ORDER_TOPIC = "/bartender/order_detail"
 
 # Global Motion Constants
 PICK_PLACE_Z = 650

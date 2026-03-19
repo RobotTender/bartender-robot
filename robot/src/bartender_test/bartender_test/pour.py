@@ -16,8 +16,7 @@ from sensor_msgs.msg import JointState
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
-from .defines import (HOME_POSE, CHEERS_POSE, POLE_POSE,
-                            POS_CHEERS, BOTTLE_CONFIG, ORDER_TOPIC)
+from .defines import (POSJ_HOME, POSJ_CHEERS, BOTTLE_CONFIG)
 
 class ActionNode(Node):
     def __init__(self):
@@ -37,7 +36,6 @@ class ActionNode(Node):
 
         # Subscriptions
         self.create_subscription(Empty, 'robotender_snap/trigger', self.trigger_cb, 10, callback_group=self.callback_group)
-        self.create_subscription(String, ORDER_TOPIC, self.order_cb, 10, callback_group=self.callback_group)
         self.create_subscription(JointState, 'joint_states', self.cb_joint_states, 10, callback_group=self.callback_group)
 
         # TF2 Setup for Pose Tracking
@@ -64,16 +62,6 @@ class ActionNode(Node):
     def cb_joint_states(self, msg):
         if len(msg.position) >= 6:
             self.current_posj = [math.degrees(v) for v in msg.position[:6]]
-
-    def order_cb(self, msg: String):
-        try:
-            items = json.loads(msg.data)
-            if "recipe" in items:
-                # Get the first item from the recipe
-                self.current_bottle_type = [x for x in items["recipe"].keys()][0]
-                self.get_logger().info(f"Target bottle type set to: {self.current_bottle_type}")
-        except Exception as e:
-            self.get_logger().error(f"Order parse error in Pour node: {e}")
 
     def trigger_cb(self, msg):
         if self.recording:
@@ -121,7 +109,6 @@ class ActionNode(Node):
                 if v_mag_sq > 0:
                     dot_product = U[0]*V[0] + U[1]*V[1] + U[2]*V[2]
                     progress = dot_product / v_mag_sq
-                    dist = math.sqrt((P[0]-B[0])**2 + (P[1]-B[1])**2 + (P[2]-B[2])**2)
                     
                     if progress >= 1.0:
                         wp_data = self.target_waypoints.pop(0)
@@ -138,7 +125,7 @@ class ActionNode(Node):
             wait(0.2)
             
             beer_cfg = BOTTLE_CONFIG['beer']
-            poses = [("HOME", HOME_POSE), ("CHEERS", CHEERS_POSE), 
+            poses = [("HOME", POSJ_HOME), ("CHEERS", POSJ_CHEERS), 
                      ("CONTACT", beer_cfg['posj_contact']), 
                      ("POUR_HORIZONTAL", beer_cfg['posj_horizontal']), 
                      ("POUR_DIAGONAL", beer_cfg['posj_diagonal']), 
@@ -191,8 +178,8 @@ class ActionNode(Node):
             p5 = combine_pos('posx_vertical', 'posj_vertical')
             spline_path = [p3, p4, p5]
 
-            self.get_logger().info("Moving to CHEERS_POSE")
-            movej(CHEERS_POSE, vel=30, acc=30)
+            self.get_logger().info("Moving to POSJ_CHEERS")
+            movej(POSJ_CHEERS, vel=30, acc=30)
             self.last_checkpoint_xyz = list(get_current_posx()[0])[:3]
             
             self.trigger_received = False
@@ -286,10 +273,10 @@ class ActionNode(Node):
             
             self.get_logger().info("Reached CONTACT_POSE. Waiting 1s...")
             wait(1.0)
-            self.get_logger().info("Moving to CHEERS_POSE...")
-            movej(CHEERS_POSE, vel=30, acc=30)
+            self.get_logger().info("Moving to POSJ_CHEERS...")
+            movej(POSJ_CHEERS, vel=30, acc=30)
             wait(1.0)
-            movej(HOME_POSE, vel=30, acc=30)
+            movej(POSJ_HOME, vel=30, acc=30)
 
             response.success = True
             response.message = msg

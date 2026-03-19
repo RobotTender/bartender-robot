@@ -54,18 +54,18 @@ class RobotStartupNode(Node):
                     # Launch background nodes
                     self.get_logger().info("Cleaning up existing logic nodes...")
                     # Specifically target logic nodes to avoid killing this startup process
-                    subprocess.run(["pkill", "-9", "-f", "python3 -m bartender_test\.(gripper|pick|pour|place)"], stderr=subprocess.DEVNULL)
+                    subprocess.run(["pkill", "-9", "-f", "python3 -m bartender_test\.(gripper)"], stderr=subprocess.DEVNULL)
                     time.sleep(0.5)
 
                     self.get_logger().info("Launching Persistent Logic Nodes...")
                     subprocess.Popen(["python3", "-m", "bartender_test.gripper"], start_new_session=True)
                     time.sleep(1.0)
-                    subprocess.Popen(["python3", "-m", "bartender_test.pick"], start_new_session=True)
-                    time.sleep(1.5)
-                    subprocess.Popen(["python3", "-m", "bartender_test.pour"], start_new_session=True)
-                    time.sleep(0.5)
-                    subprocess.Popen(["python3", "-m", "bartender_test.place"], start_new_session=True)
-                    self.get_logger().info("All logic nodes spawned in background.")
+                    # subprocess.Popen(["python3", "-m", "bartender_test.pick"], start_new_session=True)
+                    # time.sleep(1.5)
+                    # subprocess.Popen(["python3", "-m", "bartender_test.pour"], start_new_session=True)
+                    # time.sleep(0.5)
+                    # subprocess.Popen(["python3", "-m", "bartender_test.place"], start_new_session=True)
+                    self.get_logger().info("Only gripper logic node spawned in background.")
                     
                     return True
                 time.sleep(1.0)

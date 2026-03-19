@@ -32,6 +32,7 @@ setup(
             'snap = bartender_test.snap:main',
             'pick = bartender_test.pick:main',
             'place = bartender_test.place:main',
+            'manager = bartender_test.manager:main',
         ],
     },
 )

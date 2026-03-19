@@ -1,0 +1,5 @@
+string bottle_name
+---
+bool success
+string message
+float64[3] pick_pose

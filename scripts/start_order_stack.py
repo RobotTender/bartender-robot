@@ -138,7 +138,7 @@ def main() -> int:
     parser.add_argument("--with-bringup", action="store_true", help="Also run robot bringup command.")
     parser.add_argument(
         "--bringup-cmd",
-        default="ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.59 model:=e0509",
+        default="ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.68 model:=e0509",
         help="Command used when --with-bringup is set.",
     )
     parser.add_argument(
@@ -231,7 +231,7 @@ def main() -> int:
         return_code = 0
     finally:
         print("[stop] cleaning up persistent logic nodes...")
-        subprocess.run(["pkill", "-9", "-f", "python3 -m bartender_test\.(gripper|pick|pour|place)"], stderr=subprocess.DEVNULL)
+        subprocess.run(["pkill", "-9", "-f", "python3 -m bartender_test\.(gripper)"], stderr=subprocess.DEVNULL)
 
         # Graceful shutdown
         for spec in reversed(started_processes):

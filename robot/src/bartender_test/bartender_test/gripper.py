@@ -65,19 +65,24 @@ class GripperNode(Node):
         self.get_logger().info('--- Autonomous Gripper Node (One-Shot Mode) Initialized ---')
 
     async def execute_drl(self, stroke, force=400):
+        self.get_logger().info(f"--- [GRIPPER] Request: stroke={stroke}, force={force} ---")
         if not self.drl_cli.wait_for_service(timeout_sec=2.0):
             self.get_logger().error('DRL Start service not available!')
             return False
         
-        code = DRL_GRIPPER_TEMPLATE.format(stroke=stroke, force=force)
-        req = DrlStart.Request()
-        req.robot_system = 0 # Real/Virtual depending on bringup
-        req.code = code
+        # Prepare the template string
+        # stroke is for register 282, force is for register 275
+        drl_code = DRL_GRIPPER_TEMPLATE.replace("{stroke}", str(stroke)).replace("{force}", str(force))
         
-        self.get_logger().info(f'Executing Gripper DRL: Stroke={stroke}, Force={force}')
+        req = DrlStart.Request()
+        req.robot_system = 0 # 0 for default
+        req.code = drl_code
+        
+        self.get_logger().info(f'Calling /dsr01/drl/drl_start with DRL code...')
         try:
             future = self.drl_cli.call_async(req)
             result = await future
+            self.get_logger().info(f"DRL Start call returned: success={result.success}")
             return result.success
         except Exception as e:
             self.get_logger().error(f'DRL execution failed: {e}')
@@ -102,6 +107,7 @@ class GripperNode(Node):
         success = await self.execute_drl(request.position, force=request.force)
         response.success = success
         response.message = f"Move command (Pos={request.position}, Force={request.force}) finished" if success else "Failed to execute DRL"
+        self.get_logger().info(f"--- [GRIPPER] move_callback returning: {response.success} ---")
         return response
 
 def main(args=None):
