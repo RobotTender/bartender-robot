@@ -11,6 +11,7 @@ pkill -9 -f "test_post_order.py"
 
 # 2. Kill individual ROS 2 nodes and project-specific libs
 echo "Stopping ROS 2 project nodes..."
+pkill -9 -f "python3 -m bartender_test\.(gripper|pick|pour|place|monitor|snap|startup)"
 pkill -9 -f "/lib/bartender_test/"
 pkill -9 -f "ros2 run bartender_test"
 pkill -9 -f "bartender_test."

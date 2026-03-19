@@ -360,9 +360,10 @@ def main(args=None):
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
-
-    rclpy.shutdown()
-    cv2.destroyAllWindows()
+    finally:
+        if rclpy.ok():
+            rclpy.shutdown()
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":

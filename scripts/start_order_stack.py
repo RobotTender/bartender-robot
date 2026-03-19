@@ -151,14 +151,7 @@ def main() -> int:
         default="ros2 launch realsense2_camera rs_launch.py camera_name:=camera_2 serial_no:=_313522301601 enable_pointcloud:=true align_depth.enable:=true",
         help="Camera 2 (Volume Detection) hardware command.",
     )
-    parser.add_argument(
-        "--skip-volume-detection",
-        action="store_true",
-        help="Do not start the volume detection node (realsense_cam2.py).",
-    )
     parser.add_argument("--skip-web", action="store_true", help="Do not start Django server.")
-    parser.add_argument("--skip-pick", action="store_true", help="Do not start pick node.")
-    parser.add_argument("--with-pour", action="store_true", help="Start pour node.")
     parser.add_argument("--web-host", default="127.0.0.1")
     parser.add_argument("--web-port", type=int, default=8000)
     args = parser.parse_args()
@@ -174,10 +167,11 @@ def main() -> int:
     if args.camera2_cmd:
         base_processes.append(ManagedProcess("camera2", args.camera2_cmd, ROOT))
 
-    if not args.skip_volume_detection:
-        base_processes.append(ManagedProcess("volume_detection", _build_volume_detection_command(), ROOT))
+    # Always start volume detection unless we want to remove it too, 
+    # but the user only mentioned pick/pour.
+    base_processes.append(ManagedProcess("volume_detection", _build_volume_detection_command(), ROOT))
 
-    if not base_processes and args.skip_pick and not args.with_pour and args.skip_web:
+    if not base_processes and args.skip_web:
         print("Nothing to start.")
         return 1
 
@@ -189,63 +183,34 @@ def main() -> int:
     signal.signal(signal.SIGTERM, handle_signal)
 
     started_processes: list[ManagedProcess] = []
+    return_code = 0
 
     try:
-        # 1. Start base processes (bringup, camera)
+        # 1. Start base processes (bringup, cameras)
         for spec in base_processes:
             start_process(spec)
             started_processes.append(spec)
             time.sleep(0.3)
 
-        # 2. Run startup synchronously
-        if not args.skip_pick:
-            startup_cmd = _build_startup_command()
-            print(f"\n[start] startup (blocking): {startup_cmd}")
+        # 2. Run startup synchronously (This starts logic nodes)
+        startup_cmd = _build_startup_command()
+        print(f"\n[start] startup (blocking): {startup_cmd}")
 
-            # Wait for base processes to settle
-            if args.with_bringup:
-                print("Waiting 3s for bringup to settle...")
-                time.sleep(3.0)
+        if args.with_bringup:
+            print("Waiting 3s for bringup to settle...")
+            time.sleep(3.0)
 
-            startup_proc = subprocess.run(
-                ["bash", "-lc", startup_cmd],
-                cwd=str(ROOT),
-                env=os.environ.copy()
-            )
-            if startup_proc.returncode != 0:
-                # If interrupted by Ctrl+C, it might return non-zero
-                if startup_proc.returncode < 0: # Killed by signal
-                     raise KeyboardInterrupt
-                raise RuntimeError(f"startup exited with code {startup_proc.returncode}")
-            print("[ok] startup completed successfully.")
+        startup_proc = subprocess.run(
+            ["bash", "-lc", startup_cmd],
+            cwd=str(ROOT),
+            env=os.environ.copy()
+        )
+        if startup_proc.returncode != 0:
+            if startup_proc.returncode < 0: raise KeyboardInterrupt
+            raise RuntimeError(f"startup exited with code {startup_proc.returncode}")
+        print("[ok] startup completed. Logic nodes (gripper, pick, pour, place) are now running.")
 
-            # START GRIPPER NODE HERE (After robot is in STANDBY)
-            print("\n[status] Launching Persistent Gripper Node (Hardware Interface)...")
-            gripper_spec = ManagedProcess("gripper", _build_gripper_command(), ROOT)
-            start_process(gripper_spec)
-            started_processes.append(gripper_spec)
-            time.sleep(1.0) # Settle gripper node
-
-        # 3. Start pick node
-        if not args.skip_pick:
-            pick_spec = ManagedProcess("pick", _build_pick_command(), ROOT)
-            start_process(pick_spec)
-            started_processes.append(pick_spec)
-            time.sleep(2.0) # Wait for pick node to initialize
-
-        # 4. Start pour node
-        if args.with_pour:
-            pour_spec = ManagedProcess("pour", _build_pour_command(), ROOT)
-            start_process(pour_spec)
-            started_processes.append(pour_spec)
-            time.sleep(1.0) # Wait for pour node to initialize
-
-            # place_spec = ManagedProcess("place", _build_place_command(), ROOT)
-            # start_process(place_spec)
-            # started_processes.append(place_spec)
-            # time.sleep(1.0) # Wait for place node to initialize
-
-        # 5. Start web server
+        # 3. Start web server
         if not args.skip_web:
             web_spec = ManagedProcess("web", _build_web_command(args.web_host, args.web_port), LLM_DIR)
             start_process(web_spec)
@@ -265,6 +230,9 @@ def main() -> int:
     else:
         return_code = 0
     finally:
+        print("[stop] cleaning up persistent logic nodes...")
+        subprocess.run(["pkill", "-9", "-f", "python3 -m bartender_test\.(gripper|pick|pour|place)"], stderr=subprocess.DEVNULL)
+
         # Graceful shutdown
         for spec in reversed(started_processes):
             stop_process(spec, signal.SIGINT)
