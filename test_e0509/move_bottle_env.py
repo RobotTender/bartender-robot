@@ -84,7 +84,7 @@ class MoveBottleEnvCfg(GripBottleEnvCfg):
     waypoint_proximity_decay = 1.6
     waypoint_reward_decay_steps = 500000
     # Fixed arm-joint target for move task [deg].
-    move_goal_joint_pos_deg = (45.0, 0.0, 135.0, -90.0, 90.0, 135.0)
+    move_goal_joint_pos_deg = (45.0, 0.0, 135.0, 90.0, -90.0, -135.0)
     # Stage-1 default: learn "reach target neighborhood" first.
     goal_joint_tolerance_deg = 20.0
 
