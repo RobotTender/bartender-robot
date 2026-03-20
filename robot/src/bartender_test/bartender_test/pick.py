@@ -199,8 +199,8 @@ class RobotControllerNode(Node):
                     goal_handle.succeed(); self.state = "IDLE"; return result
 
             # Successful detection - Open Gripper now
-            self.get_logger().info("Detection successful. Opening gripper sync (force=750)...")
-            self._gripper_move_sync(GRIPPER_POSITION_OPEN, 750)
+            self.get_logger().info("Detection successful. Opening gripper sync (force=1000)...")
+            self._gripper_move_sync(GRIPPER_POSITION_OPEN, 1000)
 
             self.state = "RUNNING"
             # Step 3: Moving

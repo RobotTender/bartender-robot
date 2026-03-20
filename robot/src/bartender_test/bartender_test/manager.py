@@ -205,11 +205,11 @@ class RobotenderManager(Node):
         req_move.acc = 30.0
         await self.movej_cli.call_async(req_move)
         
-        # 2. Close Gripper (Standby mode: 1100, 700)
-        self.get_logger().info("Standby Step 2: Closing gripper (1100, 700)...")
+        # 2. Close Gripper (Standby mode: 1100, 1000)
+        self.get_logger().info("Standby Step 2: Closing gripper (1100, 1000)...")
         req_grip = GripperControl.Request()
         req_grip.position = 1100
-        req_grip.force = 700
+        req_grip.force = 1000
         await self.gripper_cli.call_async(req_grip)
             
         # 3. Create order subscription only ONCE
