@@ -61,7 +61,7 @@ class RobotControllerNode(Node):
         self.state = 'IDLE'
 
         # Heartbeat timer to verify executor health
-        self.heartbeat_timer = self.create_timer(5.0, self._heartbeat_callback)
+        # self.heartbeat_timer = self.create_timer(5.0, self._heartbeat_callback)
 
         self.R = np.array([
             [-0.788489317968,  -0.614148198918, -0.0332653756482],

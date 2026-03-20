@@ -7,6 +7,7 @@ import json
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
 import DR_init
 
 from std_msgs.msg import Empty, String
@@ -16,11 +17,14 @@ from sensor_msgs.msg import JointState
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
+from robotender_msgs.action import PourBottle
 from .defines import (POSJ_HOME, POSJ_CHEERS, BOTTLE_CONFIG)
 
 class ActionNode(Node):
     def __init__(self):
         super().__init__('robotender_pour', namespace='/dsr01')
+        # ARCHITECTURAL FIX: Use Reentrant group for all node-level callbacks to prevent starvation
+        self._default_callback_group = ReentrantCallbackGroup()
         self.callback_group = ReentrantCallbackGroup()
         
         # State for Pouring
@@ -33,6 +37,7 @@ class ActionNode(Node):
         self.periodic_buffer = []  # 5Hz sample buffer
         self.last_checkpoint_xyz = [0.0] * 3
         self.current_bottle_type = 'soju' # Default
+        self.state = 'IDLE'
 
         # Subscriptions
         self.create_subscription(Empty, 'robotender_snap/trigger', self.trigger_cb, 10, callback_group=self.callback_group)
@@ -45,19 +50,29 @@ class ActionNode(Node):
         # Clients
         self.stop_cli = self.create_client(MoveStop, 'motion/move_stop', callback_group=self.callback_group)
 
-        # Services
-        self.pour_srv = self.create_service(Trigger, 'robotender_pour/start', self.pour_callback, callback_group=self.callback_group)
-        self.warmup_srv = self.create_service(Trigger, 'robotender_pour/warmup', self.warmup_callback, callback_group=self.callback_group)
+        # Action Server
+        self._action_server = ActionServer(
+            self,
+            PourBottle,
+            'robotender_pour/execute',
+            self.execute_callback,
+            goal_callback=self.goal_callback,
+            cancel_callback=self.cancel_callback,
+            callback_group=self.callback_group
+        )
         
-        # Service Clients
-        self.place_cli = self.create_client(Trigger, 'robotender_place/start', callback_group=self.callback_group)
-
         # Timer for path recording (20Hz for high-speed tracking)
         self.record_timer = self.create_timer(0.05, self.record_loop, callback_group=self.callback_group)
         self.buffer_count = 0
 
-        self.get_logger().info('--- Robotender Pour Node Initialized ---')
-        self.get_logger().info('Services: /dsr01/robotender_pour/start, /dsr01/robotender_pour/warmup')
+        # Heartbeat timer to verify executor health
+        # self.heartbeat_timer = self.create_timer(5.0, self._heartbeat_callback, callback_group=self.callback_group)
+
+        self.get_logger().info('--- Robotender Pour Action Node Initialized ---')
+        self.get_logger().info('Action: /dsr01/robotender_pour/execute')
+
+    # def _heartbeat_callback(self):
+    #     self.get_logger().info(f"[HEARTBEAT] Pour Node alive. State: {self.state}, Recording: {self.recording}")
 
     def cb_joint_states(self, msg):
         if len(msg.position) >= 6:
@@ -84,7 +99,7 @@ class ActionNode(Node):
                 p_y = trans.transform.translation.y * 1000.0
                 p_z = trans.transform.translation.z * 1000.0
                 self.current_posx[:3] = [p_x, p_y, p_z]
-            except Exception as e:
+            except Exception:
                 return
 
             # 1. Periodic Buffer (5Hz sampling: 1 every 4 ticks of 20Hz timer)
@@ -116,34 +131,29 @@ class ActionNode(Node):
                         self.last_checkpoint_xyz = B
                         self.get_logger().info(f"[Waypoint Crossed] Total: {len(self.passed_waypoints)}, Coord: {B}, Progress: {progress:.2f}")
 
-    async def warmup_callback(self, request, response):
-        self.get_logger().info('Starting Warmup Sequence (using Beer Config)...')
-        from DSR_ROBOT2 import (movej, set_robot_mode, ROBOT_MODE_AUTONOMOUS, wait)
-        
-        try:
-            set_robot_mode(ROBOT_MODE_AUTONOMOUS)
-            wait(0.2)
-            
-            beer_cfg = BOTTLE_CONFIG['beer']
-            poses = [("HOME", POSJ_HOME), ("CHEERS", POSJ_CHEERS), 
-                     ("CONTACT", beer_cfg['posj_contact']), 
-                     ("POUR_HORIZONTAL", beer_cfg['posj_horizontal']), 
-                     ("POUR_DIAGONAL", beer_cfg['posj_diagonal']), 
-                     ("POUR_VERTICAL", beer_cfg['posj_vertical'])]
-            
-            for name, pose in poses:
-                self.get_logger().info(f"Moving to {name}")
-                movej(pose, vel=30, acc=30)
-            
-            response.success = True
-            response.message = "Warmup completed"
-        except Exception as e:
-            self.get_logger().error(f"Warmup Error: {e}")
-            response.success = False
-            response.message = str(e)
-        return response
+    def goal_callback(self, goal_request):
+        self.get_logger().info(f"[ACTION] Goal received! State: {self.state}")
+        if self.state == "RUNNING":
+            self.get_logger().warn(f"[ACTION] Goal REJECTED. Busy in state: {self.state}")
+            return GoalResponse.REJECT
+        self.get_logger().info("[ACTION] Goal ACCEPTED.")
+        return GoalResponse.ACCEPT
 
-    async def pour_callback(self, request, response):
+    def cancel_callback(self, goal_handle):
+        return CancelResponse.ACCEPT
+
+    def execute_callback(self, goal_handle):
+        """
+        Main Pouring Logic (Synchronous to match pick/place isolation pattern)
+        """
+        self.state = "RUNNING"
+        feedback_msg = PourBottle.Feedback()
+        result = PourBottle.Result()
+
+        # Update current bottle type from request
+        if goal_handle.request.bottle_name:
+            self.current_bottle_type = goal_handle.request.bottle_name
+
         # Get bottle-specific configuration
         config = BOTTLE_CONFIG.get(self.current_bottle_type)
         if config is None:
@@ -179,7 +189,10 @@ class ActionNode(Node):
             spline_path = [p3, p4, p5]
 
             self.get_logger().info("Moving to POSJ_CHEERS")
+            feedback_msg.current_state, feedback_msg.progress = "MOVING_TO_CHEERS", 0.1
+            goal_handle.publish_feedback(feedback_msg)
             movej(POSJ_CHEERS, vel=30, acc=30)
+            
             self.last_checkpoint_xyz = list(get_current_posx()[0])[:3]
             
             self.trigger_received = False
@@ -189,11 +202,16 @@ class ActionNode(Node):
             
             self.recording = True
             self.get_logger().info(f"Approaching contact for {active_type}...")
+            feedback_msg.current_state, feedback_msg.progress = "APPROACHING_CONTACT", 0.2
+            goal_handle.publish_feedback(feedback_msg)
+            
             self.last_checkpoint_xyz = list(get_current_posx()[0])[:3]
             movel(p2, vel=[30, 30], acc=[30, 30])
             
             if not self.trigger_received:
                 self.get_logger().info("Executing pouring spline...")
+                feedback_msg.current_state, feedback_msg.progress = "POURING_SPLINE", 0.4
+                goal_handle.publish_feedback(feedback_msg)
                 movesx(spline_path, vel=60, acc=60)
             
             wait(0.1)
@@ -211,23 +229,25 @@ class ActionNode(Node):
                 msg = "Pour interrupted and recovered"
             else:
                 self.get_logger().info(f"Pour finished naturally. Waiting 3s before snap...")
+                feedback_msg.current_state, feedback_msg.progress = "WAITING_3S", 0.6
+                goal_handle.publish_feedback(feedback_msg)
                 wait(3.0); msg = "Pour completed successfully"
 
             # --- Hybrid Recovery Logic: ASSEMBLE UNIFIED PATH FOR SMOOTHNESS ---
+            feedback_msg.current_state, feedback_msg.progress = "RECOVERING_PATH", 0.8
+            goal_handle.publish_feedback(feedback_msg)
+            
             curr_j_at_snap = list(get_current_posj())
             raw_path = [posj(curr_j_at_snap)]
             
             # 1. Add Section B (Periodic Samples - Aggressive Thinning for Speed)
-            count_b = 0
             if self.trigger_received and self.periodic_buffer:
                 # Take only the last 2 samples (very recent and slightly older)
                 samples_to_add = min(len(self.periodic_buffer), 2)
                 for i in range(1, samples_to_add + 1):
                     raw_path.append(posj(self.periodic_buffer[-i]))
-                    count_b += 1
 
             # 2. Add Section C (Waypoints)
-            count_c = 0
             waypoints_to_reverse = list(reversed(self.passed_waypoints))
             if not self.trigger_received and len(waypoints_to_reverse) > 0:
                 waypoints_to_reverse.pop(0) # Skip p5 if natural finish
@@ -235,14 +255,11 @@ class ActionNode(Node):
             for _, wp_j in waypoints_to_reverse:
                 if wp_j is not None:
                     raw_path.append(posj(wp_j))
-                    count_c += 1
             
             # 3. Add Section D (Final Destination: Contact Pose)
-            count_d = 0
             contact_j = config.get('posj_contact')
             if contact_j: 
                 raw_path.append(posj(contact_j))
-                count_d = 1
             
             # --- Apply Aggressive Thinning Filter to Unified Path ---
             reverse_path_j = []
@@ -254,10 +271,6 @@ class ActionNode(Node):
                         reverse_path_j.append(raw_path[i])
 
             # --- Unified Execution (Fast Snap for Production) ---
-            self.get_logger().info(f"--- Executing Unified Recovery (vel=150) ---")
-            self.get_logger().info(f"Path Breakdown: Start(1), Samples({count_b}), Waypoints({count_c}), Contact({count_d})")
-            self.get_logger().info(f"Final Path: {len(reverse_path_j)} unique points")
-
             if len(reverse_path_j) > 1:
                 # Filter redundant start point relative to real-time pose
                 curr_now = list(get_current_posj())
@@ -274,32 +287,49 @@ class ActionNode(Node):
             self.get_logger().info("Reached CONTACT_POSE. Waiting 1s...")
             wait(1.0)
             self.get_logger().info("Moving to POSJ_CHEERS...")
+            feedback_msg.current_state, feedback_msg.progress = "MOVING_TO_CHEERS", 1.0
+            goal_handle.publish_feedback(feedback_msg)
             movej(POSJ_CHEERS, vel=30, acc=30)
-            wait(1.0)
-            movej(POSJ_HOME, vel=30, acc=30)
 
-            response.success = True
-            response.message = msg
-            if self.place_cli.wait_for_service(timeout_sec=1.0):
-                self.place_cli.call_async(Trigger.Request())
+            goal_handle.succeed()
+            result.success, result.message = True, msg
+            self.state = "IDLE"
+            return result
         except Exception as e:
             self.get_logger().error(f"Pour Error: {e}")
-            response.success = False; response.message = str(e)
-        return response
+            goal_handle.abort()
+            result.success, result.message = False, str(e)
+            self.state = "IDLE"
+            return result
 
 def main(args=None):
     rclpy.init(args=args)
+    
+    # 1. Main Action Node
     node = ActionNode()
-    ROBOT_ID, ROBOT_MODEL = "", "e0509"
-    DR_init.__dsr__id, DR_init.__dsr__model, DR_init.__dsr__node = ROBOT_ID, ROBOT_MODEL, node
-    executor = MultiThreadedExecutor()
+    
+    # 2. ARCHITECTURAL FIX: ISOLATED DOOSAN NODE
+    # Separate node dedicated to the Doosan library's internal logic.
+    # Prevents deadlocks with high-latency motion/logic.
+    doosan_node = rclpy.create_node('pour_doosan_internal', namespace='/dsr01')
+    doosan_node._default_callback_group = ReentrantCallbackGroup()
+    
+    # Initialize DR_init with the ISOLATED node
+    import DR_init
+    DR_init.__dsr__id, DR_init.__dsr__model, DR_init.__dsr__node = "dsr01", "e0509", doosan_node
+    
+    # 3. Use a larger thread pool
+    executor = MultiThreadedExecutor(num_threads=20)
     executor.add_node(node)
+    executor.add_node(doosan_node)
+    
     try:
         executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
+        doosan_node.destroy_node()
         rclpy.shutdown()
 
 if __name__ == '__main__':

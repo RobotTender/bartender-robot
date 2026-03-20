@@ -11,8 +11,10 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GripperControl.srv"
+  "srv/PourBottle.srv"
   "action/PickBottle.action"
   "action/PlaceBottle.action"
+  "action/PourBottle.action"
 )
 
 ament_package()

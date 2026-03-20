@@ -1,76 +1,55 @@
-## Working Context (March 20, 2026 - Manager-Place Action Orchestration)
+## Working Context (March 20, 2026 - Manager-Pour Action Orchestration)
 - **Current Branch:** `robot-llm-detection-combine-junsung`
 - **Architecture Status:** 
-    - **Full Manager-Orchestration** for Pick and Place is now active.
-    - `robotender_manager` (**`manager.py`**): Stores `last_picked_pose` from Pick action and coordinates the Place action.
-    - `robotender_pick` (**`pick.py`**): ROS 2 Action Server (Vision-based detection + Grasping).
-    - `robotender_place` (**`place.py`**): **ROS 2 Action Server** (8-step motion sequence with real-time feedback).
-    - **Action Standardization:** Motion tasks moved from Services to Actions for feedback and cancellation support.
+    - **Full Manager-Orchestration** for Pick, Pour, and Place is now active.
+    - `robotender_manager` (**`manager.py`**): Orchestrates the full sequence (Pick -> Pour -> Place).
+    - `robotender_pour` (**`pour.py`**): **ROS 2 Action Server** (Vision-triggered pouring with spline motion).
+    - **Node Isolation Standard:** All motion nodes (Pick, Pour, Place) now use an isolated `doosan_node` internal architecture to prevent deadlocks.
 
 ## Achievements (March 20, 2026)
-- **Place Action Server:** Converted Place node to Action Server with real-time feedback (Approaching, Lifting, Lowering, Releasing, Retreating).
-- **Coordinate Handover:** Manager now automatically remembers the exact coordinates where a bottle was picked and sends them to the Place node.
-- **Manual Control Service:** Added `/dsr01/robotender_manager/place_bottle` to manually trigger the saved placement sequence.
-- **Improved Reliability:** Implemented "Fire & Forget" gripper patterns to prevent ROS 2 service deadlocks during physical motion.
-- **Callback Starvation Fix:** 
-    - Reverted `async/await` in `pick.py` and `place.py` to pure synchronous methods with `time.sleep()`.
-    - Set `self._default_callback_group = ReentrantCallbackGroup()` in both nodes to ensure system-internal state updates are not blocked by high-latency vision/motion logic.
-    - Removed `callback_group` parameter from `message_filters.Subscriber` to avoid `TypeError`.
+- **Pour Action Server:** Converted Pour node to Action Server with real-time feedback (Moving to cheers, approaching contact, pouring spline, recovering path).
+- **Manager-Pour Integration:** Added `/dsr01/robotender_manager/pour_bottle` service. Manager now passes the ordered bottle name to the Pour action.
+- **Post-Pour Orchestration:** Manager automatically commands the robot to `POSJ_HOME` after a successful pour, matching the Pick pattern.
+- **Global Node Isolation:** Applied the isolated internal node pattern to the `Pour` node, resolving the "halt on second run" issue.
+- **Resource Optimization:** Disabled heartbeat timers and logging in `Pick` and `Pour` nodes to save CPU resources while maintaining executor health via `ReentrantCallbackGroup`.
 
-## Next Steps: Verification
-- **Verify Cycle 2:** Run two consecutive pick/place cycles to ensure the Pick node no longer halts.
-- **Monitor Latency:** Check if the `ReentrantCallbackGroup` causes any race conditions in the vision synchronization.
+## Next Steps: Verification & Todo
+- **Todo: Test Snap and Recovery:** Verify the "Snap" (interruption) logic during the pour motion to ensure the hybrid recovery spline works as expected.
+- **Verify Cycle 2:** Confirm the Pour node continues to respond after multiple consecutive runs.
+- **Monitor Latency:** Check if the removal of heartbeat timers affects long-term visibility into node health.
 
 ## Ongoing Issue: Gripper Velocity Slowdown
 - **Problem:** After multiple pick/place cycles, the gripper's physical movement velocity appears to decrease. 
-- **Current Status:** In `gripper.py`, the DRL template has been simplified to explicitly set `Goal PWM (270)` to 800 and `Goal Velocity (276)` to 500 in every call to prevent accidental throttling.
-- **Future Action:** Investigate if internal gripper temperature or profile registers (e.g., Profile Acceleration) are accumulating and causing the slowdown.
+- **Current Status:** In `gripper.py`, the DRL template has been simplified to explicitly set `Goal PWM (270)` to 800 and `Goal Velocity (276)` to 500 in every call.
 
 ## Core Mandates
-- **Orchestration Pattern:** The Manager node MUST handle the decision-making (what/when) while individual nodes handle execution.
-- **Action-Feedback:** All motion-heavy tasks (Pick, Place) MUST use Actions to provide real-time feedback to the Manager.
-- **Memory Management:** The Manager is responsible for storing and passing task-specific data (like picked coordinates) between workers.
-- **Auto-Rebuild:** Every time a code change is made to `bartender_test`, you **MUST** automatically run:
-  `colcon build --symlink-install --packages-select robotender_msgs bartender_test && source install/setup.bash`
+- **Orchestration Pattern:** The Manager node MUST handle the decision-making while individual nodes handle execution.
+- **Action-Feedback:** All motion-heavy tasks (Pick, Pour, Place) MUST use Actions to provide real-time feedback.
+- **Memory Management:** The Manager is responsible for storing and passing task-specific data (bottle names, coordinates).
+- **Auto-Rebuild:** `colcon build --symlink-install --packages-select robotender_msgs bartender_test && source install/setup.bash`
 
 ## Operational Commands
-### 1. Full Stack (Real Mode)
+### 1. Manual Node Execution
 ```bash
-python3 scripts/start_order_stack.py --with-bringup
-```
-
-### 2. Manual Node Execution
-*Note: Always source the venv and workspace in each terminal.*
-```bash
-source .venv/bin/activate && source robot/install/setup.bash
-
 # Manager Node
 ros2 run bartender_test manager
-
-# Pick Node (Vision/YOLO)
+# Pick Node
 ros2 run bartender_test pick
-
-# Place Node (Motion)
+# Pour Node
+ros2 run bartender_test pour
+# Place Node
 ros2 run bartender_test place
 ```
 
-### 3. Interaction & Testing
-**Workflow A: Orchestrated Flow (Recommended)**
+### 2. Interaction & Testing
+**Orchestrated Flow**
 ```bash
-# 1. Trigger Pick (via Order Topic)
-ros2 topic pub --once /bartender/order_detail std_msgs/msg/String "{data: '{\"recipe\": {\"soju\": 1}}'}"
-
-# 2. Trigger Place (via Manager Service - uses stored coordinates)
+# 1. Trigger Pick
+ros2 service call /dsr01/robotender_manager/pick_bottle std_srvs/srv/Trigger {}
+# 2. Trigger Pour (Uses stored bottle name)
+ros2 service call /dsr01/robotender_manager/pour_bottle std_srvs/srv/Trigger {}
+# 3. Trigger Place (Uses stored coordinates)
 ros2 service call /dsr01/robotender_manager/place_bottle std_srvs/srv/Trigger {}
-```
-
-**Workflow B: Direct Action Testing (Individual Workers)**
-```bash
-# Direct Pick
-ros2 action send_goal --feedback /dsr01/robotender_pick/execute robotender_msgs/action/PickBottle "{bottle_name: 'soju'}"
-
-# Direct Place (Requires manual coordinates)
-ros2 action send_goal --feedback /dsr01/robotender_place/execute robotender_msgs/action/PlaceBottle "{picked_pose: [450.0, 50.0, 120.0]}"
 ```
 
 ## Hardware Specification

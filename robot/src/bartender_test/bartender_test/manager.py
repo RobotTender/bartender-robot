@@ -8,7 +8,7 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
 # Message/Service/Action Imports
-from robotender_msgs.action import PickBottle, PlaceBottle
+from robotender_msgs.action import PickBottle, PlaceBottle, PourBottle
 from robotender_msgs.srv import GripperControl
 from dsr_msgs2.srv import MoveJoint
 
@@ -48,12 +48,24 @@ class RobotenderManager(Node):
             'robotender_place/execute',
             callback_group=self.callback_group
         )
+        self.pour_action_client = ActionClient(
+            self,
+            PourBottle,
+            'robotender_pour/execute',
+            callback_group=self.callback_group
+        )
 
         # 3. Manual Control Services
         self.pick_trigger_srv = self.create_service(
             Trigger,
             'robotender_manager/pick_bottle',
             self.manual_pick_callback,
+            callback_group=self.callback_group
+        )
+        self.pour_trigger_srv = self.create_service(
+            Trigger,
+            'robotender_manager/pour_bottle',
+            self.manual_pour_callback,
             callback_group=self.callback_group
         )
         self.place_trigger_srv = self.create_service(
@@ -70,7 +82,7 @@ class RobotenderManager(Node):
         self.last_picked_pose = None # Remember where the bottle came from
         
         self.get_logger().info('Robotender Manager initialized.')
-        self.get_logger().info('Manual Services: pick_bottle, place_bottle')
+        self.get_logger().info('Manual Services: pick_bottle, pour_bottle, place_bottle')
         
         # Trigger the initial standby sequence via timer
         self.init_timer = self.create_timer(
@@ -114,6 +126,73 @@ class RobotenderManager(Node):
         self.is_busy = False
         response.success = success
         return response
+
+    async def manual_pour_callback(self, request, response):
+        """Manually trigger the pour node using stored bottle name"""
+        if self.is_busy:
+            response.success = False
+            response.message = "System is busy"
+            return response
+
+        if self.last_ordered_bottle is None:
+            self.get_logger().warn("No bottle ordered! Performing manual pour with default 'soju'.")
+            bottle_to_pour = 'soju'
+        else:
+            bottle_to_pour = self.last_ordered_bottle
+
+        self.get_logger().info(f"Manual Pour Triggered for: {bottle_to_pour}")
+        
+        self.is_busy = True
+        success = await self.send_pour_goal(bottle_to_pour)
+        
+        if success:
+            self.get_logger().info("Pour completed successfully. Moving to POSJ_HOME...")
+            req_move = MoveJoint.Request()
+            req_move.pos = [float(x) for x in POSJ_HOME]
+            req_move.vel = 30.0
+            req_move.acc = 30.0
+            await self.movej_cli.call_async(req_move)
+            response.message = "Pour action completed"
+        else:
+            self.get_logger().error("Pour failed.")
+            response.message = "Pour action failed"
+
+        self.is_busy = False
+        response.success = success
+        return response
+
+    async def send_pour_goal(self, bottle_name):
+        if not self.pour_action_client.wait_for_server(timeout_sec=5.0):
+            self.get_logger().error("Pour action server not available!")
+            return False
+
+        goal_msg = PourBottle.Goal()
+        goal_msg.bottle_name = bottle_name
+
+        self.get_logger().info('Sending Pour goal...')
+        goal_handle = await self.pour_action_client.send_goal_async(
+            goal_msg,
+            feedback_callback=self.pour_feedback_callback
+        )
+
+        if not goal_handle.accepted:
+            self.get_logger().error('Pour Goal rejected')
+            return False
+
+        self.get_logger().info('Pour Goal accepted. Waiting for result...')
+        result_response = await goal_handle.get_result_async()
+        result = result_response.result
+
+        if result.success:
+            self.get_logger().info("--- POUR SUCCESS! ---")
+            return True
+        else:
+            self.get_logger().error(f"--- POUR FAILED: {result.message} ---")
+            return False
+
+    def pour_feedback_callback(self, feedback_msg):
+        feedback = feedback_msg.feedback
+        self.get_logger().info(f'[POUR FEEDBACK] {feedback.current_state} ({feedback.progress*100:.0f}%)')
 
     async def manual_place_callback(self, request, response):
         """Manually trigger the place node using stored coordinates"""
