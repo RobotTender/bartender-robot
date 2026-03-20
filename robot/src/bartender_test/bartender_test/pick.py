@@ -1,5 +1,6 @@
 import cv2
 import time
+import asyncio
 import json
 import numpy as np
 from pathlib import Path
@@ -39,7 +40,9 @@ VELOCITY, ACC = 30.0, 30.0
 class RobotControllerNode(Node):
     def __init__(self):
         super().__init__("robotender_pick", namespace="/dsr01")
-        # Use separate callback groups to prevent starvation
+        # ARCHITECTURAL FIX: Use Reentrant group for all node-level callbacks
+        self._default_callback_group = ReentrantCallbackGroup()
+        
         self.action_cb_group = ReentrantCallbackGroup()
         self.client_cb_group = ReentrantCallbackGroup()
         
@@ -57,6 +60,9 @@ class RobotControllerNode(Node):
         self.model = None
         self.state = 'IDLE'
 
+        # Heartbeat timer to verify executor health
+        self.heartbeat_timer = self.create_timer(5.0, self._heartbeat_callback)
+
         self.R = np.array([
             [-0.788489317968,  -0.614148198918, -0.0332653756482],
             [-0.0868309265704,  0.0576098432706,  0.994555929121],
@@ -65,7 +71,6 @@ class RobotControllerNode(Node):
         self.t = np.array([521.115058698, 170.946228749, 834.749571453], dtype=np.float64)
 
         # Clients for non-motion services
-        # MutuallyExclusiveCallbackGroup is often more reliable for simple service calls
         self.gripper_cb_group = MutuallyExclusiveCallbackGroup()
         self.gripper_move_cli = self.create_client(
             GripperControl, 
@@ -73,7 +78,7 @@ class RobotControllerNode(Node):
             callback_group=self.gripper_cb_group
         )
         
-        # Vision Subscriptions
+        # Vision Subscriptions - using default Reentrant group
         self.color_sub = message_filters.Subscriber(self, Image, '/camera/camera_1/color/image_raw')
         self.depth_sub = message_filters.Subscriber(self, Image, '/camera/camera_1/aligned_depth_to_color/image_raw')
         self.info_sub = message_filters.Subscriber(self, CameraInfo, '/camera/camera_1/aligned_depth_to_color/camera_info')
@@ -96,6 +101,9 @@ class RobotControllerNode(Node):
             self.intrinsics = SimpleNamespace(width=640, height=480, ppx=320.0, ppy=240.0, fx=600.0, fy=600.0)
         else:
             self.load_yolo()
+
+    def _heartbeat_callback(self):
+        self.get_logger().info(f"[HEARTBEAT] Node alive. State: {self.state}")
 
     def load_yolo(self):
         try:
@@ -123,16 +131,20 @@ class RobotControllerNode(Node):
             self.intrinsics.coeffs = list(info_msg.d)
 
     def goal_callback(self, goal_request):
-        if self.state == "RUNNING" or self.state == "DETECTING": return GoalResponse.REJECT
+        self.get_logger().info(f"[ACTION] Goal received! State: {self.state}")
+        if self.state == "RUNNING" or self.state == "DETECTING": 
+            self.get_logger().warn(f"[ACTION] Goal REJECTED. Busy in state: {self.state}")
+            return GoalResponse.REJECT
+        self.get_logger().info("[ACTION] Goal ACCEPTED.")
         return GoalResponse.ACCEPT
 
     def cancel_callback(self, goal_handle): return CancelResponse.ACCEPT
 
-    async def execute_callback(self, goal_handle):
-        # Local import to avoid AttributeError on g_node
+    def execute_callback(self, goal_handle):
+        # Local import: Critically uses the node assigned to DR_init
         from DSR_ROBOT2 import movej, set_robot_mode, wait, ROBOT_MODE_AUTONOMOUS
 
-        self.get_logger().info(f'--- [PICK] ENTERING EXECUTE_CALLBACK for: {goal_handle.request.bottle_name} ---')
+        self.get_logger().info(f'--- [PICK] EXECUTION STARTED for: {goal_handle.request.bottle_name} ---')
         feedback_msg = PickBottle.Feedback()
         result = PickBottle.Result()
         target_name = goal_handle.request.bottle_name
@@ -140,9 +152,8 @@ class RobotControllerNode(Node):
 
         try:
             # Step 0: Ensure Autonomous Mode
-            self.get_logger().info("Step 0: Skipping set_robot_mode (assuming handled by startup)...")
-            # set_robot_mode(ROBOT_MODE_AUTONOMOUS)
-            # self.get_logger().info("Step 0: set_robot_mode call returned. Waiting 0.2s...")
+            self.get_logger().info("Step 0: Ensuring Autonomous Mode...")
+            set_robot_mode(ROBOT_MODE_AUTONOMOUS)
             wait(0.2)
             self.get_logger().info("Step 0: Wait completed.")
 
@@ -189,7 +200,7 @@ class RobotControllerNode(Node):
 
             # Successful detection - Open Gripper now
             self.get_logger().info("Detection successful. Opening gripper sync (force=750)...")
-            await self._gripper_move_sync(GRIPPER_POSITION_OPEN, 750)
+            self._gripper_move_sync(GRIPPER_POSITION_OPEN, 750)
 
             self.state = "RUNNING"
             # Step 3: Moving
@@ -206,7 +217,7 @@ class RobotControllerNode(Node):
             self.get_logger().info("Step 4: Executing grasp logic...")
             feedback_msg.current_state, feedback_msg.progress = "STEP 4: GRASPING", 0.7
             goal_handle.publish_feedback(feedback_msg)
-            await self._grasp_logic(target_name)
+            self._grasp_logic(target_name)
 
             # Step 5: Completed
             self.get_logger().info("Step 5: Pick completed. Moving back to READY pose...")
@@ -240,17 +251,17 @@ class RobotControllerNode(Node):
         self.get_logger().info(f"Moving Y to {ty}")
         movel([tx, ty, curr_pos[2], curr_pos[3], curr_pos[4], curr_pos[5]], vel=[40, 40], acc=[40, 40])
 
-    async def _grasp_logic(self, target_name):
+    def _grasp_logic(self, target_name):
         from DSR_ROBOT2 import movel, get_current_posx, wait
         cfg = BOTTLE_CONFIG.get(target_name, BOTTLE_CONFIG['soju'])
         self.get_logger().info(f"Grasp logic for {target_name}, closing gripper to {cfg['gripper_pos']}")
-        await self._gripper_move_sync(cfg['gripper_pos'], cfg['gripper_force'])
+        self._gripper_move_sync(cfg['gripper_pos'], cfg['gripper_force'])
         
         # Wait 5s before lifting as requested
         self.get_logger().info("Wait 5.0s before lifting...")
         time.sleep(5.0)
 
-        # Step 4.1: Return sequence (Decoupled reversal)
+        # Step 4.1: Return sequence (Lift then Y-Retreat)
         self.get_logger().info("Step 4.1: Return sequence (Lift then Y-Retreat)...")
         
         # 1. Lift up 3cm
@@ -259,8 +270,7 @@ class RobotControllerNode(Node):
         target_pos_lift = [curr[0], curr[1], curr[2] + 30.0, curr[3], curr[4], curr[5]]
         movel(target_pos_lift, vel=[40, 40], acc=[40, 40])
         
-        # 2. Retreat (Y-Exit) at the lifted height
-        # Retreat back to the Y coordinate of POSJ_PICK_PLACE_READY
+        # 2. Retreat (Y-Exit)
         from .defines import POSJ_PICK_PLACE_READY
         from DSR_ROBOT2 import fkin
         ready_posx = list(fkin(POSJ_PICK_PLACE_READY, ref=0))
@@ -273,7 +283,7 @@ class RobotControllerNode(Node):
         
         return True
 
-    async def _gripper_move_sync(self, pos, force):
+    def _gripper_move_sync(self, pos, force):
         self.get_logger().info(f"Gripper request (Fire & Forget): pos={pos}, force={force}")
         if not self.gripper_move_cli.wait_for_service(timeout_sec=2.0): 
             self.get_logger().error("Gripper service not available!")
@@ -281,11 +291,8 @@ class RobotControllerNode(Node):
         req = GripperControl.Request(position=int(pos), force=int(force))
         
         try:
-            # Fire and forget: send the request but don't wait for the future
             self.gripper_move_cli.call_async(req)
             self.get_logger().info("Gripper request sent. Sleeping 2.0s for physical motion...")
-            
-            # Manual sleep to ensure gripper finishes before robot moves
             time.sleep(2.0)
             self.get_logger().info("Gripper motion wait complete.")
             return True
@@ -311,7 +318,6 @@ class RobotControllerNode(Node):
         
         self.get_logger().info(f"YOLO inference completed. Found {len(results)} results.")
         for result in results:
-            self.get_logger().info(f"Detected {len(result.boxes)} boxes.")
             for box in result.boxes:
                 detected_class = str(int(box.cls[0].cpu().numpy()))
                 if detected_class == class_id:
@@ -324,8 +330,6 @@ class RobotControllerNode(Node):
                         depth = np.median(valid)
                         self.get_logger().info(f"Valid depth found: {depth}mm")
                         return {"u_raw": u_raw, "v_raw": v_raw, "depth_mm": depth}
-                    else:
-                        self.get_logger().warn("No valid depth pixels in ROI.")
         
         self.get_logger().warn("Target bottle not found in current frame.")
         return None
@@ -344,18 +348,33 @@ class RobotControllerNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     from rclpy.executors import MultiThreadedExecutor
+    
+    # 1. Main Action Node
     node = RobotControllerNode()
     
-    # Initialize DR_init CRITICAL step before using Doosan functions
-    import DR_init
-    DR_init.__dsr__id, DR_init.__dsr__model, DR_init.__dsr__node = "dsr01", "e0509", node
+    # 2. ARCHITECTURAL FIX: ISOLATED DOOSAN NODE
+    # We create a separate node dedicated to the Doosan library's internal logic.
+    # This prevents its state subscribers from deadlocking with our vision/action logic.
+    doosan_node = rclpy.create_node('pick_doosan_internal', namespace='/dsr01')
+    doosan_node._default_callback_group = ReentrantCallbackGroup()
     
-    # INCREASE THREADS to handle high frequency vision + actions
-    executor = MultiThreadedExecutor(num_threads=10)
+    # Initialize DR_init with the ISOLATED node
+    import DR_init
+    DR_init.__dsr__id, DR_init.__dsr__model, DR_init.__dsr__node = "dsr01", "e0509", doosan_node
+    
+    # 3. Use a larger thread pool
+    executor = MultiThreadedExecutor(num_threads=20)
     executor.add_node(node)
-    try: executor.spin()
-    except KeyboardInterrupt: pass
-    finally: node.destroy_node(); rclpy.shutdown()
+    executor.add_node(doosan_node)
+    
+    try: 
+        executor.spin()
+    except KeyboardInterrupt: 
+        pass
+    finally: 
+        node.destroy_node()
+        doosan_node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == "__main__":
     main()

@@ -5,6 +5,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 import threading
 import time
+import asyncio
 
 from robotender_msgs.srv import GripperControl
 from robotender_msgs.action import PlaceBottle
@@ -20,6 +21,8 @@ import DR_init
 class PlaceNode(Node):
     def __init__(self):
         super().__init__('robotender_place', namespace='/dsr01')
+        # ARCHITECTURAL FIX: Use Reentrant group for all node-level callbacks
+        self._default_callback_group = ReentrantCallbackGroup()
         self.callback_group = ReentrantCallbackGroup()
         
         # Latest known pick pose (where the bottle came from)
@@ -55,7 +58,7 @@ class PlaceNode(Node):
     def cancel_callback(self, goal_handle):
         return CancelResponse.ACCEPT
 
-    async def execute_callback(self, goal_handle):
+    def execute_callback(self, goal_handle):
         self.get_logger().info('--- [PLACE] ENTERING EXECUTE_CALLBACK ---')
         feedback_msg = PlaceBottle.Feedback()
         result = PlaceBottle.Result()
@@ -65,7 +68,7 @@ class PlaceNode(Node):
         
         self.state = "RUNNING"
 
-        # LOCAL IMPORT: Crucial for Doosan ROS 2 Library
+        # LOCAL IMPORT: Uses the node assigned to DR_init
         from DSR_ROBOT2 import (
             movej, movel, set_robot_mode, wait, get_current_posx,
             fkin, ROBOT_MODE_AUTONOMOUS
@@ -152,7 +155,7 @@ class PlaceNode(Node):
         except Exception as e:
             self.get_logger().error(f"--- [PLACE] EXECUTION ERROR: {e} ---")
             result.success, result.message = False, str(e)
-            goal_handle.succeed() # Still succeed the goal but with success=False
+            goal_handle.succeed()
         finally:
             self.state = "IDLE"
         
@@ -172,20 +175,30 @@ class PlaceNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
+    
+    # 1. Main Action Node
     node = PlaceNode()
     
-    # Initialize DR_init
-    import DR_init
-    DR_init.__dsr__id, DR_init.__dsr__model, DR_init.__dsr__node = "dsr01", "e0509", node
+    # 2. ARCHITECTURAL FIX: ISOLATED DOOSAN NODE
+    doosan_node = rclpy.create_node('place_doosan_internal', namespace='/dsr01')
+    doosan_node._default_callback_group = ReentrantCallbackGroup()
     
-    executor = MultiThreadedExecutor()
+    # Initialize DR_init with the ISOLATED node
+    import DR_init
+    DR_init.__dsr__id, DR_init.__dsr__model, DR_init.__dsr__node = "dsr01", "e0509", doosan_node
+    
+    # 3. Use MultiThreadedExecutor
+    executor = MultiThreadedExecutor(num_threads=10)
     executor.add_node(node)
+    executor.add_node(doosan_node)
+    
     try:
         executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
+        doosan_node.destroy_node()
         rclpy.shutdown()
 
 if __name__ == '__main__':

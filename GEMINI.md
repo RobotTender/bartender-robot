@@ -12,6 +12,14 @@
 - **Coordinate Handover:** Manager now automatically remembers the exact coordinates where a bottle was picked and sends them to the Place node.
 - **Manual Control Service:** Added `/dsr01/robotender_manager/place_bottle` to manually trigger the saved placement sequence.
 - **Improved Reliability:** Implemented "Fire & Forget" gripper patterns to prevent ROS 2 service deadlocks during physical motion.
+- **Callback Starvation Fix:** 
+    - Reverted `async/await` in `pick.py` and `place.py` to pure synchronous methods with `time.sleep()`.
+    - Set `self._default_callback_group = ReentrantCallbackGroup()` in both nodes to ensure system-internal state updates are not blocked by high-latency vision/motion logic.
+    - Removed `callback_group` parameter from `message_filters.Subscriber` to avoid `TypeError`.
+
+## Next Steps: Verification
+- **Verify Cycle 2:** Run two consecutive pick/place cycles to ensure the Pick node no longer halts.
+- **Monitor Latency:** Check if the `ReentrantCallbackGroup` causes any race conditions in the vision synchronization.
 
 ## Core Mandates
 - **Orchestration Pattern:** The Manager node MUST handle the decision-making (what/when) while individual nodes handle execution.
