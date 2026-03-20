@@ -21,6 +21,11 @@
 - **Verify Cycle 2:** Run two consecutive pick/place cycles to ensure the Pick node no longer halts.
 - **Monitor Latency:** Check if the `ReentrantCallbackGroup` causes any race conditions in the vision synchronization.
 
+## Ongoing Issue: Gripper Velocity Slowdown
+- **Problem:** After multiple pick/place cycles, the gripper's physical movement velocity appears to decrease. 
+- **Current Status:** In `gripper.py`, the DRL template has been simplified to explicitly set `Goal PWM (270)` to 800 and `Goal Velocity (276)` to 500 in every call to prevent accidental throttling.
+- **Future Action:** Investigate if internal gripper temperature or profile registers (e.g., Profile Acceleration) are accumulating and causing the slowdown.
+
 ## Core Mandates
 - **Orchestration Pattern:** The Manager node MUST handle the decision-making (what/when) while individual nodes handle execution.
 - **Action-Feedback:** All motion-heavy tasks (Pick, Place) MUST use Actions to provide real-time feedback to the Manager.

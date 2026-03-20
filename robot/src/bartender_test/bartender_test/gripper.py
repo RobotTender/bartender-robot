@@ -29,19 +29,23 @@ wait(0.3)
 flange_serial_write(modbus_fc06(1, 256, 1))
 wait(0.2)
 
-# 3. Set Velocity (Slave 1, Addr 270, Val 255 - Max)
-flange_serial_write(modbus_fc06(1, 270, 255))
-wait(0.2)
+# 3. Set Goal PWM (Slave 1, Addr 270, Val 800) - Ensure high power
+flange_serial_write(modbus_fc06(1, 270, 800))
+wait(0.1)
 
-# 4. Set Force (Slave 1, Addr 275, Val {force})
+# 4. Set Goal Velocity (Slave 1, Addr 276, Val 500) - Set explicit speed
+flange_serial_write(modbus_fc06(1, 276, 500))
+wait(0.1)
+
+# 5. Set Goal Current / Force (Slave 1, Addr 275, Val {force})
 flange_serial_write(modbus_fc06(1, 275, {force}))
-wait(0.2)
+wait(0.1)
 
-# 5. Move (Slave 1, Addr 282, Val {stroke})
+# 6. Move to Goal Position (Slave 1, Addr 282, 4-byte write)
 flange_serial_write(modbus_fc16(1, 282, 2, [{stroke}, 0]))
 wait(1.5)
 
-# 6. Cleanup
+# 7. Cleanup
 flange_serial_close()
 """
 
