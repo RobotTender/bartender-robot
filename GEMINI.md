@@ -15,6 +15,7 @@
 
 ## Next Steps: Verification & Todo
 - **Todo: Test Snap and Recovery:** Verify the "Snap" (interruption) logic during the pour motion to ensure the hybrid recovery spline works as expected.
+- **Todo: Stabilize Liquid Detection:** Stabilize the liquid volume detection when the cup is empty (currently jumps to 75~80ml even with no water).
 - **Verify Cycle 2:** Confirm the Pour node continues to respond after multiple consecutive runs.
 - **Monitor Latency:** Check if the removal of heartbeat timers affects long-term visibility into node health.
 

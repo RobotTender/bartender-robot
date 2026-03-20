@@ -352,16 +352,16 @@ class DepthReader(Node):
                 if volume_ml_ema > 5.0:
                     self.low_volume_count = 0
 
-                if liquid_bbox_current is not None:
-                    lx1, ly1, lx2, ly2 = liquid_bbox_current
-                    target_text = f"GOAL: {self.target_total_volume_ml:.1f}ml"
-                    if self.snap_triggered:
-                        target_text += " [OK]"
-                    cv2.putText(overlay, target_text, (lx1, max(30, ly1 - 40)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                    # The following line will be replaced by a persistent display below
-                    # cv2.putText(overlay, f"CUR: {volume_ml_ema:.1f}ml", (lx1, ly2 + 25),
-                    #             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
+                # if liquid_bbox_current is not None:
+                #     lx1, ly1, lx2, ly2 = liquid_bbox_current
+                #     target_text = f"GOAL: {self.target_total_volume_ml:.1f}ml"
+                #     if self.snap_triggered:
+                #         target_text += " [OK]"
+                #     cv2.putText(overlay, target_text, (lx1, max(30, ly1 - 40)),
+                #                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                #     # The following line will be replaced by a persistent display below
+                #     # cv2.putText(overlay, f"CUR: {volume_ml_ema:.1f}ml", (lx1, ly2 + 25),
+                #     #             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
 
         # --- Persistent Volume Display (Always show near cup) ---
         if self.last_cup_bbox is not None:
