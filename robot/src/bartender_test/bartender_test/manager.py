@@ -5,9 +5,10 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 # Message/Service/Action Imports
-from robotender_msgs.action import PickBottle
+from robotender_msgs.action import PickBottle, PlaceBottle
 from robotender_msgs.srv import GripperControl
 from dsr_msgs2.srv import MoveJoint
 
@@ -33,20 +34,36 @@ class RobotenderManager(Node):
             'robotender_gripper/move',
             callback_group=self.callback_group
         )
-        
-        # 2. Action client for Pick node
+
+        # 2. Action clients
         self.pick_action_client = ActionClient(
             self,
             PickBottle,
             'robotender_pick/execute',
             callback_group=self.callback_group
         )
+        self.place_action_client = ActionClient(
+            self,
+            PlaceBottle,
+            'robotender_place/execute',
+            callback_group=self.callback_group
+        )
+
+        # 3. Manual Control Service
+        self.place_trigger_srv = self.create_service(
+            Trigger,
+            'robotender_manager/place_bottle',
+            self.manual_place_callback,
+            callback_group=self.callback_group
+        )
         
         self.order_topic = "/bartender/order_detail"
         self.order_sub = None 
         self.is_busy = False # Simple state lock
+        self.last_picked_pose = None # Remember where the bottle came from
         
         self.get_logger().info('Robotender Manager initialized.')
+        self.get_logger().info('Manual Service: /dsr01/robotender_manager/place_bottle')
         
         # Trigger the initial standby sequence via timer
         self.init_timer = self.create_timer(
@@ -54,6 +71,62 @@ class RobotenderManager(Node):
             self.initial_standby_trigger, 
             callback_group=self.callback_group
         )
+
+    async def manual_place_callback(self, request, response):
+        """Manually trigger the place node using stored coordinates"""
+        if self.is_busy:
+            response.success = False
+            response.message = "System is busy"
+            return response
+
+        if self.last_picked_pose is None:
+            response.success = False
+            response.message = "No pick pose stored! Perform a pick first."
+            self.get_logger().error("Manual Place requested but last_picked_pose is None.")
+            return response
+
+        self.get_logger().info(f"Manual Place Triggered. Sending pose to PlaceNode: {self.last_picked_pose}")
+        
+        self.is_busy = True
+        success = await self.send_place_goal(self.last_picked_pose)
+        self.is_busy = False
+
+        response.success = success
+        response.message = "Place action completed" if success else "Place action failed"
+        return response
+
+    async def send_place_goal(self, picked_pose):
+        if not self.place_action_client.wait_for_server(timeout_sec=5.0):
+            self.get_logger().error("Place action server not available!")
+            return False
+
+        goal_msg = PlaceBottle.Goal()
+        goal_msg.picked_pose = [float(x) for x in picked_pose]
+
+        self.get_logger().info('Sending Place goal...')
+        goal_handle = await self.place_action_client.send_goal_async(
+            goal_msg,
+            feedback_callback=self.place_feedback_callback
+        )
+
+        if not goal_handle.accepted:
+            self.get_logger().error('Place Goal rejected')
+            return False
+
+        self.get_logger().info('Place Goal accepted. Waiting for result...')
+        result_response = await goal_handle.get_result_async()
+        result = result_response.result
+
+        if result.success:
+            self.get_logger().info("--- PLACE SUCCESS! ---")
+            return True
+        else:
+            self.get_logger().error(f"--- PLACE FAILED: {result.message} ---")
+            return False
+
+    def place_feedback_callback(self, feedback_msg):
+        feedback = feedback_msg.feedback
+        self.get_logger().info(f'[PLACE FEEDBACK] {feedback.current_state} ({feedback.progress*100:.0f}%)')
 
     async def initial_standby_trigger(self):
         """First time standby setup"""
@@ -167,6 +240,7 @@ class RobotenderManager(Node):
 
         if result.success:
             self.get_logger().info(f"--- PICK SUCCESS! Pose: {result.pick_pose} ---")
+            self.last_picked_pose = list(result.pick_pose)
             return True
         else:
             self.get_logger().error(f"--- PICK FAILED: {result.message} ---")

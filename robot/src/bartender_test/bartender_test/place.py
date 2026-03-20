@@ -1,25 +1,21 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 import threading
 import time
 
-from std_srvs.srv import Trigger
-from std_msgs.msg import Float64MultiArray
+from robotender_msgs.srv import GripperControl
+from robotender_msgs.action import PlaceBottle
 from .defines import (
     POSJ_PICK_PLACE_READY, POSJ_HOME,
-    PICK_PLACE_Z, PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET,
+    PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET,
     GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN
 )
-from robotender_msgs.srv import GripperControl
 
-# Import Doosan Robot functions
+# Import DR_init but do NOT import DSR_ROBOT2 at top level
 import DR_init
-from DSR_ROBOT2 import (
-    movej, movel, set_robot_mode, wait, get_current_posx,
-    ROBOT_MODE_AUTONOMOUS
-)
 
 class PlaceNode(Node):
     def __init__(self):
@@ -28,21 +24,16 @@ class PlaceNode(Node):
         
         # Latest known pick pose (where the bottle came from)
         self.target_xyz = [0.0, 0.0, 0.0]
+        self.state = 'IDLE'
         
-        # Subscriptions
-        self.create_subscription(
-            Float64MultiArray, 
-            'robotender_pick/last_pose', 
-            self.last_pose_cb, 
-            10,
-            callback_group=self.callback_group
-        )
-        
-        # Services
-        self.place_srv = self.create_service(
-            Trigger, 
-            'robotender_place/start', 
-            self.place_callback,
+        # Action Server
+        self._action_server = ActionServer(
+            self,
+            PlaceBottle,
+            'robotender_place/execute',
+            self.execute_callback,
+            goal_callback=self.goal_callback,
+            cancel_callback=self.cancel_callback,
             callback_group=self.callback_group
         )
         
@@ -53,103 +44,131 @@ class PlaceNode(Node):
             callback_group=self.callback_group
         )
 
-        self.get_logger().info('--- Robotender Place Node Initialized ---')
-        self.get_logger().info('Service: /dsr01/robotender_place/start')
+        self.get_logger().info('--- Robotender Place Action Node Initialized ---')
+        self.get_logger().info('Action: /dsr01/robotender_place/execute')
 
-    def last_pose_cb(self, msg):
-        if len(msg.data) >= 3:
-            self.target_xyz = list(msg.data[:3])
-            # self.get_logger().info(f"Updated place target: {self.target_xyz}")
+    def goal_callback(self, goal_request):
+        if self.state == "RUNNING":
+            return GoalResponse.REJECT
+        return GoalResponse.ACCEPT
 
-    async def place_callback(self, request, response):
-        self.get_logger().info('--- Starting Placement Sequence ---')
+    def cancel_callback(self, goal_handle):
+        return CancelResponse.ACCEPT
+
+    async def execute_callback(self, goal_handle):
+        self.get_logger().info('--- [PLACE] ENTERING EXECUTE_CALLBACK ---')
+        feedback_msg = PlaceBottle.Feedback()
+        result = PlaceBottle.Result()
         
-        if self.target_xyz == [0.0, 0.0, 0.0]:
-            self.get_logger().error("No valid pick pose received yet!")
-            response.success = False
-            response.message = "No target coordinates"
-            return response
+        self.target_xyz = list(goal_handle.request.picked_pose)
+        self.get_logger().info(f'Place target from Manager: {self.target_xyz}')
+        
+        self.state = "RUNNING"
 
+        # LOCAL IMPORT: Crucial for Doosan ROS 2 Library
+        from DSR_ROBOT2 import (
+            movej, movel, set_robot_mode, wait, get_current_posx,
+            fkin, ROBOT_MODE_AUTONOMOUS
+        )
+        
         try:
-            # Start placement in a separate thread to allow async logic
-            threading.Thread(target=self.execute_place_motion).start()
-            response.success = True
-            response.message = "Placement motion started"
-        except Exception as e:
-            self.get_logger().error(f"Place Error: {e}")
-            response.success = False
-            response.message = str(e)
-        return response
-
-    def execute_place_motion(self):
-        try:
+            # Step 0: Autonomous Mode
             set_robot_mode(ROBOT_MODE_AUTONOMOUS)
             wait(0.2)
 
-            # 1. Move to POSJ_PICK_PLACE_READY
+            # STEP 1: Starts with movej(POSJ_PICK_PLACE_READY)
             self.get_logger().info("Step 1: Moving to POSJ_PICK_PLACE_READY")
+            feedback_msg.current_state, feedback_msg.progress = "STEP 1: MOVING_TO_READY", 0.1
+            goal_handle.publish_feedback(feedback_msg)
             movej(POSJ_PICK_PLACE_READY, vel=60, acc=60)
 
-            # 2. Get current pose for orientation reference
+            # STEP 2: Approach X alignment first
+            self.get_logger().info("Step 2: X-Alignment")
+            feedback_msg.current_state, feedback_msg.progress = "STEP 2: X_ALIGNMENT", 0.2
+            goal_handle.publish_feedback(feedback_msg)
+            
             curr_posx = list(get_current_posx()[0])
-            
-            # 3. Calculate target poses
-            # Apply same offsets used during picking
             tx = self.target_xyz[0] + PICK_PLACE_X_OFFSET
-            ty = self.target_xyz[1] + PICK_PLACE_Y_OFFSET
-            tz = self.target_xyz[2] # Actual bottle depth
-            
-            # Step 4: X-Alignment (Maintain height)
             target_x = [tx, curr_posx[1], curr_posx[2], curr_posx[3], curr_posx[4], curr_posx[5]]
-            self.get_logger().info(f"Step 4: X-Alignment to {tx:.1f}")
-            movel(target_x, vel=[60, 60], acc=[60, 60])
+            movel(target_x, vel=[40, 40], acc=[40, 40])
 
-            # Step 5: Y-Entry (Approach bottle spot)
-            target_y = [tx, ty, curr_posx[2], curr_posx[3], curr_posx[4], curr_posx[5]]
-            self.get_logger().info(f"Step 5: Y-Entry to {ty:.1f}")
-            movel(target_y, vel=[60, 60], acc=[60, 60])
+            # STEP 3: Before approach Y, lift up Z 3cm more first
+            self.get_logger().info("Step 3: Lifting Z +30mm")
+            feedback_msg.current_state, feedback_msg.progress = "STEP 3: LIFTING_Z", 0.4
+            goal_handle.publish_feedback(feedback_msg)
+            
+            curr = list(get_current_posx()[0])
+            target_lift = [curr[0], curr[1], curr[2] + 30.0, curr[3], curr[4], curr[5]]
+            movel(target_lift, vel=[40, 40], acc=[40, 40])
 
-            # Step 6: Z-Lower (Place bottle down)
-            # Lift was 3cm, so we lower back to original pick height
-            target_z = [tx, ty, tz, curr_posx[3], curr_posx[4], curr_posx[5]]
-            self.get_logger().info(f"Step 6: Lowering to {tz:.1f}")
-            movel(target_z, vel=[30, 30], acc=[30, 30])
+            # STEP 4: Then approach Y
+            self.get_logger().info("Step 4: Y-Entry")
+            feedback_msg.current_state, feedback_msg.progress = "STEP 4: Y_ENTRY", 0.6
+            goal_handle.publish_feedback(feedback_msg)
+            
+            ty = self.target_xyz[1] + PICK_PLACE_Y_OFFSET
+            curr_lifted = list(get_current_posx()[0])
+            target_y = [curr_lifted[0], ty, curr_lifted[2], curr_lifted[3], curr_lifted[4], curr_lifted[5]]
+            movel(target_y, vel=[40, 40], acc=[40, 40])
 
-            # 7. Release Bottle
-            self.get_logger().info("Step 7: Releasing gripper")
-            self._gripper_move_sync(GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN)
-            wait(2.0)
+            # STEP 5: When approach Y is done, lift down 2.75cm
+            self.get_logger().info("Step 5: Lowering Z -27.5mm")
+            feedback_msg.current_state, feedback_msg.progress = "STEP 5: LOWERING_BOTTLE", 0.7
+            goal_handle.publish_feedback(feedback_msg)
+            
+            curr_at_y = list(get_current_posx()[0])
+            target_down = [curr_at_y[0], curr_at_y[1], curr_at_y[2] - 27.5, curr_at_y[3], curr_at_y[4], curr_at_y[5]]
+            movel(target_down, vel=[30, 30], acc=[30, 30])
 
-            # Step 7.5: Retreat Y
-            target_retreat = [tx, curr_posx[1], tz, curr_posx[3], curr_posx[4], curr_posx[5]]
-            self.get_logger().info("Step 7.5: Retreating Y")
+            # STEP 6: Release the gripper
+            self.get_logger().info("Step 6: Releasing gripper (Wait 8s)")
+            feedback_msg.current_state, feedback_msg.progress = "STEP 6: RELEASING_GRIPPER", 0.8
+            goal_handle.publish_feedback(feedback_msg)
+            
+            self._gripper_move_fire_forget(GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN)
+            time.sleep(8.0) # Using time.sleep here as it's a long blocking wait
+
+            # STEP 7: Retreat Y
+            self.get_logger().info("Step 7: Retreating Y")
+            feedback_msg.current_state, feedback_msg.progress = "STEP 7: RETREATING_Y", 0.9
+            goal_handle.publish_feedback(feedback_msg)
+            
+            ready_posx = list(fkin(POSJ_PICK_PLACE_READY, ref=0))
+            ready_y = ready_posx[1]
+            curr_placed = list(get_current_posx()[0])
+            target_retreat = [curr_placed[0], ready_y, curr_placed[2], curr_placed[3], curr_placed[4], curr_placed[5]]
             movel(target_retreat, vel=[60, 60], acc=[60, 60])
 
-            # 8. Return to POSJ_PICK_PLACE_READY
+            # STEP 8: Move back to pick_place_ready pose
             self.get_logger().info("Step 8: Returning to POSJ_PICK_PLACE_READY")
+            feedback_msg.current_state, feedback_msg.progress = "STEP 8: RETURNING_TO_READY", 1.0
+            goal_handle.publish_feedback(feedback_msg)
             movej(POSJ_PICK_PLACE_READY, vel=60, acc=60)
-
-            # 9. Return to POSJ_HOME
-            self.get_logger().info("Step 9: Returning to POSJ_HOME (End of Place Motion)")
-            movej(POSJ_HOME, vel=60, acc=60)
-
-            self.get_logger().info("--- Placement Sequence Completed ---")
-
+            
+            self.get_logger().info("--- [PLACE] SUCCESS. Goal Succeeding. ---")
+            result.success, result.message = True, "Place success"
+            goal_handle.succeed()
+            
         except Exception as e:
-            self.get_logger().error(f"Motion execution failed: {e}")
+            self.get_logger().error(f"--- [PLACE] EXECUTION ERROR: {e} ---")
+            result.success, result.message = False, str(e)
+            goal_handle.succeed() # Still succeed the goal but with success=False
+        finally:
+            self.state = "IDLE"
+        
+        return result
 
-    def _gripper_move_sync(self, pos, force):
+    def _gripper_move_fire_forget(self, pos, force):
         if not self.gripper_cli.wait_for_service(timeout_sec=2.0):
+            self.get_logger().error("Gripper service not available!")
             return False
-        req = GripperControl.Request()
-        req.position = int(pos)
-        req.force = int(force)
-        future = self.gripper_cli.call_async(req)
-        # We don't need a while loop here if we just want to fire and forget, 
-        # but for safety in motion we wait.
-        while rclpy.ok() and not future.done():
-            time.sleep(0.1)
-        return True
+        req = GripperControl.Request(position=int(pos), force=int(force))
+        try:
+            self.gripper_cli.call_async(req)
+            return True
+        except Exception as e:
+            self.get_logger().error(f"Gripper call failed: {e}")
+            return False
 
 def main(args=None):
     rclpy.init(args=args)
