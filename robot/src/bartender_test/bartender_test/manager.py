@@ -49,7 +49,13 @@ class RobotenderManager(Node):
             callback_group=self.callback_group
         )
 
-        # 3. Manual Control Service
+        # 3. Manual Control Services
+        self.pick_trigger_srv = self.create_service(
+            Trigger,
+            'robotender_manager/pick_bottle',
+            self.manual_pick_callback,
+            callback_group=self.callback_group
+        )
         self.place_trigger_srv = self.create_service(
             Trigger,
             'robotender_manager/place_bottle',
@@ -60,10 +66,11 @@ class RobotenderManager(Node):
         self.order_topic = "/bartender/order_detail"
         self.order_sub = None 
         self.is_busy = False # Simple state lock
+        self.last_ordered_bottle = None # Store bottle name from order
         self.last_picked_pose = None # Remember where the bottle came from
         
         self.get_logger().info('Robotender Manager initialized.')
-        self.get_logger().info('Manual Service: /dsr01/robotender_manager/place_bottle')
+        self.get_logger().info('Manual Services: pick_bottle, place_bottle')
         
         # Trigger the initial standby sequence via timer
         self.init_timer = self.create_timer(
@@ -71,6 +78,42 @@ class RobotenderManager(Node):
             self.initial_standby_trigger, 
             callback_group=self.callback_group
         )
+
+    async def manual_pick_callback(self, request, response):
+        """Manually trigger the pick node using stored bottle name"""
+        if self.is_busy:
+            response.success = False
+            response.message = "System is busy"
+            return response
+
+        if self.last_ordered_bottle is None:
+            response.success = False
+            response.message = "No bottle ordered! Send an order topic first."
+            self.get_logger().error("Manual Pick requested but last_ordered_bottle is None.")
+            return response
+
+        self.get_logger().info(f"Manual Pick Triggered for: {self.last_ordered_bottle}")
+        
+        self.is_busy = True
+        success = await self.send_pick_goal(self.last_ordered_bottle)
+        
+        if success:
+            # Move to POSJ_HOME after successful pick
+            self.get_logger().info("Moving to POSJ_HOME...")
+            req_move = MoveJoint.Request()
+            req_move.pos = [float(x) for x in POSJ_HOME]
+            req_move.vel = 30.0
+            req_move.acc = 30.0
+            await self.movej_cli.call_async(req_move)
+            response.message = "Pick action completed"
+        else:
+            self.get_logger().error("Pick failed. Resetting to standby...")
+            await self.run_standby_sequence()
+            response.message = "Pick action failed"
+
+        self.is_busy = False
+        response.success = success
+        return response
 
     async def manual_place_callback(self, request, response):
         """Manually trigger the place node using stored coordinates"""
@@ -89,8 +132,14 @@ class RobotenderManager(Node):
         
         self.is_busy = True
         success = await self.send_place_goal(self.last_picked_pose)
-        self.is_busy = False
-
+        
+        if success:
+            self.get_logger().info("Place completed successfully. Returning to standby...")
+        else:
+            self.get_logger().error("Place failed. Returning to standby...")
+        
+        await self.run_standby_sequence()
+        
         response.success = success
         response.message = "Place action completed" if success else "Place action failed"
         return response
@@ -178,6 +227,7 @@ class RobotenderManager(Node):
         self.get_logger().info("--- SYSTEM READY ---")
 
     async def order_callback(self, msg: String):
+        """Extract and store bottle name from order topic"""
         if self.is_busy:
             self.get_logger().warn("System is busy, ignoring order.")
             return
@@ -187,34 +237,12 @@ class RobotenderManager(Node):
             self.get_logger().info(f'RECEIVED ORDER: {order_data}')
             
             if "recipe" in order_data:
-                self.is_busy = True
                 recipe = order_data["recipe"]
-                bottle_name = list(recipe.keys())[0]
-                
-                # Start Pick Action
-                self.get_logger().info(f"Initiating PICK action for: {bottle_name}")
-                pick_success = await self.send_pick_goal(bottle_name)
-                
-                if pick_success:
-                    self.get_logger().info("Pick completed. (Future steps: Pour -> Place)")
-                    
-                    # After successful pick, just move to POSJ_HOME as requested
-                    self.get_logger().info("Moving to POSJ_HOME...")
-                    req_move = MoveJoint.Request()
-                    req_move.pos = [float(x) for x in POSJ_HOME]
-                    req_move.vel = 30.0
-                    req_move.acc = 30.0
-                    await self.movej_cli.call_async(req_move)
-                    
-                    self.is_busy = False
-                    self.get_logger().info("Cycle complete. System ready.")
-                else:
-                    self.get_logger().error("Pick failed. Resetting to standby...")
-                    await self.run_standby_sequence()
+                self.last_ordered_bottle = list(recipe.keys())[0]
+                self.get_logger().info(f"Order stored: {self.last_ordered_bottle}. Trigger Pick via Service.")
                 
         except Exception as e:
             self.get_logger().error(f'Error in order_callback: {e}')
-            self.is_busy = False
 
     async def send_pick_goal(self, bottle_name):
         if not self.pick_action_client.wait_for_server(timeout_sec=5.0):

@@ -147,16 +147,13 @@ class RobotControllerNode(Node):
             self.get_logger().info("Step 0: Wait completed.")
 
             # Step 1: Preparing
-            self.get_logger().info("Step 1: Preparing (Moving to READY and Opening Gripper)...")
+            self.get_logger().info("Step 1: Preparing (Moving to READY)...")
             feedback_msg.current_state, feedback_msg.progress = "STEP 1: PREPARING", 0.1
             goal_handle.publish_feedback(feedback_msg)
             
             self.get_logger().info(f"Moving to POSJ_PICK_PLACE_READY: {POSJ_PICK_PLACE_READY}")
             movej(POSJ_PICK_PLACE_READY, vel=VELOCITY, acc=ACC)
             self.get_logger().info("movej(READY) returned.")
-            
-            self.get_logger().info("Opening gripper sync (force=750)...")
-            await self._gripper_move_sync(GRIPPER_POSITION_OPEN, 750)
             
             if goal_handle.is_cancel_requested: 
                 self.get_logger().warn("Cancel requested during Step 1.")
@@ -189,6 +186,10 @@ class RobotControllerNode(Node):
                     self.get_logger().error("Detection failed after 3 attempts.")
                     result.success, result.message = False, "Detection failed"
                     goal_handle.succeed(); self.state = "IDLE"; return result
+
+            # Successful detection - Open Gripper now
+            self.get_logger().info("Detection successful. Opening gripper sync (force=750)...")
+            await self._gripper_move_sync(GRIPPER_POSITION_OPEN, 750)
 
             self.state = "RUNNING"
             # Step 3: Moving
