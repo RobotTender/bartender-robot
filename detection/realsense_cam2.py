@@ -100,6 +100,7 @@ class DepthReader(Node):
         
         # Store last known cup bbox for line visualization
         self.last_cup_bbox = None
+        self.log_counter = 0
         # -----------------------------------
 
         # 구독자 설정
@@ -301,17 +302,18 @@ class DepthReader(Node):
         # -----------------------------------
         # HYBRID LOGIC: Auto-Tare & Reference Locking
         # -----------------------------------
-        if bottle_mask_current is not None:
+        if bottle_mask_current is not None and self.last_cup_bbox is not None:
             self.no_cup_count = 0 
-            if liquid_mask_current is None:
+            # Always calibrate bottom if not locked during pouring
+            if not self.bottom_y_locked:
                 self.tare_stability_count += 1
                 if self.tare_stability_count >= self.TARE_STABILITY_THRESHOLD:
-                    ys_b, xs_b = np.where(bottle_mask_current > 0)
-                    if len(ys_b) > 0:
-                        self.fixed_bottle_bottom_y = int(np.max(ys_b))
-                        self.locked_total_cup_px = float(np.max(ys_b) - np.min(ys_b))
-                        self.last_total_cup_px = self.locked_total_cup_px
-                        self.bottom_y_locked = False 
+                    # USE BOUNDING BOX BOTTOM instead of mask bottom
+                    # This is more robust because liquid often "cuts" the cup mask
+                    cx1, cy1, cx2, cy2 = self.last_cup_bbox
+                    self.fixed_bottle_bottom_y = int(cy2)
+                    self.locked_total_cup_px = float(cy2 - cy1)
+                    self.last_total_cup_px = self.locked_total_cup_px
             else:
                 self.tare_stability_count = 0
         else:
@@ -343,6 +345,16 @@ class DepthReader(Node):
                 vol_msg.data = float(volume_ml_ema)
                 self.volume_pub.publish(vol_msg)
 
+                # Throttled Logging for Verification
+                self.log_counter += 1
+                if self.log_counter % 30 == 0: # Log every ~1 second at 30fps
+                    ratio = height_px_ema / self.locked_total_cup_px if self.locked_total_cup_px else 0.0
+                    self.get_logger().info(
+                        f"DEBUG: Cup_Total_Px={self.locked_total_cup_px:.1f}, "
+                        f"Liq_Height_Px={height_px_ema:.1f}, "
+                        f"Ratio={ratio:.4f}, CUR={volume_ml_ema:.1f}ml"
+                    )
+
                 # Auto-Trigger Snap based on absolute goal
                 if self.target_total_volume_ml > 0 and volume_ml_ema >= self.target_total_volume_ml and not self.snap_triggered:
                     self.trigger_pub.publish(Empty())
@@ -352,23 +364,12 @@ class DepthReader(Node):
                 if volume_ml_ema > 5.0:
                     self.low_volume_count = 0
 
-                # if liquid_bbox_current is not None:
-                #     lx1, ly1, lx2, ly2 = liquid_bbox_current
-                #     target_text = f"GOAL: {self.target_total_volume_ml:.1f}ml"
-                #     if self.snap_triggered:
-                #         target_text += " [OK]"
-                #     cv2.putText(overlay, target_text, (lx1, max(30, ly1 - 40)),
-                #                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                #     # The following line will be replaced by a persistent display below
-                #     # cv2.putText(overlay, f"CUR: {volume_ml_ema:.1f}ml", (lx1, ly2 + 25),
-                #     #             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
-
         # --- Persistent Volume Display (Always show near cup) ---
         if self.last_cup_bbox is not None:
             cx1, cy1, cx2, cy2 = self.last_cup_bbox
             current_vol = self.estimated_ml_ema if self.estimated_ml_ema is not None else 0.0
-            # If liquid is actually detected, use red. Otherwise, use white for empty.
-            vol_color = (0, 0, 255) if liquid_mask_current is not None else (255, 255, 255)
+            # Always use white for volume text
+            vol_color = (255, 255, 255) 
             
             cv2.putText(overlay, f"CUR: {current_vol:.1f}ml", (cx1, cy2 + 25),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, vol_color, 2)

@@ -7,6 +7,8 @@
     - **Node Isolation Standard:** All motion nodes (Pick, Pour, Place) now use an isolated `doosan_node` internal architecture to prevent deadlocks.
 
 ## Achievements (March 20, 2026)
+- **Liquid Detection Refinement:** Switched from mask-based to bounding-box-based calibration for the cup bottom in `realsense_cam2.py`. This resolves the issue where the liquid mask "cut" the cup mask, leading to incorrect `0.0ml` readings.
+- **Debug Diagnostics:** Added a throttled debug logger (1Hz) to `realsense_cam2.py` to monitor `Cup_Total_Px`, `Liq_Height_Px`, and `Ratio` during the pour.
 - **Pour Action Server:** Converted Pour node to Action Server with real-time feedback (Moving to cheers, approaching contact, pouring spline, recovering path).
 - **Manager-Pour Integration:** Added `/dsr01/robotender_manager/pour_bottle` service. Manager now passes the ordered bottle name to the Pour action.
 - **Post-Pour Orchestration:** Manager automatically commands the robot to `POSJ_HOME` after a successful pour, matching the Pick pattern.
@@ -15,7 +17,6 @@
 
 ## Next Steps: Verification & Todo
 - **Todo: Test Snap and Recovery:** Verify the "Snap" (interruption) logic during the pour motion to ensure the hybrid recovery spline works as expected.
-- **Todo: Stabilize Liquid Detection:** Stabilize the liquid volume detection when the cup is empty (currently jumps to 75~80ml even with no water).
 - **Verify Cycle 2:** Confirm the Pour node continues to respond after multiple consecutive runs.
 - **Monitor Latency:** Check if the removal of heartbeat timers affects long-term visibility into node health.
 
