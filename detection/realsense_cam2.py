@@ -345,16 +345,6 @@ class DepthReader(Node):
                 vol_msg.data = float(volume_ml_ema)
                 self.volume_pub.publish(vol_msg)
 
-                # Throttled Logging for Verification
-                self.log_counter += 1
-                if self.log_counter % 30 == 0: # Log every ~1 second at 30fps
-                    ratio = height_px_ema / self.locked_total_cup_px if self.locked_total_cup_px else 0.0
-                    self.get_logger().info(
-                        f"DEBUG: Cup_Total_Px={self.locked_total_cup_px:.1f}, "
-                        f"Liq_Height_Px={height_px_ema:.1f}, "
-                        f"Ratio={ratio:.4f}, CUR={volume_ml_ema:.1f}ml"
-                    )
-
                 # Auto-Trigger Snap based on absolute goal
                 if self.target_total_volume_ml > 0 and volume_ml_ema >= self.target_total_volume_ml and not self.snap_triggered:
                     self.trigger_pub.publish(Empty())
