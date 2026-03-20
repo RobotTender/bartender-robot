@@ -1,4 +1,5 @@
 string bottle_name
+float32 target_volume_ml
 ---
 bool success
 string message

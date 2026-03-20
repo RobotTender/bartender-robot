@@ -10,7 +10,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 import DR_init
 
-from std_msgs.msg import Empty, String
+from std_msgs.msg import Empty, String, Float32
 from std_srvs.srv import Trigger
 from dsr_msgs2.srv import MoveStop
 from sensor_msgs.msg import JointState
@@ -49,6 +49,10 @@ class ActionNode(Node):
 
         # Clients
         self.stop_cli = self.create_client(MoveStop, 'motion/move_stop', callback_group=self.callback_group)
+
+        # Publishers
+        # One-shot publisher to notify cam2 of the target volume increment
+        self.target_volume_pub = self.create_publisher(Float32, '/detection/cup_target_volume', 10)
 
         # Action Server
         self._action_server = ActionServer(
@@ -148,6 +152,19 @@ class ActionNode(Node):
         """
         self.state = "RUNNING"
         feedback_msg = PourBottle.Feedback()
+        result = PourBottle.Result()
+
+        # Extract parameters from Goal
+        self.current_bottle_type = goal_handle.request.bottle_name
+        target_volume_ml = goal_handle.request.target_volume_ml
+        
+        self.get_logger().info(f"[Pour Execution Started] Bottle: {self.current_bottle_type}, Target: {target_volume_ml}ml")
+
+        # ONE-SHOT PUBLICATION: Notify perception (cam2) about the new target
+        vol_msg = Float32()
+        vol_msg.data = target_volume_ml
+        self.target_volume_pub.publish(vol_msg)
+        self.get_logger().info(f"Published dynamic target volume to perception: {target_volume_ml}ml")
         result = PourBottle.Result()
 
         # Update current bottle type from request
@@ -291,12 +308,24 @@ class ActionNode(Node):
             goal_handle.publish_feedback(feedback_msg)
             movej(POSJ_CHEERS, vel=30, acc=30)
 
+            # --- CLEAR TARGET IN PERCEPTION ---
+            clear_msg = Float32()
+            clear_msg.data = 0.0
+            self.target_volume_pub.publish(clear_msg)
+            self.get_logger().info("Sent clear signal to perception.")
+
             goal_handle.succeed()
             result.success, result.message = True, msg
             self.state = "IDLE"
             return result
         except Exception as e:
             self.get_logger().error(f"Pour Error: {e}")
+            
+            # --- CLEAR TARGET IN PERCEPTION ON ERROR ---
+            clear_msg = Float32()
+            clear_msg.data = 0.0
+            self.target_volume_pub.publish(clear_msg)
+            
             goal_handle.abort()
             result.success, result.message = False, str(e)
             self.state = "IDLE"
