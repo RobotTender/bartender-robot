@@ -88,6 +88,10 @@ class DepthReader(Node):
         self.snap_triggered = False    # To ensure we only trigger once per pour
         self.low_volume_count = 0      # Used to reset the trigger flag when cup is empty
         
+        # --- Stability Logic ---
+        self.liquid_stability_count = 0 
+        self.STABILITY_THRESHOLD = 5   # Require ~0.16s of consistent detection
+        
         # --- Tare Safety Logic ---
         self.tare_stability_count = 0  # To ensure we only tare on a truly empty cup
         self.no_cup_count = 0          # To reset state when cup is removed
@@ -168,7 +172,6 @@ class DepthReader(Node):
         wait_start = time.time()
         while self.locked_total_cup_px is None and (time.time() - wait_start < 2.0):
             time.sleep(0.1)
-            # We don't spin here as it's a service callback, but the main executor is spinning
             
         if self.locked_total_cup_px is None:
             self.get_logger().error("Prepare Failed: Cup not detected/stable.")
@@ -184,6 +187,7 @@ class DepthReader(Node):
         # 3. Finalize goal visualization
         self._update_target_line_y()
         self.snap_triggered = False
+        self.liquid_stability_count = 0 # Reset for new pour
         self.is_pouring_active = True # MASTER GATE OPEN
         
         self.get_logger().info(f"Prepare Successful. Baseline: {self.start_volume_ml:.1f}ml, Goal: {self.target_total_volume_ml:.1f}ml")
@@ -200,6 +204,7 @@ class DepthReader(Node):
             self.target_volume_ml = 0.0
             self.target_total_volume_ml = 0.0
             self.target_line_y = None
+            self.liquid_stability_count = 0
 
     def depth_callback(self, msg):
         self.depth_image = self.bridge.imgmsg_to_cv2(msg, "16UC1")
@@ -259,24 +264,29 @@ class DepthReader(Node):
                 self.fixed_bottle_bottom_y, self.locked_total_cup_px, self.bottom_y_locked = None, None, False
                 self.snap_triggered, self.height_px_ema, self.estimated_ml_ema, self.target_line_y = False, None, None, None
                 self.is_pouring_active = False
+                self.liquid_stability_count = 0
         
-        # Liquid Logic (Only Lock/Trigger when is_pouring_active is TRUE)
+        # Liquid Logic (Temporal Stability + Active Pouring Check)
         if liquid_mask_current is not None and self.fixed_bottle_bottom_y is not None:
-            height_px, _ = self.estimate_height_px(liquid_mask_current)
-            if height_px is not None:
-                height_px_ema = self.apply_height_ema(height_px)
-                volume_ml = self.height_px_to_volume_ml(height_px_ema)
-                volume_ml_ema = self.apply_liquid_ml_ema(volume_ml)
-                self.current_height_px_ema = height_px_ema
+            self.liquid_stability_count += 1
+            if self.liquid_stability_count >= self.STABILITY_THRESHOLD:
+                height_px, _ = self.estimate_height_px(liquid_mask_current)
+                if height_px is not None:
+                    height_px_ema = self.apply_height_ema(height_px)
+                    volume_ml = self.height_px_to_volume_ml(height_px_ema)
+                    volume_ml_ema = self.apply_liquid_ml_ema(volume_ml)
+                    self.current_height_px_ema = height_px_ema
 
-                vol_msg = Float32()
-                vol_msg.data = float(volume_ml_ema)
-                self.volume_pub.publish(vol_msg)
+                    vol_msg = Float32()
+                    vol_msg.data = float(volume_ml_ema)
+                    self.volume_pub.publish(vol_msg)
 
-                if self.is_pouring_active and self.target_total_volume_ml > 0 and volume_ml_ema >= self.target_total_volume_ml and not self.snap_triggered:
-                    self.trigger_pub.publish(Empty())
-                    self.snap_triggered = True
-                    self.get_logger().info(f"--- AUTO SNAP TRIGGERED: {volume_ml_ema:.1f}ml (Goal: {self.target_total_volume_ml:.1f}) ---")
+                    if self.is_pouring_active and self.target_total_volume_ml > 0 and volume_ml_ema >= self.target_total_volume_ml and not self.snap_triggered:
+                        self.trigger_pub.publish(Empty())
+                        self.snap_triggered = True
+                        self.get_logger().info(f"--- AUTO SNAP TRIGGERED: {volume_ml_ema:.1f}ml (Goal: {self.target_total_volume_ml:.1f}) ---")
+        else:
+            self.liquid_stability_count = 0
 
         # Visualization
         if self.last_cup_bbox is not None:
