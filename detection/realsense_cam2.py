@@ -90,7 +90,7 @@ class DepthReader(Node):
         
         # --- Stability Logic ---
         self.liquid_stability_count = 0 
-        self.STABILITY_THRESHOLD = 5   # Require ~0.16s of consistent detection
+        self.STABILITY_THRESHOLD = 3   # Require ~0.1s of consistent detection
         
         # --- Tare Safety Logic ---
         self.tare_stability_count = 0  # To ensure we only tare on a truly empty cup

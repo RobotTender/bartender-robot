@@ -168,7 +168,7 @@ class ActionNode(Node):
             movel(p2, vel=[30, 30], acc=[30, 30])
             
             if not self.trigger_received:
-                movesx([p3, p4, p5], vel=30, acc=30)
+                movesx([p3, p4, p5], vel=15, acc=15)
             
             wait(0.1)
             self.recording = False
@@ -200,7 +200,7 @@ class ActionNode(Node):
 
             if len(reverse_path) > 1:
                 if sum(abs(a-b) for a,b in zip(reverse_path[0], list(get_current_posj()))) < 0.5: reverse_path.pop(0)
-                if len(reverse_path) > 1: movesj(reverse_path, vel=150, acc=150)
+                if len(reverse_path) > 1: movesj(reverse_path, vel=210, acc=210)
                 else: movej(reverse_path[0], vel=150, acc=150)
             elif reverse_path: movej(reverse_path[0], vel=150, acc=150)
             
