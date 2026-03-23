@@ -3,11 +3,12 @@ from rclpy.node import Node
 
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
-from std_msgs.msg import Empty, Float32
+from std_msgs.msg import Empty, Float32, String
+from std_srvs.srv import Trigger
 
 import cv2
-import random
 import numpy as np
+import time
 from ultralytics import YOLO
 
 
@@ -19,7 +20,6 @@ model = YOLO("/home/fastcampus/bartender-robot/detection/weights/cam_2.pt")  # U
 CLASS_COLORS = {
     0: (0, 0, 255),   # 빨강
     1: (255, 0, 0),   # 파랑
-    # 2: (0, 255, 0)    # 초록
 }
 
 
@@ -35,12 +35,7 @@ class DepthReader(Node):
         # class name
         self.cup_class_name = "cup"
 
-        # 소주병처럼 비원통형 bottle이면 lookup table 권장 (Original Version Reference)
-        self.known_heights_px = np.array([0, 26.3, 50, 67.4, 84, 100, 115.7, 131.9, 140.1, 158, 174], dtype=np.float32)
-        self.known_volumes_ml = np.array([0, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500], dtype=np.float32)
-
         # --- Ratio-Based Volume Lookup Table ---
-        # Format: [Ratio (h_px / Locked_Total_px), Volume (ml)]
         self.ratio_to_ml_table = np.array([
             [0.0000, 0],
             [0.1186, 50.0],
@@ -57,7 +52,8 @@ class DepthReader(Node):
         # --------------------------------------
 
         self.locked_total_cup_px = None # Reference scale locked during Tare
-        # -----------------------------------------------------------
+        self.bottom_y_locked = False
+        self.is_pouring_active = False # MASTER GATE: Only measure when robot says so
 
         # height EMA
         self.height_ema_alpha = 0.2
@@ -66,11 +62,6 @@ class DepthReader(Node):
 
         # 고정 bottom_y
         self.fixed_bottle_bottom_y = None
-        self.bottom_y_locked = False
-
-        # bottle EMA filter
-        self.bottle_ema_alpha = 0.1
-        self.bottle_area_ema = None
 
         # EMA filter
         self.ema_alpha = 0.2
@@ -81,10 +72,15 @@ class DepthReader(Node):
         self.trigger_pub = self.create_publisher(Empty, '/dsr01/robotender_snap/trigger', 10)
         self.volume_pub = self.create_publisher(Float32, '/dsr01/robotender/liquid_volume', 10)
         
-        # New: Subscriber for dynamic target volume from Pour node
+        # Subscriber for dynamic target volume (increment)
         self.target_ml_sub = self.create_subscription(Float32, '/detection/cup_target_volume', self.target_volume_callback, 10)
         
-        self.target_volume_ml = 100.0  # Default incremental target (ml)
+        # HANDSHAKE: Service to prepare pouring
+        self.prepare_srv = self.create_service(Trigger, '/dsr01/robotender/prepare_pouring', self.prepare_pouring_callback)
+        # HANDSHAKE: Topic to end pouring
+        self.status_sub = self.create_subscription(String, '/dsr01/robotender/pouring_status', self.pouring_status_callback, 10)
+
+        self.target_volume_ml = 0.0     # Incremental target (ml)
         self.start_volume_ml = 0.0     # Volume at the start of the pour
         self.target_total_volume_ml = 0.0 # start_volume + target_volume (Absolute Goal)
         self.target_line_y = None      # Y-coordinate for the target visualization line
@@ -95,7 +91,7 @@ class DepthReader(Node):
         # --- Tare Safety Logic ---
         self.tare_stability_count = 0  # To ensure we only tare on a truly empty cup
         self.no_cup_count = 0          # To reset state when cup is removed
-        self.TARE_STABILITY_THRESHOLD = 120 # 4 seconds at 30fps
+        self.TARE_STABILITY_THRESHOLD = 90 # ~3 seconds at 30fps
         self.NO_CUP_THRESHOLD = 45         # 1.5 seconds at 30fps
         
         # Store last known cup bbox for line visualization
@@ -105,7 +101,6 @@ class DepthReader(Node):
 
         # 구독자 설정
         self.create_subscription(Image, '/camera/camera_2/color/image_raw', self.color_callback, 10)
-        # aligned_depth_to_color/image_raw 토픽 사용 권장
         self.create_subscription(Image, '/camera/camera_2/aligned_depth_to_color/image_raw', self.depth_callback, 10)
 
     def color_callback(self, msg):
@@ -114,161 +109,120 @@ class DepthReader(Node):
     def apply_height_ema(self, value: float):
         if value is None:
             return self.height_px_ema
-
         if self.height_px_ema is None:
             self.height_px_ema = value
         else:
-            self.height_px_ema = (
-                self.height_ema_alpha * value
-                + (1.0 - self.height_ema_alpha) * self.height_px_ema
-            )
+            self.height_px_ema = (self.height_ema_alpha * value + (1.0 - self.height_ema_alpha) * self.height_px_ema)
         return self.height_px_ema
 
     def estimate_height_px(self, liquid_mask: np.ndarray):
-        ys_l, xs_l = np.where(liquid_mask > 0)
-
-        if len(ys_l) == 0:
-            return None, None
-
-        if self.fixed_bottle_bottom_y is None:
-            return None, None
+        ys_l, _ = np.where(liquid_mask > 0)
+        if len(ys_l) == 0: return None, None
+        if self.fixed_bottle_bottom_y is None: return None, None
 
         waterline_y = int(np.min(ys_l))
         height_px = self.fixed_bottle_bottom_y - waterline_y
-
-        if height_px < 0:
-            # Waterline below bottom line (measurement error or noise)
-            return 0.0, waterline_y
-
+        if height_px < 0: return 0.0, waterline_y
         return float(height_px), waterline_y
 
     def height_px_to_volume_ml(self, height_px: float):
-        """Calculates volume using only the Empirical Ratio Lookup Table."""
         if self.locked_total_cup_px is None or self.locked_total_cup_px <= 0 or height_px <= 0:
             return 0.0
-            
-        # 1. Calculate the current fill ratio based on the LOCKED reference
         current_ratio = height_px / self.locked_total_cup_px
-        
-        # 2. Linear Interpolation from measured points
         ratios = self.ratio_to_ml_table[:, 0]
         volumes = self.ratio_to_ml_table[:, 1]
         vol_ml = np.interp(current_ratio, ratios, volumes)
-        
         return float(vol_ml)
 
-    def apply_bottle_area_ema(self, value: float):
-        if value is None:
-            return self.bottle_area_ema
-
-        if self.bottle_area_ema is None:
-            self.bottle_area_ema = value
-        else:
-            self.bottle_area_ema = (
-                self.bottle_ema_alpha * value
-                + (1.0 - self.bottle_ema_alpha) * self.bottle_area_ema
-            )
-
-        return self.bottle_area_ema
-
     def apply_liquid_ml_ema(self, value: float):
-        if value is None:
-            return self.estimated_ml_ema
-
+        if value is None: return self.estimated_ml_ema
         if self.estimated_ml_ema is None:
             self.estimated_ml_ema = value
         else:
-            self.estimated_ml_ema = (
-                self.ema_alpha * value
-                + (1.0 - self.ema_alpha) * self.estimated_ml_ema
-            )
-
+            self.estimated_ml_ema = (self.ema_alpha * value + (1.0 - self.ema_alpha) * self.estimated_ml_ema)
         return self.estimated_ml_ema
 
-    def target_volume_callback(self, msg):
-        """Callback to receive dynamic target volume (ml to add) from the Pour node."""
-        val = float(msg.data)
-        
-        if val <= 0.0:
-            self.get_logger().info("Target Volume Cleared.")
-            self.target_volume_ml = 0.0
-            self.target_total_volume_ml = 0.0
-            self.target_line_y = None
-            return
-
-        self.target_volume_ml = val
-        self.snap_triggered = False  # Reset for the new pour
-        
-        # Snapshot current volume to determine the absolute goal
-        if self.estimated_ml_ema is not None:
-            self.start_volume_ml = self.estimated_ml_ema
-        else:
-            self.start_volume_ml = 0.0
-            
-        self.target_total_volume_ml = self.start_volume_ml + self.target_volume_ml
-        
-        # Calculate the Y coordinate for the target line
-        if self.locked_total_cup_px is not None and self.fixed_bottle_bottom_y is not None:
-            # 1. Reverse lookup: ml -> Ratio
+    def _update_target_line_y(self):
+        if (self.target_total_volume_ml > 0 and self.locked_total_cup_px is not None and self.fixed_bottle_bottom_y is not None):
             ratios = self.ratio_to_ml_table[:, 0]
             volumes = self.ratio_to_ml_table[:, 1]
             target_ratio = np.interp(self.target_total_volume_ml, volumes, ratios)
-            
-            # 2. Ratio -> height_px
             target_h_px = target_ratio * self.locked_total_cup_px
-            
-            # 3. height_px -> waterline_y (global pixels)
             self.target_line_y = int(self.fixed_bottle_bottom_y - target_h_px)
+        else:
+            self.target_line_y = None
+
+    def target_volume_callback(self, msg):
+        val = float(msg.data)
+        if val <= 0.0:
+            self.target_volume_ml = 0.0
+            return
+        self.target_volume_ml = val
+        self.get_logger().info(f"Target Volume Set: +{self.target_volume_ml}ml (Waiting for Prepare Service)")
+
+    def prepare_pouring_callback(self, request, response):
+        """Service handler: Robot is at CHEERS and wants to start pouring."""
+        self.get_logger().info("PREPARE POURING Service Called. Calibrating baseline...")
+        
+        # 1. Wait for stable cup detection if not locked
+        wait_start = time.time()
+        while self.locked_total_cup_px is None and (time.time() - wait_start < 2.0):
+            time.sleep(0.1)
+            # We don't spin here as it's a service callback, but the main executor is spinning
             
-        self.get_logger().info(f"New Target Received: +{self.target_volume_ml}ml (Absolute Goal: {self.target_total_volume_ml:.1f}ml)")
+        if self.locked_total_cup_px is None:
+            self.get_logger().error("Prepare Failed: Cup not detected/stable.")
+            response.success = False
+            response.message = "Cup not found."
+            return response
+
+        # 2. Lock scale and snapshot baseline
+        self.bottom_y_locked = True
+        self.start_volume_ml = self.estimated_ml_ema if self.estimated_ml_ema is not None else 0.0
+        self.target_total_volume_ml = self.start_volume_ml + self.target_volume_ml
+        
+        # 3. Finalize goal visualization
+        self._update_target_line_y()
+        self.snap_triggered = False
+        self.is_pouring_active = True # MASTER GATE OPEN
+        
+        self.get_logger().info(f"Prepare Successful. Baseline: {self.start_volume_ml:.1f}ml, Goal: {self.target_total_volume_ml:.1f}ml")
+        response.success = True
+        response.message = f"Ready. Goal: {self.target_total_volume_ml:.1f}ml"
+        return response
+
+    def pouring_status_callback(self, msg):
+        """Topic handler: Robot says it is finished."""
+        if msg.data == 'done':
+            self.get_logger().info("Pouring DONE signal received. Resetting state.")
+            self.is_pouring_active = False
+            self.bottom_y_locked = False
+            self.target_volume_ml = 0.0
+            self.target_total_volume_ml = 0.0
+            self.target_line_y = None
 
     def depth_callback(self, msg):
         self.depth_image = self.bridge.imgmsg_to_cv2(msg, "16UC1")
-
-        if self.color_image is None:
-            return
-
+        if self.color_image is None: return
         img_vis = self.color_image.copy()
 
-        # ✅ YOLO-seg 추론
-        results = model.predict(
-            source=img_vis,
-            conf=0.4,
-            iou=0.5,
-            retina_masks=True,
-            verbose=False
-        )
-
+        results = model.predict(source=img_vis, conf=0.4, iou=0.5, retina_masks=True, verbose=False)
         overlay = img_vis.copy()
-
         bottle_mask_current = None
         liquid_mask_current = None
-        liquid_bbox_current = None
 
         for result in results:
             boxes = result.boxes
             masks = result.masks
-
-            if boxes is None or len(boxes) == 0:
-                continue
-
-            mdata = masks.data
-            try:
-                mdata = mdata.detach().cpu().numpy()
-            except Exception:
-                mdata = np.asarray(mdata)
-
+            if boxes is None or len(boxes) == 0 or masks is None: continue
+            mdata = masks.data.detach().cpu().numpy() if hasattr(masks.data, 'detach') else np.asarray(masks.data)
             H, W = img_vis.shape[:2]
 
             for i, b in enumerate(boxes):
-                conf = float(b.conf[0].cpu().numpy())
                 cls_id = int(b.cls[0].cpu().numpy())
                 x1, y1, x2, y2 = b.xyxy[0].cpu().numpy().astype(int)
-
                 mi = mdata[i]
-                if mi.shape != (H, W):
-                    mi = cv2.resize(mi, (W, H), interpolation=cv2.INTER_NEAREST)
-
+                if mi.shape != (H, W): mi = cv2.resize(mi, (W, H), interpolation=cv2.INTER_NEAREST)
                 mask_bin = (mi > 0.5).astype(np.uint8)
                 mask_area = int(np.count_nonzero(mask_bin))
                 class_name = model.names.get(cls_id, cls_id)
@@ -276,65 +230,39 @@ class DepthReader(Node):
                 if class_name == self.cup_class_name:
                     if bottle_mask_current is None or mask_area > int(np.count_nonzero(bottle_mask_current)):
                         bottle_mask_current = mask_bin.copy()
-                        # Update last known cup bbox for line visualization
                         self.last_cup_bbox = (x1, y1, x2, y2)
-
                 if class_name != self.cup_class_name:
                     if liquid_mask_current is None or mask_area > int(np.count_nonzero(liquid_mask_current)):
                         liquid_mask_current = mask_bin.copy()
-                        liquid_bbox_current = (x1, y1, x2, y2)
 
                 color = CLASS_COLORS.get(cls_id, (255,255,255))
                 MASK_ALPHA = 0.2
                 colored = np.zeros_like(overlay, dtype=np.uint8)
                 colored[:, :] = color
-                overlay = np.where(
-                    mask_bin[:, :, None].astype(bool),
-                    ((1 - MASK_ALPHA) * overlay + MASK_ALPHA * colored).astype(np.uint8),
-                    overlay
-                )
-
-                label = f"{class_name} {conf:.2f}"
+                overlay = np.where(mask_bin[:, :, None].astype(bool), ((1 - MASK_ALPHA) * overlay + MASK_ALPHA * colored).astype(np.uint8), overlay)
                 cv2.rectangle(overlay, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(overlay, label, (x1, max(0, y1 - 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+                cv2.putText(overlay, f"{class_name}", (x1, max(0, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
-        # -----------------------------------
-        # HYBRID LOGIC: Auto-Tare & Reference Locking
-        # -----------------------------------
+        # Calibration Logic (Always run while Idle)
         if bottle_mask_current is not None and self.last_cup_bbox is not None:
             self.no_cup_count = 0 
-            # Always calibrate bottom if not locked during pouring
             if not self.bottom_y_locked:
                 self.tare_stability_count += 1
                 if self.tare_stability_count >= self.TARE_STABILITY_THRESHOLD:
-                    # USE BOUNDING BOX BOTTOM instead of mask bottom
-                    # This is more robust because liquid often "cuts" the cup mask
                     cx1, cy1, cx2, cy2 = self.last_cup_bbox
-                    self.fixed_bottle_bottom_y = int(cy2)
-                    self.locked_total_cup_px = float(cy2 - cy1)
+                    self.fixed_bottle_bottom_y, self.locked_total_cup_px = int(cy2), float(cy2 - cy1)
                     self.last_total_cup_px = self.locked_total_cup_px
-            else:
-                self.tare_stability_count = 0
+                    self._update_target_line_y()
         else:
             self.no_cup_count += 1
-            self.tare_stability_count = 0
             if self.no_cup_count >= self.NO_CUP_THRESHOLD:
-                self.fixed_bottle_bottom_y = None
-                self.locked_total_cup_px = None
-                self.bottom_y_locked = False
-                self.snap_triggered = False
-                self.height_px_ema = None
-                self.estimated_ml_ema = None
-                self.target_line_y = None # Reset visualization line
+                self.fixed_bottle_bottom_y, self.locked_total_cup_px, self.bottom_y_locked = None, None, False
+                self.snap_triggered, self.height_px_ema, self.estimated_ml_ema, self.target_line_y = False, None, None, None
+                self.is_pouring_active = False
         
-        # -----------------------------------
-        # HYBRID LOGIC: Liquid Volume Estimation
-        # -----------------------------------
+        # Liquid Logic (Only Lock/Trigger when is_pouring_active is TRUE)
         if liquid_mask_current is not None and self.fixed_bottle_bottom_y is not None:
-            self.bottom_y_locked = True
-            height_px, waterline_y = self.estimate_height_px(liquid_mask_current)
-
+            height_px, _ = self.estimate_height_px(liquid_mask_current)
             if height_px is not None:
                 height_px_ema = self.apply_height_ema(height_px)
                 volume_ml = self.height_px_to_volume_ml(height_px_ema)
@@ -345,59 +273,30 @@ class DepthReader(Node):
                 vol_msg.data = float(volume_ml_ema)
                 self.volume_pub.publish(vol_msg)
 
-                # Auto-Trigger Snap based on absolute goal
-                if self.target_total_volume_ml > 0 and volume_ml_ema >= self.target_total_volume_ml and not self.snap_triggered:
+                if self.is_pouring_active and self.target_total_volume_ml > 0 and volume_ml_ema >= self.target_total_volume_ml and not self.snap_triggered:
                     self.trigger_pub.publish(Empty())
                     self.snap_triggered = True
                     self.get_logger().info(f"--- AUTO SNAP TRIGGERED: {volume_ml_ema:.1f}ml (Goal: {self.target_total_volume_ml:.1f}) ---")
-                
-                if volume_ml_ema > 5.0:
-                    self.low_volume_count = 0
 
-        # --- Persistent Volume Display (Always show near cup) ---
+        # Visualization
         if self.last_cup_bbox is not None:
-            cx1, cy1, cx2, cy2 = self.last_cup_bbox
+            cx1, _, _, cy2 = self.last_cup_bbox
             current_vol = self.estimated_ml_ema if self.estimated_ml_ema is not None else 0.0
-            # Always use white for volume text
-            vol_color = (255, 255, 255) 
-            
-            cv2.putText(overlay, f"CUR: {current_vol:.1f}ml", (cx1, cy2 + 25),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, vol_color, 2)
+            cv2.putText(overlay, f"CUR: {current_vol:.1f}ml", (cx1, cy2 + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-        # Draw Target Horizontal Line (Centered and Shorter)
         if self.target_line_y is not None and self.fixed_bottle_bottom_y is not None and self.last_cup_bbox is not None:
             H, W = overlay.shape[:2]
             if 0 < self.target_line_y < H:
-                # Use the cup bbox to calculate center and width
-                cx1, cy1, cx2, cy2 = self.last_cup_bbox
-                cup_width = cx2 - cx1
-                line_width = int(cup_width * 1.5)
+                cx1, _, cx2, _ = self.last_cup_bbox
                 center_x = (cx1 + cx2) // 2
-
-                x_start = max(0, center_x - (line_width // 2))
-                x_end = min(W, center_x + (line_width // 2))
-
-                # Draw a thinner line (thickness=1)
+                x_start, x_end = max(0, center_x - int((cx2-cx1)*0.75)), min(W, center_x + int((cx2-cx1)*0.75))
                 cv2.line(overlay, (x_start, self.target_line_y), (x_end, self.target_line_y), (0, 255, 0), 1)
-                cv2.putText(overlay, f"FILL TO: {self.target_total_volume_ml:.1f}ml", (x_start, self.target_line_y - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1)
+                cv2.putText(overlay, f"FILL TO: {self.target_total_volume_ml:.1f}ml", (x_start, self.target_line_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1)
 
-        # --- Visual Status Overlay ---
-        if self.locked_total_cup_px is not None:
-            status_color = (0, 255, 0) if self.bottom_y_locked else (0, 255, 255)
-            status_msg = "POURING (LOCKED)" if self.bottom_y_locked else "READY (SCALE LOCKED)"
-            cv2.putText(overlay, f"STATUS: {status_msg}", (30, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
-        else:
-            cv2.putText(overlay, "STATUS: SEARCHING/CALIBRATING...", (30, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-
-        # Reset trigger when liquid is gone
-        if liquid_mask_current is None:
-            self.low_volume_count += 1
-            if self.low_volume_count > 45:
-                self.snap_triggered = False
-                self.bottom_y_locked = False
+        # Status Display
+        status_msg = "POURING" if self.is_pouring_active else ("READY" if self.locked_total_cup_px else "SEARCHING")
+        status_color = (0, 255, 0) if self.is_pouring_active else ((0, 255, 255) if self.locked_total_cup_px else (0, 0, 255))
+        cv2.putText(overlay, f"STATUS: {status_msg}", (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
 
         cv2.imshow("RGB with Depth (YOLO-Seg)", overlay)
         cv2.waitKey(1)
@@ -410,8 +309,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        if rclpy.ok():
-            rclpy.shutdown()
+        if rclpy.ok(): rclpy.shutdown()
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
