@@ -119,6 +119,10 @@ class MoveBottleEnvCfg(GripBottleEnvCfg):
     simple_shelf_escape_reward_scale = 0.0
     shelf_escape_delta_y_m = 0.305
     shelf_escape_min_tcp_height_from_table_m = 0.08
+    # Pre-escape motion shaping (active only before shelf-clear): discourage low-height and downward diving.
+    simple_pre_escape_low_height_penalty_scale = 0.0
+    simple_pre_escape_descent_penalty_scale = 0.0
+    pre_escape_descent_speed_ref_m_s = 0.08
     # Penalize wrist-dominant joint error to avoid converging to sky-looking local minima.
     simple_weighted_joint_err_penalty_scale = 0.55
     # Joint weighting profile for weighted goal error.
@@ -133,6 +137,12 @@ class MoveBottleEnvCfg(GripBottleEnvCfg):
     simple_joint_focus_indices = (2, 3, 5)  # 1-based joint indices.
     simple_joint_focus_tol_deg = (30.0, 24.0, 20.0)
     simple_joint_focus_weights = (1.0, 0.8, 0.45)
+    # Focus-penalty aggregation:
+    # - "mean": weighted mean excess over tolerance (legacy behavior).
+    # - "max": weighted tail-focused excess (targets worst focused joint).
+    simple_joint_focus_penalty_mode = "mean"
+    # Optional non-linearity for focus penalty (1.0: linear, >1.0: tail emphasis).
+    simple_joint_focus_penalty_power = 1.0
     # Optional success gate for the same focused joints.
     enable_joint_focus_success_gate = False
     simple_joint_focus_success_tol_deg = (35.0, 28.0, 24.0)
@@ -205,16 +215,16 @@ class MoveBottleEnvCfg(GripBottleEnvCfg):
 class MoveBottleStage1EnvCfg(MoveBottleEnvCfg):
     """Stage-1: fixed start -> standby pose (easy, short-horizon pre-shaping)."""
 
-    episode_length_s = 4.0
+    episode_length_s = 6.0
     move_goal_joint_pos_deg = (90.0, -45.0, 90.0, 0.0, 45.0, -90.0)
     goal_joint_tolerance_deg = 30.0
     reset_action_hold_steps = 4
     simple_progress_reward_scale = 40.0
     simple_goal_distance_penalty_scale = 0.16
-    simple_goal_max_abs_err_penalty_scale = 0.70
-    simple_goal_proximity_reward_scale = 3.8
+    simple_goal_max_abs_err_penalty_scale = 0.90
+    simple_goal_proximity_reward_scale = 5.5
     simple_goal_reached_bonus = 36.0
-    simple_goal_gate_reward_scale = 12.0
+    simple_goal_gate_reward_scale = 14.0
     simple_time_penalty_scale_end = 0.01
     simple_collision_penalty_scale = 0.15
     simple_collision_peak_penalty_scale = 0.07
@@ -226,11 +236,17 @@ class MoveBottleStage1EnvCfg(MoveBottleEnvCfg):
     simple_y_parallel_penalty_scale = 0.50
     simple_y_flip_penalty_scale = 0.25
     simple_weighted_joint_err_penalty_scale = 0.30
-    # Stage-1(v7): rollback joint-wise shaping to pre-v6 behavior for clean A/B vs v4.
+    simple_joint_focus_penalty_scale = 1.20
+    simple_joint_focus_tol_deg = (24.0, 14.0, 12.0)
+    # Stage-1: target p90 tail (J2/J3) directly instead of averaging it out.
+    simple_joint_focus_penalty_mode = "mean"
+    simple_joint_focus_penalty_power = 2.0
+    # Stage-1: keep stable baseline weighting.
     simple_joint_weight_mode = "legacy_wrist"
-    simple_joint_focus_penalty_scale = 0.0
-    enable_joint_focus_success_gate = False
+    # Use base focus-joint defaults (v8 baseline: shaping scale remains 0.0).
     simple_shelf_escape_reward_scale = 1.20
+    simple_pre_escape_low_height_penalty_scale = 1.2
+    simple_pre_escape_descent_penalty_scale = 0.45
     tilt_severe_penalty = 6.0
     tilt_sustained_penalty = 1.2
     success_min_y_parallel = 0.88
@@ -240,6 +256,7 @@ class MoveBottleStage1EnvCfg(MoveBottleEnvCfg):
     virtual_terminate_on_collision = False
     # Require short sustained stay in-goal to avoid "touch-and-reset" behavior.
     success_hold_steps = 4
+    enable_joint_focus_success_gate = False
     success_require_y = False
     success_require_speed = False
     success_require_collision = False
@@ -253,13 +270,17 @@ class MoveBottleStage1EnvCfg(MoveBottleEnvCfg):
 class MoveBottleStage2EnvCfg(MoveBottleEnvCfg):
     """Stage-2: fixed start -> final goal with decaying standby-waypoint shaping."""
 
+    # 10.0 s at 60 Hz policy rate => ~600 control steps.
+    episode_length_s = 10.0
     use_waypoint_reward = True
     move_waypoint_joint_pos_deg = (90.0, -45.0, 90.0, 0.0, 45.0, -90.0)
-    waypoint_proximity_reward_scale = 2.5
+    # Keep waypoint as early guidance only; fade it out sooner to avoid stage-1 posture relapse.
+    waypoint_proximity_reward_scale = 1.5
     waypoint_proximity_decay = 1.8
-    waypoint_reward_decay_steps = 500000
+    waypoint_reward_decay_steps = 150000
     simple_gate_violation_penalty_scale = 0.22
-    simple_y_parallel_penalty_scale = 0.95
+    # Stage-2 should prioritize reaching final joint target; strict orientation is finalized in stage-3.
+    simple_y_parallel_penalty_scale = 0.70
     simple_y_flip_penalty_scale = 0.45
     simple_collision_speed_penalty_scale = 0.16
     simple_pinch_penalty_scale = 0.18
@@ -270,8 +291,8 @@ class MoveBottleStage2EnvCfg(MoveBottleEnvCfg):
     simple_joint_weight_mode = "auto_delta"
     simple_joint_focus_penalty_scale = 0.0
     enable_joint_focus_success_gate = False
-    success_min_y_parallel = 0.92
-    success_require_y = True
+    success_min_y_parallel = 0.88
+    success_require_y = False
     success_require_speed = False
     success_require_collision = False
     terminate_on_severe_tilt = False
@@ -547,6 +568,20 @@ class MoveBottleEnv(GripBottleEnv):
             self.reset_reason_dropped_rate = torch.tensor(0.0, dtype=torch.float, device=self.device)
             self.reset_reason_toppled_rate = torch.tensor(0.0, dtype=torch.float, device=self.device)
             self.reset_reason_timeout_rate = torch.tensor(0.0, dtype=torch.float, device=self.device)
+        if not hasattr(self, "end_done_count"):
+            self.end_done_count = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_done_rate = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_goal_joint_dist_deg_mean = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_goal_joint_dist_deg_p50 = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_goal_joint_dist_deg_p90 = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            for j_idx in range(1, 7):
+                setattr(self, f"end_goal_abs_err_deg_j{j_idx}_mean", torch.tensor(0.0, dtype=torch.float, device=self.device))
+                setattr(self, f"end_goal_abs_err_deg_j{j_idx}_p50", torch.tensor(0.0, dtype=torch.float, device=self.device))
+                setattr(self, f"end_goal_abs_err_deg_j{j_idx}_p90", torch.tensor(0.0, dtype=torch.float, device=self.device))
+            self.end_success_goal_joint_dist_deg_mean = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_success_goal_joint_dist_deg_p50 = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_timeout_goal_joint_dist_deg_mean = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_timeout_goal_joint_dist_deg_p50 = torch.tensor(0.0, dtype=torch.float, device=self.device)
 
     def _build_joint_error_weights(self, arm_dim: int, dtype: torch.dtype) -> torch.Tensor:
         mode = str(getattr(self.cfg, "simple_joint_weight_mode", "legacy_wrist")).lower()
@@ -1045,6 +1080,45 @@ class MoveBottleEnv(GripBottleEnv):
             reason = torch.where(done_mask & collided, 2, reason)  # collision
             reason = torch.where(done_mask & success, 1, reason)  # success (highest priority)
             done_count = torch.clamp(done_mask.float().sum(), min=1.0)
+            self.end_done_count = done_mask.float().sum()
+            self.end_done_rate = self.end_done_count / float(self.num_envs)
+            done_goal_dist_deg = torch.rad2deg(self.goal_dist[done_mask])
+            self.end_goal_joint_dist_deg_mean = done_goal_dist_deg.mean()
+            self.end_goal_joint_dist_deg_p50 = torch.quantile(done_goal_dist_deg, 0.5)
+            self.end_goal_joint_dist_deg_p90 = torch.quantile(done_goal_dist_deg, 0.9)
+            success_done = done_mask & (reason == 1)
+            timeout_done = done_mask & (reason == 7)
+            if bool(torch.any(success_done).item()):
+                success_goal_dist_deg = torch.rad2deg(self.goal_dist[success_done])
+                self.end_success_goal_joint_dist_deg_mean = success_goal_dist_deg.mean()
+                self.end_success_goal_joint_dist_deg_p50 = torch.quantile(success_goal_dist_deg, 0.5)
+            else:
+                self.end_success_goal_joint_dist_deg_mean = torch.tensor(0.0, dtype=torch.float, device=self.device)
+                self.end_success_goal_joint_dist_deg_p50 = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            if bool(torch.any(timeout_done).item()):
+                timeout_goal_dist_deg = torch.rad2deg(self.goal_dist[timeout_done])
+                self.end_timeout_goal_joint_dist_deg_mean = timeout_goal_dist_deg.mean()
+                self.end_timeout_goal_joint_dist_deg_p50 = torch.quantile(timeout_goal_dist_deg, 0.5)
+            else:
+                self.end_timeout_goal_joint_dist_deg_mean = torch.tensor(0.0, dtype=torch.float, device=self.device)
+                self.end_timeout_goal_joint_dist_deg_p50 = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            arm_dim = min(6, self._robot.num_joints, int(self.goal_joint_pos.shape[0]))
+            if arm_dim > 0:
+                done_joint_abs_err_deg = torch.rad2deg(self.goal_joint_abs_err[done_mask, :arm_dim])
+                for j_idx in range(1, 7):
+                    tensor_mean = f"end_goal_abs_err_deg_j{j_idx}_mean"
+                    tensor_p50 = f"end_goal_abs_err_deg_j{j_idx}_p50"
+                    tensor_p90 = f"end_goal_abs_err_deg_j{j_idx}_p90"
+                    zero_based = j_idx - 1
+                    if zero_based < arm_dim:
+                        vals = done_joint_abs_err_deg[:, zero_based]
+                        setattr(self, tensor_mean, vals.mean())
+                        setattr(self, tensor_p50, torch.quantile(vals, 0.5))
+                        setattr(self, tensor_p90, torch.quantile(vals, 0.9))
+                    else:
+                        setattr(self, tensor_mean, torch.tensor(0.0, dtype=torch.float, device=self.device))
+                        setattr(self, tensor_p50, torch.tensor(0.0, dtype=torch.float, device=self.device))
+                        setattr(self, tensor_p90, torch.tensor(0.0, dtype=torch.float, device=self.device))
             self.reset_reason_success_rate = (reason == 1).float().sum() / done_count
             self.reset_reason_collision_rate = (reason == 2).float().sum() / done_count
             self.reset_reason_severe_tilt_rate = (reason == 3).float().sum() / done_count
@@ -1053,6 +1127,19 @@ class MoveBottleEnv(GripBottleEnv):
             self.reset_reason_toppled_rate = (reason == 6).float().sum() / done_count
             self.reset_reason_timeout_rate = (reason == 7).float().sum() / done_count
         else:
+            self.end_done_count = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_done_rate = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_goal_joint_dist_deg_mean = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_goal_joint_dist_deg_p50 = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_goal_joint_dist_deg_p90 = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            for j_idx in range(1, 7):
+                setattr(self, f"end_goal_abs_err_deg_j{j_idx}_mean", torch.tensor(0.0, dtype=torch.float, device=self.device))
+                setattr(self, f"end_goal_abs_err_deg_j{j_idx}_p50", torch.tensor(0.0, dtype=torch.float, device=self.device))
+                setattr(self, f"end_goal_abs_err_deg_j{j_idx}_p90", torch.tensor(0.0, dtype=torch.float, device=self.device))
+            self.end_success_goal_joint_dist_deg_mean = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_success_goal_joint_dist_deg_p50 = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_timeout_goal_joint_dist_deg_mean = torch.tensor(0.0, dtype=torch.float, device=self.device)
+            self.end_timeout_goal_joint_dist_deg_p50 = torch.tensor(0.0, dtype=torch.float, device=self.device)
             self.reset_reason_success_rate = torch.tensor(0.0, dtype=torch.float, device=self.device)
             self.reset_reason_collision_rate = torch.tensor(0.0, dtype=torch.float, device=self.device)
             self.reset_reason_severe_tilt_rate = torch.tensor(0.0, dtype=torch.float, device=self.device)
@@ -1086,16 +1173,30 @@ class MoveBottleEnv(GripBottleEnv):
             focus_idx, focus_tol_deg, focus_w = self._resolve_focus_joint_spec(arm_dim)
             if len(focus_idx) > 0:
                 arm_abs_err_deg = torch.rad2deg(self.goal_joint_abs_err[:, :arm_dim])
+                focus_terms: list[torch.Tensor] = []
                 focus_acc = torch.zeros_like(self.goal_dist)
                 focus_w_sum = 0.0
                 for j, tol_deg, w in zip(focus_idx, focus_tol_deg, focus_w):
                     tol_safe = max(float(tol_deg), 1.0e-3)
-                    focus_acc = focus_acc + float(w) * torch.clamp(
-                        (arm_abs_err_deg[:, j] - tol_safe) / tol_safe, min=0.0, max=6.0
-                    )
+                    focus_excess = torch.clamp((arm_abs_err_deg[:, j] - tol_safe) / tol_safe, min=0.0, max=6.0)
+                    focus_acc = focus_acc + float(w) * focus_excess
                     focus_w_sum += float(w)
+                    focus_terms.append(focus_excess)
                 if focus_w_sum > 0.0:
-                    joint_focus_penalty = focus_acc / focus_w_sum
+                    focus_mode = str(getattr(self.cfg, "simple_joint_focus_penalty_mode", "mean")).lower()
+                    if focus_mode == "max" and len(focus_terms) > 0:
+                        # Tail-focused mode: emphasize worst focused-joint excess.
+                        weight_mean = focus_w_sum / float(len(focus_idx))
+                        scaled_terms = []
+                        for ex, w in zip(focus_terms, focus_w):
+                            scale = float(w) / max(weight_mean, 1.0e-6)
+                            scaled_terms.append(scale * ex)
+                        joint_focus_penalty = torch.max(torch.stack(scaled_terms, dim=-1), dim=-1)[0]
+                    else:
+                        joint_focus_penalty = focus_acc / focus_w_sum
+                    focus_power = max(float(getattr(self.cfg, "simple_joint_focus_penalty_power", 1.0)), 1.0)
+                    if focus_power > 1.0:
+                        joint_focus_penalty = torch.clamp(joint_focus_penalty.pow(focus_power), max=6.0)
 
                 if bool(getattr(self.cfg, "enable_joint_focus_success_gate", False)):
                     gate_tols = tuple(float(v) for v in getattr(self.cfg, "simple_joint_focus_success_tol_deg", ()))
@@ -1164,6 +1265,16 @@ class MoveBottleEnv(GripBottleEnv):
             tcp_height_from_table >= float(self.cfg.shelf_escape_min_tcp_height_from_table_m)
         ).float()
         shelf_escape_reward = shelf_escape_ratio * shelf_escape_height_ok
+        pre_escape_active = (shelf_escape_ratio < 0.999).float()
+        pre_escape_height_ref = max(float(self.cfg.shelf_escape_min_tcp_height_from_table_m), 1.0e-6)
+        pre_escape_low_height_penalty = pre_escape_active * torch.clamp(
+            (pre_escape_height_ref - tcp_height_from_table) / pre_escape_height_ref, min=0.0, max=2.0
+        )
+        ee_lin_vel_z = self._robot.data.body_lin_vel_w[:, self.ee_body_idx, 2]
+        pre_escape_speed_ref = max(float(self.cfg.pre_escape_descent_speed_ref_m_s), 1.0e-6)
+        pre_escape_descent_penalty = pre_escape_active * torch.clamp(
+            -ee_lin_vel_z / pre_escape_speed_ref, min=0.0, max=2.0
+        )
         waypoint_weight_now = 0.0
         waypoint_reward = torch.zeros_like(goal_proximity)
         if bool(self.cfg.use_waypoint_reward):
@@ -1195,6 +1306,8 @@ class MoveBottleEnv(GripBottleEnv):
             - self.cfg.simple_pinch_penalty_scale * self.pinch_penalty
             - self.cfg.simple_space_limit_count_penalty_scale * self.space_limit_violation_count
             - self.cfg.simple_space_limit_depth_penalty_scale * space_limit_depth_penalty
+            - self.cfg.simple_pre_escape_low_height_penalty_scale * pre_escape_low_height_penalty
+            - self.cfg.simple_pre_escape_descent_penalty_scale * pre_escape_descent_penalty
             - tilt_penalty
         )
 
@@ -1233,6 +1346,8 @@ class MoveBottleEnv(GripBottleEnv):
             "mean_waypoint_reward": waypoint_reward.mean(),
             "mean_shelf_escape_ratio": shelf_escape_ratio.mean(),
             "mean_shelf_escape_reward": shelf_escape_reward.mean(),
+            "mean_pre_escape_low_height_penalty": pre_escape_low_height_penalty.mean(),
+            "mean_pre_escape_descent_penalty": pre_escape_descent_penalty.mean(),
             "mean_goal_progress": goal_progress.mean(),
             "goal_reached_rate": goal_reached.float().mean(),
             "near_goal_20deg_rate": near_goal_20deg_rate,
@@ -1280,7 +1395,20 @@ class MoveBottleEnv(GripBottleEnv):
             "reset_reason_dropped_rate": self.reset_reason_dropped_rate,
             "reset_reason_toppled_rate": self.reset_reason_toppled_rate,
             "reset_reason_timeout_rate": self.reset_reason_timeout_rate,
+            "end_done_count": self.end_done_count,
+            "end_done_rate": self.end_done_rate,
+            "end_goal_joint_dist_deg_mean": self.end_goal_joint_dist_deg_mean,
+            "end_goal_joint_dist_deg_p50": self.end_goal_joint_dist_deg_p50,
+            "end_goal_joint_dist_deg_p90": self.end_goal_joint_dist_deg_p90,
+            "end_success_goal_joint_dist_deg_mean": self.end_success_goal_joint_dist_deg_mean,
+            "end_success_goal_joint_dist_deg_p50": self.end_success_goal_joint_dist_deg_p50,
+            "end_timeout_goal_joint_dist_deg_mean": self.end_timeout_goal_joint_dist_deg_mean,
+            "end_timeout_goal_joint_dist_deg_p50": self.end_timeout_goal_joint_dist_deg_p50,
         }
+        for j_idx in range(1, 7):
+            full_log[f"end_goal_abs_err_deg_j{j_idx}_mean"] = getattr(self, f"end_goal_abs_err_deg_j{j_idx}_mean")
+            full_log[f"end_goal_abs_err_deg_j{j_idx}_p50"] = getattr(self, f"end_goal_abs_err_deg_j{j_idx}_p50")
+            full_log[f"end_goal_abs_err_deg_j{j_idx}_p90"] = getattr(self, f"end_goal_abs_err_deg_j{j_idx}_p90")
         for j in range(6):
             key_idx = j + 1
             full_log[f"mean_joint_pos_deg_j{key_idx}"] = joint_pos_mean_deg[j]
@@ -1367,7 +1495,6 @@ class MoveBottleEnv(GripBottleEnv):
             min=-5.0,
             max=5.0,
         ).unsqueeze(-1)
-
         obs = torch.cat(
             (
                 joint_pos_obs,
