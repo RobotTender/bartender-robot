@@ -102,12 +102,8 @@ class DepthReader(Node):
         self.last_cup_bbox = None
         self.log_counter = 0
 
-        # --- Prediction Parameters (Look-ahead) ---
-        self.last_ml_ema = None
-        self.last_ml_time = None
-        self.flow_rate_ema = 0.0
-        self.flow_alpha = 0.2        # EMA filter for flow rate
-        self.PREDICTION_HORIZON = 1.5 # Seconds to look ahead (compensates for system + robot stop latency)
+        # --- Forward Snapping Parameters ---
+        self.SNAP_RATIO = 0.5 # Trigger snap when reaching 50% of the target volume increment
         # -----------------------------------
 
         # 구독자 설정
@@ -197,11 +193,6 @@ class DepthReader(Node):
         self.liquid_stability_count = 0 # Reset for new pour
         self.is_pouring_active = True # MASTER GATE OPEN
         
-        # Reset Prediction variables
-        self.last_ml_ema = None
-        self.last_ml_time = None
-        self.flow_rate_ema = 0.0
-        
         self.get_logger().info(f"Prepare Successful. Baseline: {self.start_volume_ml:.1f}ml, Goal: {self.target_total_volume_ml:.1f}ml")
         response.success = True
         response.message = f"Ready. Goal: {self.target_total_volume_ml:.1f}ml"
@@ -289,34 +280,20 @@ class DepthReader(Node):
                     volume_ml_ema = self.apply_liquid_ml_ema(volume_ml)
                     self.current_height_px_ema = height_px_ema
 
-                    # --- Prediction Logic ---
-                    current_time = self.get_clock().now().nanoseconds / 1e9
-                    predicted_ml = volume_ml_ema
-                    
-                    if self.last_ml_ema is not None and self.last_ml_time is not None:
-                        dt = current_time - self.last_ml_time
-                        if dt > 0:
-                            current_flow = (volume_ml_ema - self.last_ml_ema) / dt
-                            # Only update flow if it's positive (pouring in)
-                            if current_flow > 0:
-                                self.flow_rate_ema = self.flow_alpha * current_flow + (1 - self.flow_alpha) * self.flow_rate_ema
-                            
-                            predicted_ml = volume_ml_ema + (self.flow_rate_ema * self.PREDICTION_HORIZON)
-                    
-                    self.last_ml_ema = volume_ml_ema
-                    self.last_ml_time = current_time
-                    # -------------------------
-
                     vol_msg = Float32()
                     vol_msg.data = float(volume_ml_ema)
                     self.volume_pub.publish(vol_msg)
 
                     if self.is_pouring_active and self.target_total_volume_ml > 0:
-                        # Use predicted volume for snapping
-                        if predicted_ml >= self.target_total_volume_ml and not self.snap_triggered:
+                        # Forward Snapping Trigger Logic
+                        # Triggers when: (Current Volume - Start Volume) >= (Target Increment * Ratio)
+                        current_increment = volume_ml_ema - self.start_volume_ml
+                        trigger_threshold_ml = self.target_volume_ml * self.SNAP_RATIO
+                        
+                        if current_increment >= trigger_threshold_ml and not self.snap_triggered:
                             self.trigger_pub.publish(Empty())
                             self.snap_triggered = True
-                            self.get_logger().info(f"--- PREDICTIVE SNAP TRIGGERED: {predicted_ml:.1f}ml (Curr: {volume_ml_ema:.1f}ml, Flow: {self.flow_rate_ema:.2f}ml/s, Goal: {self.target_total_volume_ml:.1f}) ---")
+                            self.get_logger().info(f"--- FORWARD SNAP TRIGGERED (Ratio: {self.SNAP_RATIO}): {volume_ml_ema:.1f}ml (Goal: {self.target_total_volume_ml:.1f}, Start: {self.start_volume_ml:.1f}) ---")
         else:
             self.liquid_stability_count = 0
 
