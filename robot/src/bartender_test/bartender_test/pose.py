@@ -2,8 +2,9 @@ import rclpy
 import sys
 from rclpy.node import Node
 from dsr_msgs2.srv import MoveJoint
-from .defines import (POSJ_HOME, POSJ_CHEERS, POSJ_PICK_PLACE_READY,
-                            BOTTLE_CONFIG)
+from .defines import (POSJ_HOME, POSJ_CHEERS, POSJ_PICK_PLACE_READY, POSJ_SNAP,
+                            BOTTLE_CONFIG, SNAP_VELOCITY, SNAP_ACCELERATION,
+                            SNAP_J6_VELOCITY, SNAP_J6_ACCELERATION)
 
 def main(args=None):
     rclpy.init(args=args)
@@ -15,13 +16,15 @@ def main(args=None):
         node.get_logger().info('Service not available, waiting...')
 
     if len(sys.argv) < 2:
-        print("Usage: ros2 run bartender_test pose [home|ready|cheers|contact|horizontal|diagonal|vertical] [juice|beer|soju]")
+        print("Usage: ros2 run bartender_test pose [home|ready|cheers|snap|contact|horizontal|diagonal|vertical] [juice|beer|soju]")
         return
 
     pose_name = sys.argv[1].lower()
     bottle_type = sys.argv[2].lower() if len(sys.argv) > 2 else 'soju'
     
     target_joint_pose = None
+    target_vel = 60.0
+    target_acc = 60.0
     
     try:
         if pose_name == 'home':
@@ -30,6 +33,10 @@ def main(args=None):
             target_joint_pose = POSJ_PICK_PLACE_READY
         elif pose_name == 'cheers':
             target_joint_pose = POSJ_CHEERS
+        elif pose_name == 'snap':
+            target_joint_pose = POSJ_SNAP
+            target_vel = SNAP_J6_VELOCITY
+            target_acc = SNAP_J6_ACCELERATION
         elif pose_name in ['contact', 'horizontal', 'diagonal', 'vertical']:
             config = BOTTLE_CONFIG.get(bottle_type)
             if config:
@@ -43,8 +50,8 @@ def main(args=None):
         # Send request
         req = MoveJoint.Request()
         req.pos = [float(x) for x in target_joint_pose]
-        req.vel = 60.0
-        req.acc = 60.0
+        req.vel = target_vel
+        req.acc = target_acc
         
         node.get_logger().info(f"Moving to {pose_name}...")
         future = cli.call_async(req)

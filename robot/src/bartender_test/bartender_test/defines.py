@@ -4,6 +4,9 @@ POSJ_HOME = [69.5, -43.0, 102.0, 101.0, -72.0, -213.0]
 POSJ_PICK_PLACE_READY = [28.00, -36.23, 103.71, 78.25, 62.47, -156.73]
 POSJ_CHEERS = [45.0, 0.0, 135.0, 90.0, -90.0, -135.0]
 
+# Final snap pose
+POSJ_SNAP = [45.00, 26.25, 131.50, 90.00, -90.00, -112.23]
+
 # Bottle Configurations: [JUICE, BEER, SOJU]
 # Each bottle has its own gripper settings and pouring trajectory points
 BOTTLE_CONFIG = {
@@ -24,16 +27,16 @@ BOTTLE_CONFIG = {
     'beer': {
         'id': 1,
         'gripper_pos': 550,
-        'gripper_force': 150,
+        'gripper_force': 75,
         'pour_target_ml': 100.0,
         'posx_contact': [319.06, 45.10, 177.00, -90.00, 30.00, -135.01],
         'posj_contact': [40.29, 26.46, 139.23, 85.45, -88.84, -74.27],
-        'posx_horizontal': [304.78, 20.82, 251.55, -88.05, 89.99, -133.0],
-        'posj_horizontal': [37.99, 7.03, 143.01, 83.92, -86.51, -29.79],
-        'posx_diagonal': [277.66, -6.29, 284.56, 90.00, 40.00, 45.00],
-        'posj_diagonal': [36.62, -6.09, 147.33, 83.45, -84.76, 11.53],
-        'posx_vertical': [233.48, -40.48, 333.73, 90.00, -1.01, 44.99],
-        'posj_vertical': [36.16, -28.40, 150.63, 85.26, -82.54, 33.54]
+        'posx_horizontal': [294.76, 10.80, 261.57, -73.25, 89.99, -118.25],
+        'posj_horizontal': [37.54, 2.90, 144.85, 83.68, -86.03, -32.04],
+        'posx_diagonal': [267.63, -16.31, 284.54, 90.01, 40.01, 45.00],
+        'posj_diagonal': [35.96, -8.67, 149.38, 82.99, -84.29, 11.05],
+        'posx_vertical': [228.47, -45.50, 333.69, 90.00, -1.00, 44.99],
+        'posj_vertical': [35.69, -30.28, 151.43, 85.15, -82.05, 32.48]
     },
     'soju': {
         'id': 2,
@@ -67,3 +70,7 @@ GRIPPER_FORCE_DEFAULT = 500
 PICK_PLACE_Z = 650
 PICK_PLACE_X_OFFSET = 20.0
 PICK_PLACE_Y_OFFSET = -60.0
+
+# Snap Recovery Constants
+SNAP_VELOCITY = 360.0
+SNAP_ACCELERATION = 360.0

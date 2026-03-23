@@ -18,7 +18,8 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 from robotender_msgs.action import PourBottle
-from .defines import (POSJ_HOME, POSJ_CHEERS, BOTTLE_CONFIG)
+from .defines import (POSJ_HOME, POSJ_CHEERS, POSJ_SNAP, BOTTLE_CONFIG,
+                            SNAP_VELOCITY, SNAP_ACCELERATION)
 
 class ActionNode(Node):
     def __init__(self):
@@ -27,6 +28,7 @@ class ActionNode(Node):
         self.callback_group = ReentrantCallbackGroup()
         
         self.trigger_received = False
+        self.passed_horizontal = False
         self.recording = False
         self.current_posx = [0.0] * 6
         self.current_posj = [0.0] * 6
@@ -107,6 +109,10 @@ class ActionNode(Node):
                         wp_data = self.target_waypoints.pop(0)
                         self.passed_waypoints.append(wp_data)
                         self.last_checkpoint_xyz = B
+                        
+                        # contact(1), horizontal(2), diagonal(3), vertical(4)
+                        if len(self.passed_waypoints) == 2:
+                            self.passed_horizontal = True
 
     def goal_callback(self, goal_request):
         if self.state == "RUNNING": return GoalResponse.REJECT
@@ -161,7 +167,7 @@ class ActionNode(Node):
                     self.get_logger().warn("Perception not ready or timed out. Proceeding with caution.")
 
             self.last_checkpoint_xyz = list(get_current_posx()[0])[:3]
-            self.trigger_received, self.passed_waypoints, self.periodic_buffer = False, [], []
+            self.trigger_received, self.passed_horizontal, self.passed_waypoints, self.periodic_buffer = False, False, [], []
             self.target_waypoints = [(p2, config.get('posj_contact')), (p3, config.get('posj_horizontal')), (p4, config.get('posj_diagonal')), (p5, config.get('posj_vertical'))]
             
             self.recording = True
@@ -183,26 +189,34 @@ class ActionNode(Node):
             self.get_logger().info("Sent 'done' signal to perception.")
 
             # RECOVERY MOTION
-            curr_j = list(get_current_posj())
-            raw_path = [posj(curr_j)]
-            if self.trigger_received and self.periodic_buffer:
-                for i in range(1, min(len(self.periodic_buffer), 2) + 1): raw_path.append(posj(self.periodic_buffer[-i]))
-            
-            waypoints_rev = list(reversed(self.passed_waypoints))
-            if not self.trigger_received and waypoints_rev: waypoints_rev.pop(0)
-            for _, wp_j in waypoints_rev:
-                if wp_j is not None: raw_path.append(posj(wp_j))
-            if config.get('posj_contact'): raw_path.append(posj(config.get('posj_contact')))
-            
-            reverse_path = [raw_path[0]]
-            for i in range(1, len(raw_path)):
-                if sum(abs(a-b) for a,b in zip(raw_path[i], raw_path[i-1])) > 5.0: reverse_path.append(raw_path[i])
+            if self.trigger_received:
+                if self.passed_horizontal:
+                    self.get_logger().info("Interrupted AFTER horizontal. Executing POSJ_SNAP...")
+                    movej(POSJ_SNAP, vel=SNAP_VELOCITY, acc=SNAP_ACCELERATION)
+                else:
+                    self.get_logger().info("Interrupted BEFORE horizontal. Executing posj_contact...")
+                    contact_pose = config.get('posj_contact')
+                    if contact_pose:
+                        movej(contact_pose, vel=150, acc=150)
+            else:
+                # Normal completion recovery
+                curr_j = list(get_current_posj())
+                raw_path = [posj(curr_j)]
+                waypoints_rev = list(reversed(self.passed_waypoints))
+                if waypoints_rev: waypoints_rev.pop(0)
+                for _, wp_j in waypoints_rev:
+                    if wp_j is not None: raw_path.append(posj(wp_j))
+                if config.get('posj_contact'): raw_path.append(posj(config.get('posj_contact')))
+                
+                reverse_path = [raw_path[0]]
+                for i in range(1, len(raw_path)):
+                    if sum(abs(a-b) for a,b in zip(raw_path[i], raw_path[i-1])) > 5.0: reverse_path.append(raw_path[i])
 
-            if len(reverse_path) > 1:
-                if sum(abs(a-b) for a,b in zip(reverse_path[0], list(get_current_posj()))) < 0.5: reverse_path.pop(0)
-                if len(reverse_path) > 1: movesj(reverse_path, vel=210, acc=210)
-                else: movej(reverse_path[0], vel=150, acc=150)
-            elif reverse_path: movej(reverse_path[0], vel=150, acc=150)
+                if len(reverse_path) > 1:
+                    if sum(abs(a-b) for a,b in zip(reverse_path[0], list(get_current_posj()))) < 0.5: reverse_path.pop(0)
+                    if len(reverse_path) > 1: movesj(reverse_path, vel=210, acc=210)
+                    else: movej(reverse_path[0], vel=150, acc=150)
+                elif reverse_path: movej(reverse_path[0], vel=150, acc=150)
             
             wait(1.0); movej(POSJ_CHEERS, vel=30, acc=30)
 

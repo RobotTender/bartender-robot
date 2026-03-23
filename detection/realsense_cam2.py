@@ -90,7 +90,7 @@ class DepthReader(Node):
         
         # --- Stability Logic ---
         self.liquid_stability_count = 0 
-        self.STABILITY_THRESHOLD = 10   # number of frames for stabilzation, avoid reflect glitches
+        self.STABILITY_THRESHOLD = 5   # number of frames for stabilzation, avoid reflect glitches
         
         # --- Tare Safety Logic ---
         self.tare_stability_count = 0  # To ensure we only tare on a truly empty cup
@@ -214,7 +214,7 @@ class DepthReader(Node):
         if self.color_image is None: return
         img_vis = self.color_image.copy()
 
-        results = model.predict(source=img_vis, conf=0.4, iou=0.5, retina_masks=True, verbose=False)
+        results = model.predict(source=img_vis, conf=0.6, iou=0.5, retina_masks=True, verbose=False) # 0327: 0.4 -> 0.6
         overlay = img_vis.copy()
         bottle_mask_current = None
         liquid_mask_current = None
