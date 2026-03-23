@@ -6,6 +6,9 @@
     - **Node Isolation Standard:** All motion nodes use isolated internal nodes.
 
 ## Achievements (March 23, 2026)
+- **Time-Deterministic Pouring (Snap Strategy):** Implemented a high-precision snap trigger based on **Flow Detection + Timing**, replacing the slower filtered-volume trigger.
+    - **Camera Side:** Detects the "First Drop" by identifying a waterline jump above the baseline. Confirms flow after 5 consecutive frames.
+    - **Robot Side:** Receives `flow_started` signal and runs a calculated timer based on `pour_target_ml` and `flow_rate_ml_s`.
 - **Real-time Mode Selection:** Added `/dsr01/robotender_manager/mode` topic (`std_msgs/msg/String`) to toggle between `auto` and `manual`.
 - **Automatic Sequence Chaining:** In `auto` mode, receiving an order now triggers the full **Pick -> Pour -> Place** sequence automatically.
 - **Interruptible Auto-Sequence:** The manager checks the execution mode before every major step (Pick, Pour, Place). If switched to `manual` mid-sequence, the robot completes the current step to a safe position (Home) and stops.
@@ -17,9 +20,22 @@
 - **Pour Action Server:** Converted Pour node to Action Server with real-time feedback.
 - **Global Node Isolation:** Applied the isolated internal node pattern to all motion nodes.
 
-## Next Steps: Verification & Todo
-- **Verify Real-time Interrupts:** Test switching to manual at various points in the auto-sequence to ensure safe halting.
-- **Test Snap and Recovery:** Verify the "Snap" (interruption) logic during the pour motion.
+## Tuning & Calibration Guide (Snap Logic)
+The system calculates the pour duration as:
+`Wait Time = (Target Volume / Flow Rate) - Reaction Offset`
+
+All tuning is done in `robot/src/bartender_test/bartender_test/defines.py`:
+
+### 1. If the cup OVERFILLS:
+- **Increase `flow_rate_ml_s`**: Tells the robot liquid is faster -> stops earlier.
+- **Increase `REACTION_TIME_OFFSET`**: Accounts for mechanical braking lag (current: 0.7s).
+
+### 2. If the cup UNDERFILLS:
+- **Decrease `flow_rate_ml_s`**: Tells the robot liquid is slower -> pours longer.
+- **Decrease `REACTION_TIME_OFFSET`**: Reduces the "head start" the robot takes to stop.
+
+### 3. Stability Tuning (`realsense_cam2.py`):
+- **`FLOW_STABILITY_THRESHOLD`**: Currently **5 frames**. Increase if reflections cause false starts; decrease for faster response.
 
 ## Core Mandates
 - **Orchestration Pattern:** The Manager node MUST handle the decision-making and sequence logic.

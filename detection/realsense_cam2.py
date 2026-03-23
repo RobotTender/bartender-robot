@@ -59,6 +59,7 @@ class DepthReader(Node):
         self.height_ema_alpha = 0.2
         self.height_px_ema = None
         self.current_height_px_ema = None
+        self.current_waterline_y = None # Current highest pixel of liquid
 
         # 고정 bottom_y
         self.fixed_bottle_bottom_y = None
@@ -70,6 +71,7 @@ class DepthReader(Node):
 
         # --- Automatic Snap Trigger Logic ---
         self.trigger_pub = self.create_publisher(Empty, '/dsr01/robotender_snap/trigger', 10)
+        self.flow_started_pub = self.create_publisher(Empty, '/dsr01/robotender/flow_started', 10)
         self.volume_pub = self.create_publisher(Float32, '/dsr01/robotender/liquid_volume', 10)
         
         # Subscriber for dynamic target volume (increment)
@@ -84,13 +86,17 @@ class DepthReader(Node):
         self.start_volume_ml = 0.0     # Volume at the start of the pour
         self.target_total_volume_ml = 0.0 # start_volume + target_volume (Absolute Goal)
         self.target_line_y = None      # Y-coordinate for the target visualization line
+        self.baseline_waterline_y = None # Baseline highest pixel before pour starts
         
         self.snap_triggered = False    # To ensure we only trigger once per pour
+        self.flow_started_sent = False # To ensure we only send flow_started once
+        self.flow_stability_count = 0  # Counter for consecutive stream detections
+        self.FLOW_STABILITY_THRESHOLD = 5 # 5 frames (~0.16s) to confirm it is a stream
         self.low_volume_count = 0      # Used to reset the trigger flag when cup is empty
         
         # --- Stability Logic ---
         self.liquid_stability_count = 0 
-        self.STABILITY_THRESHOLD = 5   # number of frames for stabilzation, avoid reflect glitches
+        self.STABILITY_THRESHOLD = 3   # number of frames for stabilzation, avoid reflect glitches
         
         # --- Tare Safety Logic ---
         self.tare_stability_count = 0  # To ensure we only tare on a truly empty cup
@@ -187,13 +193,18 @@ class DepthReader(Node):
         self.start_volume_ml = self.estimated_ml_ema if self.estimated_ml_ema is not None else 0.0
         self.target_total_volume_ml = self.start_volume_ml + self.target_volume_ml
         
+        # --- Capture Baseline Waterline ---
+        self.baseline_waterline_y = self.current_waterline_y if self.current_waterline_y is not None else self.fixed_bottle_bottom_y
+        
         # 3. Finalize goal visualization
         self._update_target_line_y()
         self.snap_triggered = False
-        self.liquid_stability_count = 0 # Reset for new pour
-        self.is_pouring_active = True # MASTER GATE OPEN
+        self.flow_started_sent = False 
+        self.flow_stability_count = 0 
+        self.liquid_stability_count = 0 
+        self.is_pouring_active = True 
         
-        self.get_logger().info(f"Prepare Successful. Baseline: {self.start_volume_ml:.1f}ml, Goal: {self.target_total_volume_ml:.1f}ml")
+        self.get_logger().info(f"Prepare Successful. Baseline: {self.start_volume_ml:.1f}ml, Goal: {self.target_total_volume_ml:.1f}ml, Waterline: {self.baseline_waterline_y}")
         response.success = True
         response.message = f"Ready. Goal: {self.target_total_volume_ml:.1f}ml"
         return response
@@ -207,6 +218,8 @@ class DepthReader(Node):
             self.target_volume_ml = 0.0
             self.target_total_volume_ml = 0.0
             self.target_line_y = None
+            self.baseline_waterline_y = None
+            self.flow_stability_count = 0
             self.liquid_stability_count = 0
 
     def depth_callback(self, msg):
@@ -214,7 +227,7 @@ class DepthReader(Node):
         if self.color_image is None: return
         img_vis = self.color_image.copy()
 
-        results = model.predict(source=img_vis, conf=0.6, iou=0.5, retina_masks=True, verbose=False) # 0327: 0.4 -> 0.6
+        results = model.predict(source=img_vis, conf=0.6, iou=0.5, retina_masks=True, verbose=False)
         overlay = img_vis.copy()
         bottle_mask_current = None
         liquid_mask_current = None
@@ -269,11 +282,27 @@ class DepthReader(Node):
                 self.is_pouring_active = False
                 self.liquid_stability_count = 0
         
-        # Liquid Logic (Temporal Stability + Active Pouring Check)
+        # Liquid Logic
         if liquid_mask_current is not None and self.fixed_bottle_bottom_y is not None:
+            height_px, waterline_y = self.estimate_height_px(liquid_mask_current)
+            self.current_waterline_y = waterline_y 
+
+            # --- Waterline Jump Trigger with 10-frame Stability ---
+            if self.is_pouring_active and not self.flow_started_sent and self.baseline_waterline_y is not None:
+                # Trigger if ANY higher liquid is detected (no minimum jump threshold)
+                if waterline_y < self.baseline_waterline_y: 
+                    self.flow_stability_count += 1
+                    if self.flow_stability_count >= self.FLOW_STABILITY_THRESHOLD:
+                        self.flow_started_pub.publish(Empty())
+                        self.flow_started_sent = True
+                        self.get_logger().info(f"--- FLOW CONFIRMED! waterline higher than baseline: {self.baseline_waterline_y} -> {waterline_y} ---")
+                else:
+                    self.flow_stability_count = 0 
+            else:
+                self.flow_stability_count = 0
+
             self.liquid_stability_count += 1
             if self.liquid_stability_count >= self.STABILITY_THRESHOLD:
-                height_px, _ = self.estimate_height_px(liquid_mask_current)
                 if height_px is not None:
                     height_px_ema = self.apply_height_ema(height_px)
                     volume_ml = self.height_px_to_volume_ml(height_px_ema)
@@ -283,19 +312,10 @@ class DepthReader(Node):
                     vol_msg = Float32()
                     vol_msg.data = float(volume_ml_ema)
                     self.volume_pub.publish(vol_msg)
-
-                    if self.is_pouring_active and self.target_total_volume_ml > 0:
-                        # Forward Snapping Trigger Logic
-                        # Triggers when: (Current Volume - Start Volume) >= (Target Increment * Ratio)
-                        current_increment = volume_ml_ema - self.start_volume_ml
-                        trigger_threshold_ml = self.target_volume_ml * self.SNAP_RATIO
-                        
-                        if current_increment >= trigger_threshold_ml and not self.snap_triggered:
-                            self.trigger_pub.publish(Empty())
-                            self.snap_triggered = True
-                            self.get_logger().info(f"--- FORWARD SNAP TRIGGERED (Ratio: {self.SNAP_RATIO}): {volume_ml_ema:.1f}ml (Goal: {self.target_total_volume_ml:.1f}, Start: {self.start_volume_ml:.1f}) ---")
         else:
             self.liquid_stability_count = 0
+            self.flow_stability_count = 0
+            self.current_waterline_y = None
 
         # Visualization
         if self.last_cup_bbox is not None:

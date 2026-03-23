@@ -15,6 +15,7 @@ BOTTLE_CONFIG = {
         'gripper_pos': 800,
         'gripper_force': 400,
         'pour_target_ml': 100.0,
+        'flow_rate_ml_s': 20.0, # Default: 20ml per second
         'posx_contact': [319.06, 45.10, 177.00, -90.00, 30.00, -135.01],
         'posj_contact': [40.29, 26.46, 139.23, 85.45, -88.84, -74.27],
         'posx_horizontal': [304.78, 20.82, 251.55, -88.05, 89.99, -133.0],
@@ -29,6 +30,7 @@ BOTTLE_CONFIG = {
         'gripper_pos': 550,
         'gripper_force': 75,
         'pour_target_ml': 100.0,
+        'flow_rate_ml_s': 20.0, # Default: 20ml per second
         'posx_contact': [319.06, 45.10, 177.00, -90.00, 30.00, -135.01],
         'posj_contact': [40.29, 26.46, 139.23, 85.45, -88.84, -74.27],
         'posx_horizontal': [294.76, 10.80, 261.57, -73.25, 89.99, -118.25],
@@ -42,7 +44,8 @@ BOTTLE_CONFIG = {
         'id': 2,
         'gripper_pos': 400,
         'gripper_force': 175,
-        'pour_target_ml': 100.0,
+        'pour_target_ml': 50.0,
+        'flow_rate_ml_s': 70.0, # Increased for faster modeling
         'posx_contact': [329.05, 55.09, 117.00, -90.00, 29.99, -135.01],
         'posj_contact': [40.53, 40.36, 134.88, 85.56, -89.63, -64.75],
         'posx_horizontal': [354.75, 70.77, 231.54, -77.55, 89.98, -122.55],
@@ -72,5 +75,6 @@ PICK_PLACE_X_OFFSET = 20.0
 PICK_PLACE_Y_OFFSET = -60.0
 
 # Snap Recovery Constants
-SNAP_VELOCITY = 360.0
-SNAP_ACCELERATION = 360.0
+SNAP_VELOCITY = 150.0
+SNAP_ACCELERATION = 150.0
+REACTION_TIME_OFFSET = 0.7 # Increased to account for robot deceleration lag
