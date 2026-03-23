@@ -133,7 +133,6 @@ def stop_process(spec: ManagedProcess, sig: signal.Signals = signal.SIGINT) -> N
         return
 
 def main() -> int:
-    # ... (args parsing unchanged)
     parser = argparse.ArgumentParser(description="Start bartender web + pick stack together.")
     parser.add_argument("--with-bringup", action="store_true", help="Also run robot bringup command.")
     parser.add_argument(
@@ -231,7 +230,7 @@ def main() -> int:
         return_code = 0
     finally:
         print("[stop] cleaning up persistent logic nodes...")
-        subprocess.run(["pkill", "-9", "-f", "python3 -m bartender_test\.(gripper)"], stderr=subprocess.DEVNULL)
+        subprocess.run(["pkill", "-9", "-f", r"python3 -m bartender_test\.(gripper)"], stderr=subprocess.DEVNULL)
 
         # Graceful shutdown
         for spec in reversed(started_processes):

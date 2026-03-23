@@ -24,6 +24,19 @@ class RobotenderManager(Node):
         super().__init__('robotender_manager', namespace='/dsr01')
         self.callback_group = ReentrantCallbackGroup()
         
+        # 0. Parameters
+        self.declare_parameter('execution_mode', 'auto') # 'auto' or 'manual'
+        self.execution_mode = self.get_parameter('execution_mode').get_parameter_value().string_value
+        
+        # Mode Control Topic
+        self.mode_sub = self.create_subscription(
+            String, 
+            'robotender_manager/mode', 
+            self.mode_control_callback, 
+            10, 
+            callback_group=self.callback_group
+        )
+        
         # 1. Service Clients
         self.movej_cli = self.create_client(MoveJoint, 'motion/move_joint', callback_group=self.callback_group)
         self.gripper_cli = self.create_client(GripperControl, 'robotender_gripper/move', callback_group=self.callback_group)
@@ -46,6 +59,7 @@ class RobotenderManager(Node):
         
         self.get_logger().info('====================================================')
         self.get_logger().info('   Robotender Manager Node Initialized')
+        self.get_logger().info(f'   Execution Mode: {self.execution_mode.upper()}')
         self.get_logger().info('====================================================')
         
         # Trigger initial standby via a safe one-shot timer
@@ -61,21 +75,46 @@ class RobotenderManager(Node):
 
         self.get_logger().info(f"[MANUAL] Pick Triggered for: {self.last_ordered_bottle}")
         self.is_busy = True
-        success = await self.send_pick_goal(self.last_ordered_bottle)
+        success = await self.execute_pick_sequence(self.last_ordered_bottle)
         
         if success:
-            req_move = MoveJoint.Request()
-            req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], 30.0, 30.0
-            await self.movej_cli.call_async(req_move)
             response.success, response.message = True, "Pick completed."
         else:
-            await self.run_standby_sequence()
             response.success, response.message = False, "Pick failed."
 
         self.is_busy = False
         return response
 
+    async def execute_pick_sequence(self, bottle_name):
+        """Helper to run the full pick motion and return to home"""
+        success = await self.send_pick_goal(bottle_name)
+        if success:
+            req_move = MoveJoint.Request()
+            req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], 30.0, 30.0
+            await self.movej_cli.call_async(req_move)
+            return True
+        else:
+            await self.run_standby_sequence()
+            return False
+
+    async def execute_pour_sequence(self, bottle_name):
+        """Helper to run the full pour motion and return to home"""
+        success = await self.send_pour_goal(bottle_name)
+        if success:
+            req_move = MoveJoint.Request()
+            req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], 30.0, 30.0
+            await self.movej_cli.call_async(req_move)
+            return True
+        return False
+
+    async def execute_place_sequence(self, picked_pose):
+        """Helper to run the full place motion and return to standby"""
+        success = await self.send_place_goal(picked_pose)
+        await self.run_standby_sequence()
+        return success
+
     async def manual_pour_callback(self, request, response):
+
         if self.is_busy:
             response.success, response.message = False, "System is busy"
             return response
@@ -85,12 +124,9 @@ class RobotenderManager(Node):
 
         self.get_logger().info(f"[MANUAL] Pour Triggered for: {self.last_ordered_bottle}")
         self.is_busy = True
-        success = await self.send_pour_goal(self.last_ordered_bottle)
+        success = await self.execute_pour_sequence(self.last_ordered_bottle)
         
         if success:
-            req_move = MoveJoint.Request()
-            req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], 30.0, 30.0
-            await self.movej_cli.call_async(req_move)
             response.success, response.message = True, "Pour completed."
         else:
             response.success, response.message = False, "Pour failed."
@@ -129,9 +165,10 @@ class RobotenderManager(Node):
             return response
 
         self.is_busy = True
-        success = await self.send_place_goal(self.last_picked_pose)
-        await self.run_standby_sequence()
+        success = await self.execute_place_sequence(self.last_picked_pose)
         response.success, response.message = success, "Place completed."
+        
+        self.is_busy = False
         return response
 
     async def send_place_goal(self, picked_pose):
@@ -151,6 +188,16 @@ class RobotenderManager(Node):
         self.init_timer.cancel()
         self.get_logger().info("--- SYSTEM STARTUP ---")
         await self.run_standby_sequence()
+
+    def mode_control_callback(self, msg: String):
+        new_mode = msg.data.lower().strip()
+        if new_mode in ['auto', 'manual']:
+            self.execution_mode = new_mode
+            self.get_logger().info('====================================================')
+            self.get_logger().info(f'   MODE SWITCHED TO: {self.execution_mode.upper()}')
+            self.get_logger().info('====================================================')
+        else:
+            self.get_logger().warn(f"Invalid mode received: {msg.data}")
 
     async def run_standby_sequence(self):
         # 1. POSJ_HOME
@@ -191,8 +238,53 @@ class RobotenderManager(Node):
             if "recipe" in order_data:
                 self.last_ordered_bottle = list(order_data["recipe"].keys())[0]
                 self.get_logger().info(f"ORDER RECEIVED: {self.last_ordered_bottle}")
+                
+                # Auto-trigger if mode is set
+                if self.execution_mode == "auto":
+                    self.get_logger().info(f"[AUTO] Starting full sequence for: {self.last_ordered_bottle}")
+                    self.is_busy = True
+                    
+                    # 1. Pick
+                    self.get_logger().info(f"[AUTO] 1/3: Picking {self.last_ordered_bottle}...")
+                    pick_success = await self.execute_pick_sequence(self.last_ordered_bottle)
+                    
+                    if not pick_success:
+                        self.get_logger().error(f"[AUTO] Pick failed. Aborting sequence.")
+                        self.is_busy = False
+                        return
+
+                    # Check mode again before Pour
+                    if self.execution_mode != "auto":
+                        self.get_logger().info(f"[AUTO->MANUAL] Mode switched during Pick. Stopping sequence.")
+                        self.is_busy = False
+                        return
+
+                    # 2. Pour
+                    self.get_logger().info(f"[AUTO] 2/3: Pouring {self.last_ordered_bottle}...")
+                    pour_success = await self.execute_pour_sequence(self.last_ordered_bottle)
+                    
+                    if not pour_success:
+                        self.get_logger().error(f"[AUTO] Pour failed. Returning bottle...")
+                        await self.execute_place_sequence(self.last_picked_pose)
+                        self.is_busy = False
+                        return
+
+                    # Check mode again before Place
+                    if self.execution_mode != "auto":
+                        self.get_logger().info(f"[AUTO->MANUAL] Mode switched during Pour. Stopping sequence.")
+                        self.is_busy = False
+                        return
+
+                    # 3. Place
+                    self.get_logger().info(f"[AUTO] 3/3: Placing {self.last_ordered_bottle}...")
+                    place_success = await self.execute_place_sequence(self.last_picked_pose)
+                    self.get_logger().info(f"[AUTO] Full sequence finished. Success: {place_success}")
+
+                    self.is_busy = False
+
         except Exception as e:
             self.get_logger().error(f'Order parsing error: {e}')
+            self.is_busy = False
 
     async def send_pick_goal(self, bottle_name):
         if not self.pick_action_client.wait_for_server(timeout_sec=5.0): return False

@@ -54,7 +54,59 @@ class RobotStartupNode(Node):
                     # Launch background nodes
                     self.get_logger().info("Cleaning up existing logic nodes...")
                     # Specifically target logic nodes to avoid killing this startup process
-                    subprocess.run(["pkill", "-9", "-f", "python3 -m bartender_test\.(gripper|pick|pour|place|manager)"], stderr=subprocess.DEVNULL)
+                    subprocess.run(["pkill", "-9", "-f", r"python3 -m bartender_test\.(gripper|pick|pour|place|manager)"], stderr=subprocess.DEVNULL)
+                    time.sleep(0.5)
+
+                    self.get_logger().info("Launching Persistent Logic Nodes...")
+                    subprocess.Popen(["python3", "-m", "bartender_test.gripper"], start_new_session=True)
+                    time.sleep(1.0)
+                    subprocess.Popen(["python3", "-m", "bartender_test.pick"], start_new_session=True)
+                    time.sleep(1.0)
+                    subprocess.Popen(["python3", "-m", "bartender_test.pour"], start_new_session=True)
+                    time.sleep(1.0)
+                    subprocess.Popen(["python3", "-m", "bartender_test.place"], start_new_session=True)
+                    time.sleep(1.0)
+                    subprocess.Popen(["python3", "-m", "bartender_test.manager"], start_new_session=True)
+                    
+                    self.get_logger().info("Gripper, Pick, Pour, Place, and Manager logic nodes spawned in background.")
+                    
+                    return True
+                time.sleep(1.0)
+            
+            self.get_logger().error("System did not reach STANDBY. Please check Teach Pendant.")
+            return False
+
+        except Exception as e:
+            self.get_logger().error(f"Startup Failed: {e}")
+            return False
+
+    def run(self):
+        try:
+            self.get_logger().info("--- STEP 1: System Readiness Check ---")
+            time.sleep(5.0) # Let driver settle
+            
+            # 1. Reset Safety State only
+            self.get_logger().info("Ensuring Safety State is Clear...")
+            self.call_srv(self.control_cli, SetRobotControl.Request(robot_control=2))
+            
+            # 2. Check DRL State
+            d_res = self.call_srv(self.drl_state_cli, GetDrlState.Request())
+            if d_res and d_res.success and d_res.drl_state != 1:
+                self.get_logger().info(f"DRL is in state {d_res.drl_state}. Sending DrlStop...")
+                self.call_srv(self.drl_stop_cli, DrlStop.Request(stop_mode=0))
+            
+            # 3. Final Verification (Wait for Standby)
+            self.get_logger().info("Waiting for STANDBY status...")
+            for _ in range(10):
+                r_res = self.call_srv(self.state_cli, GetRobotState.Request())
+                if r_res and r_res.success and r_res.robot_state == 1:
+                    self.get_logger().info("==========================================")
+                    self.get_logger().info("STARTUP VERIFIED: SYSTEM READY.")
+                    self.get_logger().info("==========================================")
+                    
+                    # Launch background nodes
+                    self.get_logger().info("Cleaning up existing logic nodes...")
+                    subprocess.run(["pkill", "-9", "-f", r"python3 -m bartender_test\.(gripper|pick|pour|place|manager)"], stderr=subprocess.DEVNULL)
                     time.sleep(0.5)
 
                     self.get_logger().info("Launching Persistent Logic Nodes...")
