@@ -107,7 +107,7 @@ class DepthReader(Node):
         self.last_ml_time = None
         self.flow_rate_ema = 0.0
         self.flow_alpha = 0.2        # EMA filter for flow rate
-        self.PREDICTION_HORIZON = 1.0 # Seconds to look ahead (compensates for system + robot stop latency)
+        self.PREDICTION_HORIZON = 1.5 # Seconds to look ahead (compensates for system + robot stop latency)
         # -----------------------------------
 
         # 구독자 설정
