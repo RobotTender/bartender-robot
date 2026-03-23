@@ -90,7 +90,7 @@ class DepthReader(Node):
         
         # --- Stability Logic ---
         self.liquid_stability_count = 0 
-        self.STABILITY_THRESHOLD = 3   # Require ~0.1s of consistent detection
+        self.STABILITY_THRESHOLD = 10   # number of frames for stabilzation, avoid reflect glitches
         
         # --- Tare Safety Logic ---
         self.tare_stability_count = 0  # To ensure we only tare on a truly empty cup
@@ -103,7 +103,7 @@ class DepthReader(Node):
         self.log_counter = 0
 
         # --- Forward Snapping Parameters ---
-        self.SNAP_RATIO = 0.25 # Trigger snap when reaching 25% of the target volume increment
+        self.SNAP_RATIO = 0.1 # Trigger snap when reaching 10% of the target volume increment
         # -----------------------------------
 
         # 구독자 설정
