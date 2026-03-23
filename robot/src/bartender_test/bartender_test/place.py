@@ -12,7 +12,9 @@ from robotender_msgs.action import PlaceBottle
 from .defines import (
     POSJ_PICK_PLACE_READY, POSJ_HOME,
     PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET,
-    GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN
+    GRIPPER_POSITION_OPEN,
+    GRIPPER_FORCE_DEFAULT,
+    BOTTLE_CONFIG
 )
 
 # Import DR_init but do NOT import DSR_ROBOT2 at top level
@@ -64,9 +66,19 @@ class PlaceNode(Node):
         result = PlaceBottle.Result()
         
         self.target_xyz = list(goal_handle.request.picked_pose)
-        self.get_logger().info(f'Place target from Manager: {self.target_xyz}')
+        bottle_name = goal_handle.request.bottle_name
+        self.get_logger().info(f'Place target for {bottle_name} from Manager: {self.target_xyz}')
         
         self.state = "RUNNING"
+
+        # Lookup specific gripper force if defined for this bottle
+        release_force = GRIPPER_FORCE_DEFAULT
+        config = BOTTLE_CONFIG.get(bottle_name)
+        if config and 'gripper_force' in config:
+            release_force = config['gripper_force']
+            self.get_logger().info(f"Using bottle-specific release force: {release_force}")
+        else:
+            self.get_logger().info(f"Using default release force: {release_force}")
 
         # LOCAL IMPORT: Uses the node assigned to DR_init
         from DSR_ROBOT2 import (
@@ -124,11 +136,11 @@ class PlaceNode(Node):
             movel(target_down, vel=[30, 30], acc=[30, 30])
 
             # STEP 6: Release the gripper
-            self.get_logger().info("Step 6: Releasing gripper (Wait 8s)")
+            self.get_logger().info(f"Step 6: Releasing gripper with force {release_force} (Wait 8s)")
             feedback_msg.current_state, feedback_msg.progress = "STEP 6: RELEASING_GRIPPER", 0.8
             goal_handle.publish_feedback(feedback_msg)
             
-            self._gripper_move_fire_forget(GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN)
+            self._gripper_move_fire_forget(GRIPPER_POSITION_OPEN, release_force)
             time.sleep(8.0) # Using time.sleep here as it's a long blocking wait
 
             # STEP 7: Retreat Y

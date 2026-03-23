@@ -28,7 +28,8 @@ import DR_init
 
 from .defines import (
     POSJ_HOME, POSJ_PICK_PLACE_READY,
-    GRIPPER_POSITION_OPEN, GRIPPER_FORCE_OPEN,
+    GRIPPER_POSITION_OPEN,
+    GRIPPER_FORCE_DEFAULT,
     BOTTLE_CONFIG, BOTTLE_ID_MAP,
     PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET
 )
@@ -199,8 +200,10 @@ class RobotControllerNode(Node):
                     goal_handle.succeed(); self.state = "IDLE"; return result
 
             # Successful detection - Open Gripper now
-            self.get_logger().info("Detection successful. Opening gripper sync (force=1000)...")
-            self._gripper_move_sync(GRIPPER_POSITION_OPEN, 1000)
+            cfg = BOTTLE_CONFIG.get(target_name, {})
+            release_force = cfg.get('gripper_force', GRIPPER_FORCE_DEFAULT)
+            self.get_logger().info(f"Detection successful. Opening gripper sync for {target_name} (force={release_force})...")
+            self._gripper_move_sync(GRIPPER_POSITION_OPEN, release_force)
 
             self.state = "RUNNING"
             # Step 3: Moving

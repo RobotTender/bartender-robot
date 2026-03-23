@@ -61,7 +61,7 @@ BOTTLE_ID_MAP = {str(cfg['id']): name for name, cfg in BOTTLE_CONFIG.items()}
 
 # Gripper Constants (Position 0-1100, Force 0-1000)
 GRIPPER_POSITION_OPEN = 0
-GRIPPER_FORCE_OPEN = 75
+GRIPPER_FORCE_DEFAULT = 500
 
 # Global Motion Constants
 PICK_PLACE_Z = 650

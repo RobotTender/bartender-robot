@@ -168,7 +168,7 @@ class ActionNode(Node):
             movel(p2, vel=[30, 30], acc=[30, 30])
             
             if not self.trigger_received:
-                movesx([p3, p4, p5], vel=15, acc=15)
+                movesx([p3, p4, p5], vel=10, acc=10)
             
             wait(0.1)
             self.recording = False

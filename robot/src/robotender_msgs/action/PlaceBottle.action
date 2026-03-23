@@ -1,5 +1,6 @@
 # Goal
 float64[3] picked_pose
+string bottle_name
 ---
 # Result
 bool success

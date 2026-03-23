@@ -14,8 +14,8 @@ from dsr_msgs2.srv import MoveJoint
 
 from .defines import (
     POSJ_HOME, 
-    GRIPPER_POSITION_OPEN, 
-    GRIPPER_FORCE_OPEN,
+    GRIPPER_POSITION_OPEN,
+    GRIPPER_FORCE_DEFAULT,
     BOTTLE_CONFIG
 )
 
@@ -107,9 +107,9 @@ class RobotenderManager(Node):
             return True
         return False
 
-    async def execute_place_sequence(self, picked_pose):
+    async def execute_place_sequence(self, picked_pose, bottle_name):
         """Helper to run the full place motion and return to standby"""
-        success = await self.send_place_goal(picked_pose)
+        success = await self.send_place_goal(picked_pose, bottle_name)
         await self.run_standby_sequence()
         return success
 
@@ -160,21 +160,22 @@ class RobotenderManager(Node):
         if self.is_busy:
             response.success, response.message = False, "System is busy"
             return response
-        if self.last_picked_pose is None:
-            response.success, response.message = False, "No pick pose stored!"
+        if self.last_picked_pose is None or self.last_ordered_bottle is None:
+            response.success, response.message = False, "No pick pose or bottle name stored!"
             return response
 
         self.is_busy = True
-        success = await self.execute_place_sequence(self.last_picked_pose)
+        success = await self.execute_place_sequence(self.last_picked_pose, self.last_ordered_bottle)
         response.success, response.message = success, "Place completed."
         
         self.is_busy = False
         return response
 
-    async def send_place_goal(self, picked_pose):
+    async def send_place_goal(self, picked_pose, bottle_name):
         if not self.place_action_client.wait_for_server(timeout_sec=5.0): return False
         goal_msg = PlaceBottle.Goal()
         goal_msg.picked_pose = [float(x) for x in picked_pose]
+        goal_msg.bottle_name = bottle_name
         goal_handle = await self.place_action_client.send_goal_async(goal_msg, feedback_callback=self.place_feedback_callback)
         if not goal_handle.accepted: return False
         result_response = await goal_handle.get_result_async()
@@ -213,7 +214,7 @@ class RobotenderManager(Node):
         self.get_logger().info("[STANDBY] 2/3: Closing gripper (Force Mode)...")
         if self.gripper_cli.wait_for_service(timeout_sec=2.0):
             req_grip = GripperControl.Request()
-            req_grip.position, req_grip.force = 1100, 1000
+            req_grip.position, req_grip.force = 1100, GRIPPER_FORCE_DEFAULT
             # Safety: Don't await indefinitely if physical gripper is stuck
             try:
                 self.gripper_cli.call_async(req_grip)
@@ -262,10 +263,10 @@ class RobotenderManager(Node):
                     # 2. Pour
                     self.get_logger().info(f"[AUTO] 2/3: Pouring {self.last_ordered_bottle}...")
                     pour_success = await self.execute_pour_sequence(self.last_ordered_bottle)
-                    
+
                     if not pour_success:
                         self.get_logger().error(f"[AUTO] Pour failed. Returning bottle...")
-                        await self.execute_place_sequence(self.last_picked_pose)
+                        await self.execute_place_sequence(self.last_picked_pose, self.last_ordered_bottle)
                         self.is_busy = False
                         return
 
@@ -277,9 +278,8 @@ class RobotenderManager(Node):
 
                     # 3. Place
                     self.get_logger().info(f"[AUTO] 3/3: Placing {self.last_ordered_bottle}...")
-                    place_success = await self.execute_place_sequence(self.last_picked_pose)
+                    place_success = await self.execute_place_sequence(self.last_picked_pose, self.last_ordered_bottle)
                     self.get_logger().info(f"[AUTO] Full sequence finished. Success: {place_success}")
-
                     self.is_busy = False
 
         except Exception as e:
