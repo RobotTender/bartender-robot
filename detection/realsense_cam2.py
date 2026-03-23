@@ -103,7 +103,7 @@ class DepthReader(Node):
         self.log_counter = 0
 
         # --- Forward Snapping Parameters ---
-        self.SNAP_RATIO = 0.5 # Trigger snap when reaching 50% of the target volume increment
+        self.SNAP_RATIO = 0.25 # Trigger snap when reaching 25% of the target volume increment
         # -----------------------------------
 
         # 구독자 설정
