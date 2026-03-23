@@ -31,27 +31,39 @@
 - **Auto-Rebuild:** `colcon build --symlink-install --packages-select robotender_msgs bartender_test && source install/setup.bash`
 
 ## Operational Commands
-### 1. Manual Node Execution
+
+### 1. System Startup (Full Stack)
 ```bash
-# Manager Node
-ros2 run bartender_test manager
-# Pick Node
-ros2 run bartender_test pick
-# Pour Node
-ros2 run bartender_test pour
-# Place Node
-ros2 run bartender_test place
+# Start all hardware, logic nodes, and web server in one command
+python3 scripts/start_order_stack.py --with-bringup
 ```
 
-### 2. Interaction & Testing
-**Orchestrated Flow**
+### 2. Manual Order Injection
 ```bash
-# 1. Trigger Pick
+# Inject a manual order (e.g., 1 Beer) directly to the system
+ros2 topic pub --once /bartender/order_detail std_msgs/msg/String "{data: '{\"recipe\": {\"beer\": 1}}'}"
+```
+
+### 3. Orchestrated Execution (Manager Node)
+**Trigger motions via the Manager to ensure data persistence and correct sequencing:**
+```bash
+# 1. Trigger Pick (Uses vision to find bottle)
 ros2 service call /dsr01/robotender_manager/pick_bottle std_srvs/srv/Trigger {}
-# 2. Trigger Pour (Uses stored bottle name)
+
+# 2. Trigger Pour (Uses stored bottle name and vision for volume)
 ros2 service call /dsr01/robotender_manager/pour_bottle std_srvs/srv/Trigger {}
-# 3. Trigger Place (Uses stored coordinates)
+
+# 3. Trigger Place (Returns bottle to original location)
 ros2 service call /dsr01/robotender_manager/place_bottle std_srvs/srv/Trigger {}
+```
+
+### 4. Manual Node Execution (Debug)
+```bash
+# If running nodes individually for debugging:
+ros2 run bartender_test manager
+ros2 run bartender_test pick
+ros2 run bartender_test pour
+ros2 run bartender_test place
 ```
 
 ## Hardware Specification
