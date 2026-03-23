@@ -88,33 +88,49 @@ All nodes share a centralized repository for:
 *   **Cartesian Markers**: Fixed XYZ coordinates for pouring trajectory waypoints.
 *   **Implementation Note**: The current implementation relies on hardcoded offsets within the motion logic (e.g., approach/retreat distances) to ensure immediate reliability across different bottle types without requiring complex geometry calculations.
 
+## 3. Operational Commands
+
+### 3.1 System Startup (Full Stack)
+To start all hardware bringup, logic nodes, and the web server in one command:
+```bash
+python3 scripts/start_order_stack.py --with-bringup
+```
+
+### 3.2 Mode Switching (Real-time)
+The manager node supports real-time switching between automatic and manual modes via a ROS topic.
+*   **Switch to Manual Mode** (Orders won't start automatically):
+    ```bash
+    ros2 topic pub --once /dsr01/robotender_manager/mode std_msgs/msg/String "{data: 'manual'}"
+    ```
+*   **Switch to Auto Mode** (Chain Pick -> Pour -> Place automatically):
+    ```bash
+    ros2 topic pub --once /dsr01/robotender_manager/mode std_msgs/msg/String "{data: 'auto'}"
+    ```
+
+### 3.3 Manual Order Injection (CLI)
+To place an order without using the web interface:
+```bash
+ros2 topic pub --once /bartender/order_detail std_msgs/msg/String "{data: '{\"recipe\": {\"soju\": 1}}'}"
+```
+
+### 3.4 Orchestrated Manual Execution (Manager Services)
+When in **Manual Mode**, you can trigger individual stages of the bartender sequence via the Manager node:
+*   **Trigger Pick**:
+    ```bash
+    ros2 service call /dsr01/robotender_manager/pick_bottle std_srvs/srv/Trigger {}
+    ```
+*   **Trigger Pour**:
+    ```bash
+    ros2 service call /dsr01/robotender_manager/pour_bottle std_srvs/srv/Trigger {}
+    ```
+*   **Trigger Place**:
+    ```bash
+    ros2 service call /dsr01/robotender_manager/place_bottle std_srvs/srv/Trigger {}
+    ```
+
 ---
 
-## 3. Full Stack Execution Sequence
-
-To run the complete system, follow these steps:
-
-1.  **Bringup the Robot**:
-    ```bash
-    ros2 launch dsr_bringup2 dsr_bringup2.launch.py mode:=real host:=110.120.1.xx model:=e0509
-    ```
-2.  **Verify Startup**:
-    ```bash
-    ros2 run bartender_test startup
-    ```
-3.  **Launch Order Stack** (Starts all persistent nodes):
-    ```bash
-    python3 scripts/start_order_stack.py
-    ```
-4.  **Launch Detection Nodes**:
-    *   Pick Camera: `python3 detection/realsense_cam1.py`
-    *   Volume Camera: `python3 detection/realsense_cam2.py`
-5.  **Inject Order**:
-    ```bash
-    python3 scripts/test_post_order.py [soju|beer|juice]
-    ```
-
----
+## 4. Full Stack Execution Sequence (Legacy/Manual)
 
 ## 4. Future Improvements
 
