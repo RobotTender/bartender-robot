@@ -2,7 +2,7 @@ import rclpy
 import sys
 from rclpy.node import Node
 import DR_init
-from .defines import (POS_CHEERS, BOTTLE_CONFIG)
+from .defines import (POSJ_CHEERS, BOTTLE_CONFIG)
 
 def main(args=None):
     if len(sys.argv) < 2:
@@ -37,7 +37,7 @@ def main(args=None):
         if arg1 in ['pos_cheers', 'pos_contact', 'pos_horizontal', 'pos_diagonal', 'pos_vertical', 'pos1', 'pos2', 'pos3', 'pos4', 'pos5']:
             # Default to soju for manual commands
             soju_cfg = BOTTLE_CONFIG['soju']
-            if arg1 in ['pos_cheers', 'pos1']: coords = POS_CHEERS
+            if arg1 in ['pos_cheers', 'pos1']: coords = POSJ_CHEERS
             elif arg1 in ['pos_contact', 'pos2']: coords = soju_cfg['pos_contact']
             elif arg1 in ['pos_horizontal', 'pos3']: coords = soju_cfg['pos_horizontal']
             elif arg1 in ['pos_diagonal', 'pos4']: coords = soju_cfg['pos_diagonal']

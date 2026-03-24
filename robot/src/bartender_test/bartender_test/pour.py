@@ -1,6 +1,7 @@
 import rclpy
 import sys
 import threading
+from threading import Timer
 import time
 import math
 import json
@@ -18,7 +19,8 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 from robotender_msgs.action import PourBottle
-from .defines import (POSJ_HOME, POSJ_CHEERS, BOTTLE_CONFIG)
+from .defines import (POSJ_HOME, POSJ_CHEERS, POSJ_SNAP, BOTTLE_CONFIG,
+                            SNAP_VELOCITY, SNAP_ACCELERATION, TEST_POUR_WAIT_TIME)
 
 class ActionNode(Node):
     def __init__(self):
@@ -27,6 +29,9 @@ class ActionNode(Node):
         self.callback_group = ReentrantCallbackGroup()
         
         self.trigger_received = False
+        self.flow_started_received = False
+        self.current_target_volume_ml = 0.0
+        self.passed_horizontal = False
         self.recording = False
         self.current_posx = [0.0] * 6
         self.current_posj = [0.0] * 6
@@ -37,7 +42,10 @@ class ActionNode(Node):
         self.current_bottle_type = 'soju'
         self.state = 'IDLE'
 
+        # VISION TRIGGERS
         self.create_subscription(Empty, 'robotender_snap/trigger', self.trigger_cb, 10, callback_group=self.callback_group)
+        self.create_subscription(Empty, 'robotender/flow_started', self.flow_started_cb, 10, callback_group=self.callback_group)
+        
         self.create_subscription(JointState, 'joint_states', self.cb_joint_states, 10, callback_group=self.callback_group)
 
         self.tf_buffer = Buffer()
@@ -72,13 +80,36 @@ class ActionNode(Node):
             self.current_posj = [math.degrees(v) for v in msg.position[:6]]
 
     def trigger_cb(self, msg):
-        if self.recording:
-            self.get_logger().info("!!! POURING TRIGGER DETECTED !!!")
+        """Standard vision trigger callback (Volume-based)."""
+        if self.recording and not self.trigger_received:
+            self.get_logger().info("!!! VOLUME TRIGGER DETECTED (Vision) !!!")
+            self.trigger_snap()
+
+    def flow_started_cb(self, msg):
+        """Trigger snap after a fixed wait time from flow detection."""
+        if self.recording and not self.flow_started_received:
+            self.get_logger().info("--- FLOW STARTED RECEIVED (Camera Signal) ---")
+            self.flow_started_received = True
+            
+            wait_time = TEST_POUR_WAIT_TIME if TEST_POUR_WAIT_TIME is not None else 0.0
+            self.get_logger().info(f"Fixed Wait Snap: {wait_time}s")
+            
+            if wait_time > 0:
+                Timer(wait_time, self.trigger_snap).start()
+            else:
+                self.trigger_snap()
+
+    def trigger_snap(self):
+        """Universal snap trigger: calls MoveStop and sets internal state."""
+        if self.recording and not self.trigger_received:
             self.trigger_received = True
+            self.get_logger().info("Executing MOVE STOP...")
             if self.stop_cli.wait_for_service(timeout_sec=0.5):
                 req = MoveStop.Request()
                 req.stop_mode = 2 
                 self.stop_cli.call_async(req)
+            else:
+                self.get_logger().error("MoveStop Service not available during snap!")
 
     def record_loop(self):
         if self.recording:
@@ -107,6 +138,10 @@ class ActionNode(Node):
                         wp_data = self.target_waypoints.pop(0)
                         self.passed_waypoints.append(wp_data)
                         self.last_checkpoint_xyz = B
+                        
+                        # contact(1), horizontal(2), diagonal(3), vertical(4)
+                        if len(self.passed_waypoints) == 2:
+                            self.passed_horizontal = True
 
     def goal_callback(self, goal_request):
         if self.state == "RUNNING": return GoalResponse.REJECT
@@ -120,12 +155,12 @@ class ActionNode(Node):
         feedback_msg = PourBottle.Feedback()
         result = PourBottle.Result()
 
-        target_volume_ml = goal_handle.request.target_volume_ml
+        self.current_target_volume_ml = goal_handle.request.target_volume_ml
         self.current_bottle_type = goal_handle.request.bottle_name or 'soju'
         config = BOTTLE_CONFIG.get(self.current_bottle_type, BOTTLE_CONFIG['soju'])
 
         # 1. Notify Target Volume
-        vol_msg = Float32(data=float(target_volume_ml))
+        vol_msg = Float32(data=float(self.current_target_volume_ml))
         self.target_volume_pub.publish(vol_msg)
 
         from DSR_ROBOT2 import (movej, movel, movesx, movesj, posx, posj, fkin, set_robot_mode, ROBOT_MODE_AUTONOMOUS, wait, get_current_posj, get_current_posx)
@@ -161,14 +196,15 @@ class ActionNode(Node):
                     self.get_logger().warn("Perception not ready or timed out. Proceeding with caution.")
 
             self.last_checkpoint_xyz = list(get_current_posx()[0])[:3]
-            self.trigger_received, self.passed_waypoints, self.periodic_buffer = False, [], []
+            self.trigger_received, self.flow_started_received = False, False
+            self.passed_horizontal, self.passed_waypoints, self.periodic_buffer = False, [], []
             self.target_waypoints = [(p2, config.get('posj_contact')), (p3, config.get('posj_horizontal')), (p4, config.get('posj_diagonal')), (p5, config.get('posj_vertical'))]
             
             self.recording = True
             movel(p2, vel=[30, 30], acc=[30, 30])
             
             if not self.trigger_received:
-                movesx([p3, p4, p5], vel=10, acc=10)
+                movesx([p3, p4, p5], vel=2, acc=2)
             
             wait(0.1)
             self.recording = False
@@ -183,26 +219,34 @@ class ActionNode(Node):
             self.get_logger().info("Sent 'done' signal to perception.")
 
             # RECOVERY MOTION
-            curr_j = list(get_current_posj())
-            raw_path = [posj(curr_j)]
-            if self.trigger_received and self.periodic_buffer:
-                for i in range(1, min(len(self.periodic_buffer), 2) + 1): raw_path.append(posj(self.periodic_buffer[-i]))
-            
-            waypoints_rev = list(reversed(self.passed_waypoints))
-            if not self.trigger_received and waypoints_rev: waypoints_rev.pop(0)
-            for _, wp_j in waypoints_rev:
-                if wp_j is not None: raw_path.append(posj(wp_j))
-            if config.get('posj_contact'): raw_path.append(posj(config.get('posj_contact')))
-            
-            reverse_path = [raw_path[0]]
-            for i in range(1, len(raw_path)):
-                if sum(abs(a-b) for a,b in zip(raw_path[i], raw_path[i-1])) > 5.0: reverse_path.append(raw_path[i])
+            if self.trigger_received:
+                if self.passed_horizontal:
+                    self.get_logger().info("Interrupted AFTER horizontal. Executing POSJ_SNAP...")
+                    movej(POSJ_SNAP, vel=SNAP_VELOCITY, acc=SNAP_ACCELERATION)
+                else:
+                    self.get_logger().info("Interrupted BEFORE horizontal. Executing posj_contact...")
+                    contact_pose = config.get('posj_contact')
+                    if contact_pose:
+                        movej(contact_pose, vel=150, acc=150)
+            else:
+                # Normal completion recovery
+                curr_j = list(get_current_posj())
+                raw_path = [posj(curr_j)]
+                waypoints_rev = list(reversed(self.passed_waypoints))
+                if waypoints_rev: waypoints_rev.pop(0)
+                for _, wp_j in waypoints_rev:
+                    if wp_j is not None: raw_path.append(posj(wp_j))
+                if config.get('posj_contact'): raw_path.append(posj(config.get('posj_contact')))
+                
+                reverse_path = [raw_path[0]]
+                for i in range(1, len(raw_path)):
+                    if sum(abs(a-b) for a,b in zip(raw_path[i], raw_path[i-1])) > 5.0: reverse_path.append(raw_path[i])
 
-            if len(reverse_path) > 1:
-                if sum(abs(a-b) for a,b in zip(reverse_path[0], list(get_current_posj()))) < 0.5: reverse_path.pop(0)
-                if len(reverse_path) > 1: movesj(reverse_path, vel=210, acc=210)
-                else: movej(reverse_path[0], vel=150, acc=150)
-            elif reverse_path: movej(reverse_path[0], vel=150, acc=150)
+                if len(reverse_path) > 1:
+                    if sum(abs(a-b) for a,b in zip(reverse_path[0], list(get_current_posj()))) < 0.5: reverse_path.pop(0)
+                    if len(reverse_path) > 1: movesj(reverse_path, vel=210, acc=210)
+                    else: movej(reverse_path[0], vel=150, acc=150)
+                elif reverse_path: movej(reverse_path[0], vel=150, acc=150)
             
             wait(1.0); movej(POSJ_CHEERS, vel=30, acc=30)
 
