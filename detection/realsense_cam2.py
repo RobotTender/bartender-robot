@@ -67,26 +67,16 @@ class DepthReader(Node):
         # EMA filter
         self.ema_alpha = 0.2
         self.estimated_ml_ema = None
-        self.last_total_cup_px = 1.0 # Initialize to 1 to avoid div by zero
 
         # --- Automatic Snap Trigger Logic ---
-        self.trigger_pub = self.create_publisher(Empty, '/dsr01/robotender_snap/trigger', 10)
         self.flow_started_pub = self.create_publisher(Empty, '/dsr01/robotender/flow_started', 10)
         self.volume_pub = self.create_publisher(Float32, '/dsr01/robotender/liquid_volume', 10)
-        
-        # Subscriber for dynamic target volume (increment)
-        self.target_ml_sub = self.create_subscription(Float32, '/detection/cup_target_volume', self.target_volume_callback, 10)
         
         # HANDSHAKE: Service to prepare pouring
         self.prepare_srv = self.create_service(Trigger, '/dsr01/robotender/prepare_pouring', self.prepare_pouring_callback)
         # HANDSHAKE: Topic to end pouring
         self.status_sub = self.create_subscription(String, '/dsr01/robotender/pouring_status', self.pouring_status_callback, 10)
 
-        self.target_volume_ml = 0.0     # Incremental target (ml)
-        self.start_volume_ml = 0.0     # Volume at the start of the pour
-        self.target_total_volume_ml = 0.0 # start_volume + target_volume (Absolute Goal)
-        self.target_line_y = None      # Y-coordinate for the target visualization line
-        
         self.snap_triggered = False    # To ensure we only trigger once per pour
         self.flow_started_sent = False # To ensure we only send flow_started once
         self.flow_stability_count = 0  # Counter for consecutive detections
@@ -104,12 +94,8 @@ class DepthReader(Node):
         self.TARE_STABILITY_THRESHOLD = 90 
         self.NO_CUP_THRESHOLD = 45 
         
-        # Store last known cup bbox for line visualization
+        # Store last known cup bbox for visualization
         self.last_cup_bbox = None
-
-        # --- Forward Snapping Parameters ---
-        self.SNAP_RATIO = 0.1 
-        # -----------------------------------
 
         # 구독자 설정
         self.create_subscription(Image, '/camera/camera_2/color/image_raw', self.color_callback, 10)
@@ -154,24 +140,6 @@ class DepthReader(Node):
             self.estimated_ml_ema = (self.ema_alpha * value + (1.0 - self.ema_alpha) * self.estimated_ml_ema)
         return self.estimated_ml_ema
 
-    def _update_target_line_y(self):
-        if (self.target_total_volume_ml > 0 and self.locked_total_cup_px is not None and self.fixed_bottle_bottom_y is not None):
-            ratios = self.ratio_to_ml_table[:, 0]
-            volumes = self.ratio_to_ml_table[:, 1]
-            target_ratio = np.interp(self.target_total_volume_ml, volumes, ratios)
-            target_h_px = target_ratio * self.locked_total_cup_px
-            self.target_line_y = int(self.fixed_bottle_bottom_y - target_h_px)
-        else:
-            self.target_line_y = None
-
-    def target_volume_callback(self, msg):
-        val = float(msg.data)
-        if val <= 0.0:
-            self.target_volume_ml = 0.0
-            return
-        self.target_volume_ml = val
-        self.get_logger().info(f"Target Volume Set: +{self.target_volume_ml}ml (Waiting for Prepare Service)")
-
     def prepare_pouring_callback(self, request, response):
         """Service handler: Robot is at CHEERS and wants to start pouring."""
         self.get_logger().info("PREPARE POURING Service Called. Waiting for first liquid detection...")
@@ -187,22 +155,17 @@ class DepthReader(Node):
             response.message = "Cup not found."
             return response
 
-        # 2. Lock scale and snapshot start volume
+        # 2. Lock scale
         self.bottom_y_locked = True
-        self.start_volume_ml = self.estimated_ml_ema if self.estimated_ml_ema is not None else 0.0
-        self.target_total_volume_ml = self.start_volume_ml + self.target_volume_ml
-        
-        # 3. Finalize goal visualization
-        self._update_target_line_y()
         self.snap_triggered = False
         self.flow_started_sent = False 
         self.flow_stability_count = 0 
         self.liquid_stability_count = 0 
         self.is_pouring_active = True 
         
-        self.get_logger().info(f"Prepare Successful. Goal: {self.target_total_volume_ml:.1f}ml")
+        self.get_logger().info("Prepare Successful. Ready to detect flow.")
         response.success = True
-        response.message = f"Ready. Goal: {self.target_total_volume_ml:.1f}ml"
+        response.message = "Ready."
         return response
 
     def pouring_status_callback(self, msg):
@@ -211,9 +174,6 @@ class DepthReader(Node):
             self.get_logger().info("Pouring DONE signal received. Resetting state.")
             self.is_pouring_active = False
             self.bottom_y_locked = False
-            self.target_volume_ml = 0.0
-            self.target_total_volume_ml = 0.0
-            self.target_line_y = None
             self.flow_stability_count = 0
             self.liquid_stability_count = 0
 
@@ -267,7 +227,6 @@ class DepthReader(Node):
                 if self.tare_stability_count >= self.TARE_STABILITY_THRESHOLD:
                     cx1, cy1, cx2, cy2 = self.last_cup_bbox
                     self.fixed_bottle_bottom_y, self.locked_total_cup_px = int(cy2), float(cy2 - cy1)
-                    self._update_target_line_y()
         else:
             self.no_cup_count += 1
             if self.no_cup_count >= self.NO_CUP_THRESHOLD:
@@ -311,15 +270,6 @@ class DepthReader(Node):
             cx1, cy1, cx2, cy2 = self.last_cup_bbox
             current_vol = self.estimated_ml_ema if self.estimated_ml_ema is not None else 0.0
             cv2.putText(overlay, f"CUR: {current_vol:.1f}ml", (cx1, cy2 + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
-        if self.target_line_y is not None and self.fixed_bottle_bottom_y is not None and self.last_cup_bbox is not None:
-            H, W = overlay.shape[:2]
-            if 0 < self.target_line_y < H:
-                cx1, _, cx2, _ = self.last_cup_bbox
-                center_x = (cx1 + cx2) // 2
-                x_start, x_end = max(0, center_x - int((cx2-cx1)*0.75)), min(W, center_x + int((cx2-cx1)*0.75))
-                cv2.line(overlay, (x_start, self.target_line_y), (x_end, self.target_line_y), (0, 255, 0), 1)
-                cv2.putText(overlay, f"FILL TO: {self.target_total_volume_ml:.1f}ml", (x_start, self.target_line_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1)
 
         # Status Display
         status_msg = "POURING" if self.is_pouring_active else ("READY" if self.locked_total_cup_px else "SEARCHING")
