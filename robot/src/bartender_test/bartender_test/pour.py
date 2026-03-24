@@ -20,7 +20,7 @@ from tf2_ros.transform_listener import TransformListener
 
 from robotender_msgs.action import PourBottle
 from .defines import (POSJ_HOME, POSJ_CHEERS, POSJ_SNAP, BOTTLE_CONFIG,
-                            SNAP_VELOCITY, SNAP_ACCELERATION, REACTION_TIME_OFFSET)
+                            SNAP_VELOCITY, SNAP_ACCELERATION, TEST_POUR_WAIT_TIME)
 
 class ActionNode(Node):
     def __init__(self):
@@ -86,21 +86,13 @@ class ActionNode(Node):
             self.trigger_snap()
 
     def flow_started_cb(self, msg):
-        """New flow-started trigger callback (Presence-based + Timer)."""
+        """Trigger snap after a fixed wait time from flow detection."""
         if self.recording and not self.flow_started_received:
             self.get_logger().info("--- FLOW STARTED RECEIVED (Camera Signal) ---")
             self.flow_started_received = True
             
-            # Calculate wait time based on bottle flow rate
-            config = BOTTLE_CONFIG.get(self.current_bottle_type, BOTTLE_CONFIG['soju'])
-            flow_rate = config.get('flow_rate_ml_s', 20.0)
-            target_ml = self.current_target_volume_ml
-            
-            # (ml / ml/s) = s
-            wait_time = (target_ml / flow_rate) - REACTION_TIME_OFFSET
-            
-            self.get_logger().info(f"Target: {target_ml}ml, Flow Rate: {flow_rate}ml/s, Offset: {REACTION_TIME_OFFSET}s")
-            self.get_logger().info(f"Wait time calculated: {wait_time:.2f}s")
+            wait_time = TEST_POUR_WAIT_TIME if TEST_POUR_WAIT_TIME is not None else 0.0
+            self.get_logger().info(f"Fixed Wait Snap: {wait_time}s")
             
             if wait_time > 0:
                 Timer(wait_time, self.trigger_snap).start()
@@ -212,7 +204,7 @@ class ActionNode(Node):
             movel(p2, vel=[30, 30], acc=[30, 30])
             
             if not self.trigger_received:
-                movesx([p3, p4, p5], vel=15, acc=15)
+                movesx([p3, p4, p5], vel=5, acc=5)
             
             wait(0.1)
             self.recording = False

@@ -91,12 +91,12 @@ class DepthReader(Node):
         self.snap_triggered = False    # To ensure we only trigger once per pour
         self.flow_started_sent = False # To ensure we only send flow_started once
         self.flow_stability_count = 0  # Counter for consecutive stream detections
-        self.FLOW_STABILITY_THRESHOLD = 5 # 5 frames (~0.16s) to confirm it is a stream
+        self.FLOW_STABILITY_THRESHOLD = 2 # 2 frames to confirm it is a stream
         self.low_volume_count = 0      # Used to reset the trigger flag when cup is empty
         
         # --- Stability Logic ---
         self.liquid_stability_count = 0 
-        self.STABILITY_THRESHOLD = 3   # number of frames for stabilzation, avoid reflect glitches
+        self.STABILITY_THRESHOLD = 5   # number of frames for stabilzation, avoid reflect glitches
         
         # --- Tare Safety Logic ---
         self.tare_stability_count = 0  # To ensure we only tare on a truly empty cup
@@ -227,7 +227,7 @@ class DepthReader(Node):
         if self.color_image is None: return
         img_vis = self.color_image.copy()
 
-        results = model.predict(source=img_vis, conf=0.6, iou=0.5, retina_masks=True, verbose=False)
+        results = model.predict(source=img_vis, conf=0.4, iou=0.5, retina_masks=True, verbose=False)
         overlay = img_vis.copy()
         bottle_mask_current = None
         liquid_mask_current = None
