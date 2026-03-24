@@ -86,30 +86,29 @@ class DepthReader(Node):
         self.start_volume_ml = 0.0     # Volume at the start of the pour
         self.target_total_volume_ml = 0.0 # start_volume + target_volume (Absolute Goal)
         self.target_line_y = None      # Y-coordinate for the target visualization line
-        self.baseline_waterline_y = None # Baseline highest pixel before pour starts
         
         self.snap_triggered = False    # To ensure we only trigger once per pour
         self.flow_started_sent = False # To ensure we only send flow_started once
-        self.flow_stability_count = 0  # Counter for consecutive stream detections
-        self.FLOW_STABILITY_THRESHOLD = 2 # 2 frames to confirm it is a stream
+        self.flow_stability_count = 0  # Counter for consecutive detections
+        self.FLOW_STABILITY_THRESHOLD = 1 # 1 frame for immediate responsiveness
+
         self.low_volume_count = 0      # Used to reset the trigger flag when cup is empty
         
         # --- Stability Logic ---
         self.liquid_stability_count = 0 
-        self.STABILITY_THRESHOLD = 5   # number of frames for stabilzation, avoid reflect glitches
+        self.STABILITY_THRESHOLD = 5   # number of frames for stabilzation
         
         # --- Tare Safety Logic ---
-        self.tare_stability_count = 0  # To ensure we only tare on a truly empty cup
-        self.no_cup_count = 0          # To reset state when cup is removed
-        self.TARE_STABILITY_THRESHOLD = 90 # ~3 seconds at 30fps
-        self.NO_CUP_THRESHOLD = 45         # 1.5 seconds at 30fps
+        self.tare_stability_count = 0 
+        self.no_cup_count = 0 
+        self.TARE_STABILITY_THRESHOLD = 90 
+        self.NO_CUP_THRESHOLD = 45 
         
         # Store last known cup bbox for line visualization
         self.last_cup_bbox = None
-        self.log_counter = 0
 
         # --- Forward Snapping Parameters ---
-        self.SNAP_RATIO = 0.1 # Trigger snap when reaching 10% of the target volume increment
+        self.SNAP_RATIO = 0.1 
         # -----------------------------------
 
         # 구독자 설정
@@ -175,7 +174,7 @@ class DepthReader(Node):
 
     def prepare_pouring_callback(self, request, response):
         """Service handler: Robot is at CHEERS and wants to start pouring."""
-        self.get_logger().info("PREPARE POURING Service Called. Calibrating baseline...")
+        self.get_logger().info("PREPARE POURING Service Called. Waiting for first liquid detection...")
         
         # 1. Wait for stable cup detection if not locked
         wait_start = time.time()
@@ -188,13 +187,10 @@ class DepthReader(Node):
             response.message = "Cup not found."
             return response
 
-        # 2. Lock scale and snapshot baseline
+        # 2. Lock scale and snapshot start volume
         self.bottom_y_locked = True
         self.start_volume_ml = self.estimated_ml_ema if self.estimated_ml_ema is not None else 0.0
         self.target_total_volume_ml = self.start_volume_ml + self.target_volume_ml
-        
-        # --- Capture Baseline Waterline ---
-        self.baseline_waterline_y = self.current_waterline_y if self.current_waterline_y is not None else self.fixed_bottle_bottom_y
         
         # 3. Finalize goal visualization
         self._update_target_line_y()
@@ -204,7 +200,7 @@ class DepthReader(Node):
         self.liquid_stability_count = 0 
         self.is_pouring_active = True 
         
-        self.get_logger().info(f"Prepare Successful. Baseline: {self.start_volume_ml:.1f}ml, Goal: {self.target_total_volume_ml:.1f}ml, Waterline: {self.baseline_waterline_y}")
+        self.get_logger().info(f"Prepare Successful. Goal: {self.target_total_volume_ml:.1f}ml")
         response.success = True
         response.message = f"Ready. Goal: {self.target_total_volume_ml:.1f}ml"
         return response
@@ -218,7 +214,6 @@ class DepthReader(Node):
             self.target_volume_ml = 0.0
             self.target_total_volume_ml = 0.0
             self.target_line_y = None
-            self.baseline_waterline_y = None
             self.flow_stability_count = 0
             self.liquid_stability_count = 0
 
@@ -230,7 +225,7 @@ class DepthReader(Node):
         results = model.predict(source=img_vis, conf=0.4, iou=0.5, retina_masks=True, verbose=False)
         overlay = img_vis.copy()
         bottle_mask_current = None
-        liquid_mask_current = None
+        liquid_mask_combined = np.zeros(img_vis.shape[:2], dtype=np.uint8)
 
         for result in results:
             boxes = result.boxes
@@ -252,9 +247,9 @@ class DepthReader(Node):
                     if bottle_mask_current is None or mask_area > int(np.count_nonzero(bottle_mask_current)):
                         bottle_mask_current = mask_bin.copy()
                         self.last_cup_bbox = (x1, y1, x2, y2)
-                if class_name != self.cup_class_name:
-                    if liquid_mask_current is None or mask_area > int(np.count_nonzero(liquid_mask_current)):
-                        liquid_mask_current = mask_bin.copy()
+                else:
+                    # Combine all liquid detections
+                    liquid_mask_combined = cv2.bitwise_or(liquid_mask_combined, mask_bin)
 
                 color = CLASS_COLORS.get(cls_id, (255,255,255))
                 MASK_ALPHA = 0.2
@@ -264,7 +259,7 @@ class DepthReader(Node):
                 cv2.rectangle(overlay, (x1, y1), (x2, y2), color, 2)
                 cv2.putText(overlay, f"{class_name}", (x1, max(0, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
-        # Calibration Logic (Always run while Idle)
+        # Calibration Logic
         if bottle_mask_current is not None and self.last_cup_bbox is not None:
             self.no_cup_count = 0 
             if not self.bottom_y_locked:
@@ -272,54 +267,48 @@ class DepthReader(Node):
                 if self.tare_stability_count >= self.TARE_STABILITY_THRESHOLD:
                     cx1, cy1, cx2, cy2 = self.last_cup_bbox
                     self.fixed_bottle_bottom_y, self.locked_total_cup_px = int(cy2), float(cy2 - cy1)
-                    self.last_total_cup_px = self.locked_total_cup_px
                     self._update_target_line_y()
         else:
             self.no_cup_count += 1
             if self.no_cup_count >= self.NO_CUP_THRESHOLD:
                 self.fixed_bottle_bottom_y, self.locked_total_cup_px, self.bottom_y_locked = None, None, False
-                self.snap_triggered, self.height_px_ema, self.estimated_ml_ema, self.target_line_y = False, None, None, None
                 self.is_pouring_active = False
-                self.liquid_stability_count = 0
         
         # Liquid Logic
-        if liquid_mask_current is not None and self.fixed_bottle_bottom_y is not None:
-            height_px, waterline_y = self.estimate_height_px(liquid_mask_current)
-            self.current_waterline_y = waterline_y 
+        has_liquid = np.any(liquid_mask_combined > 0)
+        if self.fixed_bottle_bottom_y is not None:
+            if has_liquid:
+                height_px, waterline_y = self.estimate_height_px(liquid_mask_combined)
+                self.current_waterline_y = waterline_y 
 
-            # --- Waterline Jump Trigger with 10-frame Stability ---
-            if self.is_pouring_active and not self.flow_started_sent and self.baseline_waterline_y is not None:
-                # Trigger if ANY higher liquid is detected (no minimum jump threshold)
-                if waterline_y < self.baseline_waterline_y: 
+            # --- Simple First Liquid Detection Trigger ---
+            if self.is_pouring_active and not self.flow_started_sent:
+                if has_liquid:
                     self.flow_stability_count += 1
                     if self.flow_stability_count >= self.FLOW_STABILITY_THRESHOLD:
                         self.flow_started_pub.publish(Empty())
                         self.flow_started_sent = True
-                        self.get_logger().info(f"--- FLOW CONFIRMED! waterline higher than baseline: {self.baseline_waterline_y} -> {waterline_y} ---")
+                        self.get_logger().info("--- FLOW STARTED! Liquid detected by YOLO ---")
                 else:
                     self.flow_stability_count = 0 
-            else:
-                self.flow_stability_count = 0
 
-            self.liquid_stability_count += 1
-            if self.liquid_stability_count >= self.STABILITY_THRESHOLD:
-                if height_px is not None:
-                    height_px_ema = self.apply_height_ema(height_px)
-                    volume_ml = self.height_px_to_volume_ml(height_px_ema)
-                    volume_ml_ema = self.apply_liquid_ml_ema(volume_ml)
-                    self.current_height_px_ema = height_px_ema
-
-                    vol_msg = Float32()
-                    vol_msg.data = float(volume_ml_ema)
-                    self.volume_pub.publish(vol_msg)
+            # Report volume
+            if has_liquid:
+                self.liquid_stability_count += 1
+                if self.liquid_stability_count >= self.STABILITY_THRESHOLD:
+                    if height_px is not None:
+                        height_px_ema = self.apply_height_ema(height_px)
+                        volume_ml = self.height_px_to_volume_ml(height_px_ema)
+                        self.estimated_ml_ema = self.apply_liquid_ml_ema(volume_ml)
+                        vol_msg = Float32()
+                        vol_msg.data = float(self.estimated_ml_ema)
+                        self.volume_pub.publish(vol_msg)
         else:
-            self.liquid_stability_count = 0
-            self.flow_stability_count = 0
             self.current_waterline_y = None
 
         # Visualization
         if self.last_cup_bbox is not None:
-            cx1, _, _, cy2 = self.last_cup_bbox
+            cx1, cy1, cx2, cy2 = self.last_cup_bbox
             current_vol = self.estimated_ml_ema if self.estimated_ml_ema is not None else 0.0
             cv2.putText(overlay, f"CUR: {current_vol:.1f}ml", (cx1, cy2 + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
