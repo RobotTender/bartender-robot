@@ -97,7 +97,11 @@ def classify_node(state: GraphState) -> GraphState:
     
     return {
                 **state,
-                "tts_text":tts_text,
+                "tts_text": tts_text,
+                "llm_text": tts_text,
                 "status": "success" if is_direct_order else "processing",
-                "selected_menu": selected_menu
+                "selected_menu": selected_menu,
+                "route": "direct_keyword" if is_direct_order else "llm_classify",
+                "llm_used": not is_direct_order,
+                "llm_reason": "Direct keyword match" if is_direct_order else f"Classified with LLM from input: {input_text}"
     }

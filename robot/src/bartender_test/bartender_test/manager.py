@@ -50,6 +50,7 @@ class RobotenderManager(Node):
         self.pick_trigger_srv = self.create_service(Trigger, 'robotender_manager/pick_bottle', self.manual_pick_callback, callback_group=self.callback_group)
         self.pour_trigger_srv = self.create_service(Trigger, 'robotender_manager/pour_bottle', self.manual_pour_callback, callback_group=self.callback_group)
         self.place_trigger_srv = self.create_service(Trigger, 'robotender_manager/place_bottle', self.manual_place_callback, callback_group=self.callback_group)
+        self.get_mode_srv = self.create_service(Trigger, 'robotender_manager/get_mode', self.get_mode_callback, callback_group=self.callback_group)
         
         self.order_topic = "/bartender/order_detail"
         self.order_sub = None 
@@ -83,6 +84,11 @@ class RobotenderManager(Node):
             response.success, response.message = False, "Pick failed."
 
         self.is_busy = False
+        return response
+
+    def get_mode_callback(self, request, response):
+        response.success = True
+        response.message = self.execution_mode
         return response
 
     async def execute_pick_sequence(self, bottle_name):

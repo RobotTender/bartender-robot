@@ -85,11 +85,11 @@ class DepthReader(Node):
           
           print(f"{model.names[int(class_id)]}: {object_depth:.2f}m")
       
-      cv2.namedWindow("RGB with Depth", cv2.WINDOW_NORMAL)
-      cv2.resizeWindow("RGB with Depth", 850, 500)
+      # cv2.namedWindow("RGB with Depth", cv2.WINDOW_NORMAL)
+      # cv2.resizeWindow("RGB with Depth", 850, 500)
 
-      cv2.imshow("RGB with Depth", img_vis)
-      cv2.waitKey(1)
+      # cv2.imshow("RGB with Depth", img_vis)
+      # cv2.waitKey(1)
 
 
 def main(args=None):

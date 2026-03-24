@@ -13,12 +13,18 @@ def route_entry(state: GraphState) -> str:
     return {
         "init": "classify_order",
         "processing": "makeorder",
-        "success": "menu_detail"
-    }.get(status, END)  # 기본값
+        "retry": "makeorder",
+        "success": "menu_detail",
+        "error": END,
+        "canceled": END
+    }.get(status, END)
 
 def route_to_detail(state: GraphState) -> str:
-    if state.get("status") == "success":
+    status = state.get("status")
+    if status == "success":
         return "menu_detail"
+    if status == "retry":
+        return END # Wait for next input
     return END
 
 

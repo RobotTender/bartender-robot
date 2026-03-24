@@ -1,0 +1,11 @@
+name,v1,v2,v3,v4,v5,v6
+top_status_robot_enabled,1
+top_status_vision2_enabled,1
+top_status_vision_enabled,1
+top_status_voice_enabled,0
+vision1_calibration_enabled,0
+vision1_serial,313522301601
+vision1_view_rotation_deg,180
+vision2_calibration_enabled,0
+vision2_serial,311322302867
+vision2_view_rotation_deg,0

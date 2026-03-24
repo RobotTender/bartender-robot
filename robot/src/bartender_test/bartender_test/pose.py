@@ -4,7 +4,7 @@ from rclpy.node import Node
 from dsr_msgs2.srv import MoveJoint
 from .defines import (POSJ_HOME, POSJ_CHEERS, POSJ_PICK_PLACE_READY, POSJ_SNAP,
                             BOTTLE_CONFIG, SNAP_VELOCITY, SNAP_ACCELERATION,
-                            SNAP_J6_VELOCITY, SNAP_J6_ACCELERATION)
+                            SNAP_VELOCITY, SNAP_ACCELERATION)
 
 def main(args=None):
     rclpy.init(args=args)
@@ -35,8 +35,8 @@ def main(args=None):
             target_joint_pose = POSJ_CHEERS
         elif pose_name == 'snap':
             target_joint_pose = POSJ_SNAP
-            target_vel = SNAP_J6_VELOCITY
-            target_acc = SNAP_J6_ACCELERATION
+            target_vel = SNAP_VELOCITY
+            target_acc = SNAP_ACCELERATION
         elif pose_name in ['contact', 'horizontal', 'diagonal', 'vertical']:
             config = BOTTLE_CONFIG.get(bottle_type)
             if config:

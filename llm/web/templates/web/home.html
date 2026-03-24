@@ -85,13 +85,33 @@
     .start-btn:active {
       transform: translateY(1px);
     }
+
+    .start-btn.disabled {
+      background: linear-gradient(135deg, #7f8da3, #61708a);
+      box-shadow: none;
+      color: #e8f1ff;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .disabled-note {
+      margin-top: 16px;
+      font-size: 14px;
+      color: #b5d0f0;
+      opacity: 0.9;
+    }
   </style>
 </head>
 <body>
   <main class="wrap">
     <p class="kicker">VOICE ORDER</p>
     <h1 class="title">ROBOTENDER</h1>
-    <a class="start-btn" href="{% url 'order' %}">주문 시작</a>
+    {% if order_start_enabled %}
+      <a class="start-btn" href="{% url 'order' %}">주문 시작</a>
+    {% else %}
+      <button class="start-btn disabled" type="button" aria-disabled="true">주문 시작 준비중</button>
+      <p class="disabled-note">주문 시작 버튼은 현재 잠금 상태입니다.</p>
+    {% endif %}
   </main>
 </body>
 </html>

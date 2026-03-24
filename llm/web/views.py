@@ -1,10 +1,12 @@
 from pathlib import Path
 import sys
 import logging
+import json
 
 from django.http import HttpResponse, JsonResponse
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from django.views.decorators.http import require_POST
+from django.views.decorators.csrf import csrf_exempt
 from django.views import View
 
 from web.order_engine.common import MENU_LABELS
@@ -25,10 +27,15 @@ logger = logging.getLogger(__name__)
 
 
 def home(request):
-    return render(request, "web/home.html")
+    order_start_enabled = request.session.get("order_start_enabled", True)
+    return render(request, "web/home.html", {"order_start_enabled": order_start_enabled})
 
 
 def order(request):
+    # Check if ordering is enabled in session
+    if not request.session.get("order_start_enabled", True):
+        return redirect("home")
+        
     # Start page -> order page 진입 시 이전 주문 세션 상태 초기화
     request.session["order_state"] = {}
     context = {
@@ -143,3 +150,21 @@ class TTSView(View):
         response = HttpResponse(result.audio_bytes, content_type="audio/wav")
         response["Content-Disposition"] = 'inline; filename="synthesized.wav"'
         return response
+
+
+@csrf_exempt
+@require_POST
+def order_start_enabled(request):
+    try:
+        data = json.loads(request.body)
+        enabled = bool(data.get("enabled", False))
+        
+        # 세션에 주문 시작 가능 상태 저장
+        request.session["order_start_enabled"] = enabled
+        
+        return JsonResponse({
+            "ok": True,
+            "order_start_enabled": enabled
+        })
+    except Exception as e:
+        return JsonResponse({"ok": False, "error": str(e)}, status=400)

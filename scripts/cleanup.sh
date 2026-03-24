@@ -32,9 +32,10 @@ pkill -9 -f "/opt/ros/"
 echo "Stopping Realsense hardware processes..."
 pkill -9 -f "realsense_cam"
 
-# 5. Kill Django web server if running
-echo "Stopping Django web server..."
+# 5. Kill Django web server and Developer Frontend if running
+echo "Stopping Django web server and Developer Frontend..."
 pkill -9 -f "manage.py runserver"
+pkill -9 -f "developer_frontend.py"
 
 # 6. Restart the ROS 2 daemon to clear the node list
 echo "Restarting ROS 2 daemon..."

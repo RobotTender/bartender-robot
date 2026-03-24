@@ -5,14 +5,12 @@ import time
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
 
 
 load_dotenv()
 
-STT_MODEL = "gemini-flash-latest"
-MAX_RETRIES = 3
+STT_MODEL = os.environ.get("VOICE_ORDER_STT_MODEL", "gemini-flash-latest")
+MAX_RETRIES = max(1, int(float(os.environ.get("VOICE_ORDER_STT_RETRIES", "3"))))
 
 PROMPT = """You are an audio order analyzer for a Korean bartender app.
 Analyze the provided audio and return strict JSON only with these keys:
@@ -40,6 +38,7 @@ class STTResult:
 _AUDIO_MIME_OVERRIDES = {
     ".webm": "audio/webm",
     ".mp4": "audio/mp4",
+    ".wav": "audio/wav",
 }
 
 
@@ -58,7 +57,10 @@ def _extract_json(text: str) -> dict:
         content = content.replace("```json", "", 1).replace("```", "", 1).strip()
     elif content.startswith("```"):
         content = content.replace("```", "", 2).strip()
-    return json.loads(content)
+    data = json.loads(content)
+    if not isinstance(data, dict):
+        raise RuntimeError("model response is not json object")
+    return data
 
 
 def _is_retryable_error(exc: Exception) -> bool:
@@ -69,7 +71,16 @@ def _is_retryable_error(exc: Exception) -> bool:
     return "RESOURCE_EXHAUSTED" in message or "INTERNAL" in message or "UNAVAILABLE" in message
 
 
-def _generate_content_with_retry(client: genai.Client, audio_part: types.Part):
+def _load_google_genai():
+    try:
+        from google import genai
+        from google.genai import types
+    except Exception as exc:
+        raise RuntimeError("google-genai 패키지가 필요합니다. `pip install google-genai` 후 재시도하세요.") from exc
+    return genai, types
+
+
+def _generate_content_with_retry(client, audio_part, types):
     last_exc: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -98,28 +109,24 @@ def transcribe_audio_bytes(
 ) -> STTResult:
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise RuntimeError("GOOGLE_API_KEY (or GEMINI_API_KEY) not found in .env file.")
+        raise RuntimeError("GOOGLE_API_KEY or GEMINI_API_KEY not found in .env file.")
+    if not isinstance(audio_bytes, (bytes, bytearray)) or len(audio_bytes) < 512:
+        raise RuntimeError("audio payload is too short.")
 
+    genai, types = _load_google_genai()
     client = genai.Client(api_key=api_key)
     mime_type = _guess_mime_type(filename)
-    audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type)
+    audio_part = types.Part.from_bytes(data=bytes(audio_bytes), mime_type=mime_type)
+    response = _generate_content_with_retry(client, audio_part, types)
 
-    response = _generate_content_with_retry(client, audio_part)
-
-    try:
-        payload = _extract_json(response.text)
-    except Exception as exc:
-        raise RuntimeError(f"Failed to parse model response as JSON: {response.text}") from exc
-
-    transcript = str(payload.get("transcript", "")).strip()
-
-    emotion = str(payload.get("emotion", "")).strip()
-    recommend_menu = str(payload.get("recommend_menu", "")).strip()
-    reason = str(payload.get("reason", "")).strip()
+    raw_text = str(getattr(response, "text", "") or "").strip()
+    if not raw_text:
+        raise RuntimeError("Gemini STT 응답이 비어 있습니다.")
+    payload = _extract_json(raw_text)
 
     return STTResult(
-        text=transcript,
-        emotion=emotion,
-        recommend_menu=recommend_menu,
-        reason=reason,
+        text=str(payload.get("transcript", "")).strip(),
+        emotion=str(payload.get("emotion", "")).strip(),
+        recommend_menu=str(payload.get("recommend_menu", "")).strip().lower(),
+        reason=str(payload.get("reason", "")).strip(),
     )

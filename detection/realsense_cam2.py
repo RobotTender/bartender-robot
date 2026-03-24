@@ -276,8 +276,8 @@ class DepthReader(Node):
         status_color = (0, 255, 0) if self.is_pouring_active else ((0, 255, 255) if self.locked_total_cup_px else (0, 0, 255))
         cv2.putText(overlay, f"STATUS: {status_msg}", (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2)
 
-        cv2.imshow("RGB with Depth (YOLO-Seg)", overlay)
-        cv2.waitKey(1)
+        # cv2.imshow("RGB with Depth (YOLO-Seg)", overlay)
+        # cv2.waitKey(1)
 
 def main(args=None):
     rclpy.init(args=args)
