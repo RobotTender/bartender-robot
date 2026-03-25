@@ -1,19 +1,24 @@
+from ratio_utils import build_recipe, select_ratio_with_llm
 from state import GraphState
 
 
 def menu_detail_node(state: GraphState) -> GraphState:
-    # 메뉴 레시피(사용자에 따른 비율 산정을 할경우 LLM 쓸 가능성 있음)
-    menu = state.get("selected_menu")
-    if menu =="soju":
-        recipe = {"soju": 50}
-    elif menu == "beer":
-        recipe = {"beer":200}
-    elif menu == "somaek":
-        recipe = {"soju": 60, "beer":140}
-    else:
-        recipe = {}
+    menu = state.get("selected_menu", "")
+    text = state.get("input_text", "")
+    emotion = state.get("emotion", "")
+    user_profile = state.get("user_profile", {})
+    ratio = state.get("ratio", "")
+    ratio_reason = state.get("ratio_reason", "")
+
+    if menu in ("somaek", "koktail") and not ratio:
+        ratio, ratio_reason = select_ratio_with_llm(menu, text, emotion, user_profile)
+
+    recipe = build_recipe(menu, ratio)
+
     return {
         **state,
         "drinks": menu,
+        "ratio": ratio,
+        "ratio_reason": ratio_reason,
         "recipe": recipe,
     }

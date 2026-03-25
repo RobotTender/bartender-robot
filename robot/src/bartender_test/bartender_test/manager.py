@@ -55,6 +55,8 @@ class RobotenderManager(Node):
         self.order_sub = None 
         self.is_busy = False 
         self.last_ordered_bottle = None 
+        self.last_order_recipe = {}
+        self.current_target_volume_ml = None
         self.last_picked_pose = None 
         
         self.get_logger().info('====================================================')
@@ -97,9 +99,9 @@ class RobotenderManager(Node):
             await self.run_standby_sequence()
             return False
 
-    async def execute_pour_sequence(self, bottle_name):
+    async def execute_pour_sequence(self, bottle_name, target_volume_ml=None):
         """Helper to run the full pour motion and return to home"""
-        success = await self.send_pour_goal(bottle_name)
+        success = await self.send_pour_goal(bottle_name, target_volume_ml)
         if success:
             req_move = MoveJoint.Request()
             req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], 30.0, 30.0
@@ -124,7 +126,7 @@ class RobotenderManager(Node):
 
         self.get_logger().info(f"[MANUAL] Pour Triggered for: {self.last_ordered_bottle}")
         self.is_busy = True
-        success = await self.execute_pour_sequence(self.last_ordered_bottle)
+        success = await self.execute_pour_sequence(self.last_ordered_bottle, self.current_target_volume_ml)
         
         if success:
             response.success, response.message = True, "Pour completed."
@@ -134,14 +136,18 @@ class RobotenderManager(Node):
         self.is_busy = False
         return response
 
-    async def send_pour_goal(self, bottle_name):
+    async def send_pour_goal(self, bottle_name, target_volume_ml=None):
         if not self.pour_action_client.wait_for_server(timeout_sec=5.0):
             return False
 
         config = BOTTLE_CONFIG.get(bottle_name)
         if config is None: return False
-            
-        target_volume = float(config.get('pour_target_ml', 100.0))
+
+        if target_volume_ml is None:
+            target_volume = float(config.get('pour_target_ml', 100.0))
+        else:
+            target_volume = float(target_volume_ml)
+
         goal_msg = PourBottle.Goal()
         goal_msg.bottle_name = bottle_name
         goal_msg.target_volume_ml = target_volume
@@ -237,49 +243,75 @@ class RobotenderManager(Node):
         try:
             order_data = json.loads(msg.data)
             if "recipe" in order_data:
-                self.last_ordered_bottle = list(order_data["recipe"].keys())[0]
-                self.get_logger().info(f"ORDER RECEIVED: {self.last_ordered_bottle}")
+                recipe = order_data.get("recipe") or {}
+                if not recipe:
+                    self.get_logger().warn("Order received with empty recipe.")
+                    return
+
+                self.last_order_recipe = {
+                    str(bottle_name): float(target_ml)
+                    for bottle_name, target_ml in recipe.items()
+                }
+                first_bottle = next(iter(self.last_order_recipe))
+                self.last_ordered_bottle = first_bottle
+                self.current_target_volume_ml = self.last_order_recipe[first_bottle]
+                self.get_logger().info(
+                    "ORDER RECEIVED: recipe=%s first_bottle=%s first_target_ml=%.1f",
+                    self.last_order_recipe,
+                    self.last_ordered_bottle,
+                    self.current_target_volume_ml,
+                )
                 
                 # Auto-trigger if mode is set
                 if self.execution_mode == "auto":
-                    self.get_logger().info(f"[AUTO] Starting full sequence for: {self.last_ordered_bottle}")
+                    self.get_logger().info(f"[AUTO] Starting full sequence for recipe: {self.last_order_recipe}")
                     self.is_busy = True
-                    
-                    # 1. Pick
-                    self.get_logger().info(f"[AUTO] 1/3: Picking {self.last_ordered_bottle}...")
-                    pick_success = await self.execute_pick_sequence(self.last_ordered_bottle)
-                    
-                    if not pick_success:
-                        self.get_logger().error(f"[AUTO] Pick failed. Aborting sequence.")
-                        self.is_busy = False
-                        return
 
-                    # Check mode again before Pour
-                    if self.execution_mode != "auto":
-                        self.get_logger().info(f"[AUTO->MANUAL] Mode switched during Pick. Stopping sequence.")
-                        self.is_busy = False
-                        return
+                    for step_index, (bottle_name, target_ml) in enumerate(self.last_order_recipe.items(), start=1):
+                        self.last_ordered_bottle = bottle_name
+                        self.current_target_volume_ml = target_ml
 
-                    # 2. Pour
-                    self.get_logger().info(f"[AUTO] 2/3: Pouring {self.last_ordered_bottle}...")
-                    pour_success = await self.execute_pour_sequence(self.last_ordered_bottle)
+                        self.get_logger().info(
+                            "[AUTO] Ingredient %d/%d: bottle=%s target_ml=%.1f",
+                            step_index,
+                            len(self.last_order_recipe),
+                            bottle_name,
+                            target_ml,
+                        )
 
-                    if not pour_success:
-                        self.get_logger().error(f"[AUTO] Pour failed. Returning bottle...")
-                        await self.execute_place_sequence(self.last_picked_pose, self.last_ordered_bottle)
-                        self.is_busy = False
-                        return
+                        self.get_logger().info(f"[AUTO] Picking {bottle_name}...")
+                        pick_success = await self.execute_pick_sequence(bottle_name)
+                        if not pick_success:
+                            self.get_logger().error(f"[AUTO] Pick failed for {bottle_name}. Aborting sequence.")
+                            self.is_busy = False
+                            return
 
-                    # Check mode again before Place
-                    if self.execution_mode != "auto":
-                        self.get_logger().info(f"[AUTO->MANUAL] Mode switched during Pour. Stopping sequence.")
-                        self.is_busy = False
-                        return
+                        if self.execution_mode != "auto":
+                            self.get_logger().info(f"[AUTO->MANUAL] Mode switched during Pick. Stopping sequence.")
+                            self.is_busy = False
+                            return
 
-                    # 3. Place
-                    self.get_logger().info(f"[AUTO] 3/3: Placing {self.last_ordered_bottle}...")
-                    place_success = await self.execute_place_sequence(self.last_picked_pose, self.last_ordered_bottle)
-                    self.get_logger().info(f"[AUTO] Full sequence finished. Success: {place_success}")
+                        self.get_logger().info(f"[AUTO] Pouring {bottle_name} target_ml={target_ml:.1f}...")
+                        pour_success = await self.execute_pour_sequence(bottle_name, target_ml)
+                        if not pour_success:
+                            self.get_logger().error(f"[AUTO] Pour failed for {bottle_name}. Returning bottle...")
+                            await self.execute_place_sequence(self.last_picked_pose, bottle_name)
+                            self.is_busy = False
+                            return
+
+                        if self.execution_mode != "auto":
+                            self.get_logger().info(f"[AUTO->MANUAL] Mode switched during Pour. Stopping sequence.")
+                            self.is_busy = False
+                            return
+
+                        self.get_logger().info(f"[AUTO] Placing {bottle_name}...")
+                        place_success = await self.execute_place_sequence(self.last_picked_pose, bottle_name)
+                        if not place_success:
+                            self.get_logger().error(f"[AUTO] Place failed for {bottle_name}.")
+                            self.is_busy = False
+                            return
+
+                    self.get_logger().info(f"[AUTO] Full sequence finished. Recipe: {self.last_order_recipe}")
                     self.is_busy = False
 
         except Exception as e:
