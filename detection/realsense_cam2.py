@@ -90,7 +90,7 @@ class DepthReader(Node):
         self.last_height_px = 0.0
         
         # --- Noise Filtering Logic ---
-        self.MIN_LIQUID_RATIO = 0.02      # Ignore liquid detections smaller than 2% of cup mask (reflections)
+        self.MIN_LIQUID_RATIO = 0.05      # Ignore liquid detections smaller than 2% of cup mask (reflections)
         self.liquid_present_frames = 0    # Stable detection count
         self.liquid_absent_frames = 0     # Consistent absence count
         self.STABILITY_CONSENSUS = 10     # Need 10 frames of stable liquid to trust it for baseline
@@ -98,7 +98,7 @@ class DepthReader(Node):
 
         # --- Stability Logic ---
         self.liquid_stability_count = 0 
-        self.STABILITY_THRESHOLD = 15   # number of frames for stabilzation
+        self.STABILITY_THRESHOLD = 10   # number of frames for stabilzation
         
         # --- Tare Safety Logic ---
         self.tare_stability_count = 0 
@@ -261,7 +261,7 @@ class DepthReader(Node):
         img_vis = self.color_image.copy()
         depth_img = self.depth_image.copy() # Local copy to avoid thread collision
 
-        results = model.predict(source=img_vis, conf=0.5, iou=0.5, retina_masks=True, verbose=False)
+        results = model.predict(source=img_vis, conf=0.4, iou=0.5, retina_masks=True, verbose=False)
         overlay = img_vis.copy()
         bottle_mask_current = None
         liquid_mask_combined = np.zeros(img_vis.shape[:2], dtype=np.uint8)
