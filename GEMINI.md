@@ -5,6 +5,12 @@
     - **Auto/Manual Mode:** Real-time switching via ROS topic.
     - **Node Isolation Standard:** All motion nodes use isolated internal nodes.
 
+## Achievements (March 25, 2026)
+- **Multi-Menu & Ingredient Support:** Successfully merged `llm-newmenu` branch. The system now supports complex orders involving multiple ingredients (e.g., Somaek, Cocktail).
+- **LLM-Based Ratio Selection:** Integrated a new LLM logic (`ratio_utils.py`) that dynamically selects mixing ratios (1:1, 1:2, 1:5) based on user sentiment, profile, and menu type.
+- **Orchestrated Multi-Step Sequence:** Updated `RobotenderManager` to iterate through ordered recipes, automatically chaining Pick->Pour->Place for each ingredient in the sequence.
+- **Enhanced LLM Classification:** Refined the `classify_node` to handle direct orders for complex drinks and generate natural, context-aware recommendation responses via OpenAI.
+
 ## Achievements (March 23, 2026)
 - **Time-Deterministic Pouring (Snap Strategy):** Implemented a high-precision snap trigger based on **Flow Detection + Timing**, replacing the slower filtered-volume trigger.
     - **Camera Side:** Detects the "First Drop" by identifying a waterline jump above the baseline. Confirms flow after 1 frame for maximum responsiveness.
@@ -64,13 +70,16 @@ ros2 topic pub --once /dsr01/robotender_manager/mode std_msgs/msg/String "{data:
 ```
 
 ### 3. Order Topic (Real-time)
-Manually trigger an order. The Manager expects a JSON string with a `recipe` object.
+Manually trigger an order. The Manager expects a JSON string with `drinks` and a `recipe` object.
 ```bash
 # Order 50ml of Soju
-ros2 topic pub --once /bartender/order_detail std_msgs/msg/String "{data: '{\"recipe\": {\"soju\": 50}}'}"
+ros2 topic pub --once /bartender/order_detail std_msgs/msg/String "{data: '{\"drinks\": \"soju\", \"recipe\": {\"soju\": 50}}'}"
 
 # Order 100ml of Beer
-ros2 topic pub --once /bartender/order_detail std_msgs/msg/String "{data: '{\"recipe\": {\"beer\": 100}}'}"
+ros2 topic pub --once /bartender/order_detail std_msgs/msg/String "{data: '{\"drinks\": \"beer\", \"recipe\": {\"beer\": 100}}'}"
+
+# Order Somaek (Soju 100ml + Beer 200ml)
+ros2 topic pub --once /bartender/order_detail std_msgs/msg/String "{data: '{\"drinks\": \"somaek\", \"recipe\": {\"soju\": 100, \"beer\": 200}}'}"
 ```
 
 ### 4. Orchestrated Execution (Manager Node)
