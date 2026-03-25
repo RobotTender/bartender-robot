@@ -107,7 +107,6 @@ def stt_transcribe(request):
     new_ratio = graph_result.get("ratio", "")
     new_ratio_reason = graph_result.get("ratio_reason", "")
     recipe = graph_result.get("recipe",{})
-    order_start_announced = any(cue in tts_text for cue in ORDER_START_CUES)
     request.session["order_state"] = {
         "status": new_status,
         "retry": new_retry,
@@ -137,6 +136,7 @@ def stt_transcribe(request):
     return JsonResponse({
         "tts_text": tts_text,
         "status": new_status,
+        "making": bool(recipe),
     })
 
 

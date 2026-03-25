@@ -383,6 +383,7 @@
     const csrfToken = document.querySelector("input[name='csrfmiddlewaretoken']").value;
     const transcribeUrl = "{% url 'stt_transcribe' %}";
     const ttsUrl = "{% url 'tts' %}";
+    const homeUrl = "{% url 'home' %}";
     const makingOverlay = document.getElementById("making-overlay");
 
     let mediaRecorder = null;
@@ -440,12 +441,18 @@
       currentAudioUrl = URL.createObjectURL(audioBlob);
       currentAudio = new Audio(currentAudioUrl);
       await currentAudio.play();
-      currentAudio.onended = function () {
-        if (!isMaking) {
-          statusEl.textContent = "Ready";
-          micBtn.disabled = false;
-        }
-      };
+      await new Promise(function (resolve) {
+        currentAudio.onended = function () {
+          if (!isMaking) {
+            statusEl.textContent = "Ready";
+            micBtn.disabled = false;
+          }
+          resolve();
+        };
+        currentAudio.onerror = function () {
+          resolve();
+        };
+      });
     }
 
     function handleConfirmed(menuLabel) {
@@ -509,9 +516,6 @@
       }
 
       const ttsText = (data.tts_text || "").trim();
-      if (data.making) {
-        showMakingOverlay();
-      }
       previewEl.textContent = ttsText || "응답이 없습니다.";
       replyEl.textContent = "";
 
@@ -520,6 +524,11 @@
 
       if (ttsText) {
         await playTts(ttsText);
+        if (data.making) {
+          window.location.href = homeUrl;
+        }
+      } else if (data.making) {
+        window.location.href = homeUrl;
       } else {
         statusEl.textContent = "Ready";
       }
