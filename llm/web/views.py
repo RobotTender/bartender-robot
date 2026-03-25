@@ -22,6 +22,8 @@ graph = create_graph_flow()
 logger = logging.getLogger(__name__)
 
 
+ORDER_START_CUES = ("제조시작합니다", "주문 시작합니다")
+
 
 
 def home(request):
@@ -34,7 +36,7 @@ def order(request):
     context = {
         "status": "init",
         "retry":False,
-        "recommand_menu":"",
+        "recommend_menu":"",
     }
 
     return render(request, "web/order.html", context)
@@ -71,7 +73,9 @@ def stt_transcribe(request):
 
     saved_status = session_state.get("status", "init")
     saved_retry = bool(session_state.get("retry", False))
-    saved_recommend_menu = session_state.get("recommend_menu")
+    saved_recommend_menu = session_state.get("recommend_menu") or session_state.get("recommand_menu")
+    saved_ratio = session_state.get("ratio", "")
+    saved_ratio_reason = session_state.get("ratio_reason", "")
     if saved_recommend_menu:
         recommend_menu  = saved_recommend_menu
     else:
@@ -85,7 +89,9 @@ def stt_transcribe(request):
         "emotion": result.emotion,
         "recommend_menu": recommend_menu,
         "reason": result.reason,
-        "retry": saved_retry
+        "retry": saved_retry,
+        "ratio": saved_ratio,
+        "ratio_reason": saved_ratio_reason,
     }
 
     try:
@@ -98,20 +104,28 @@ def stt_transcribe(request):
     new_status = graph_result.get("status", "init")
     new_retry = bool(graph_result.get("retry", False))
     new_recommend_menu = graph_result.get("recommend_menu", "")
+    new_ratio = graph_result.get("ratio", "")
+    new_ratio_reason = graph_result.get("ratio_reason", "")
     recipe = graph_result.get("recipe",{})
     request.session["order_state"] = {
         "status": new_status,
         "retry": new_retry,
-        "recommand_menu": new_recommend_menu,
+        "recommend_menu": new_recommend_menu,
+        "ratio": new_ratio,
+        "ratio_reason": new_ratio_reason,
     }
 
+    logger.info(
+        "Before robot publish: tts_text=%s selected_menu=%s ratio=%s ratio_reason=%s recipe=%s status=%s",
+        tts_text,
+        selected_menu,
+        new_ratio,
+        new_ratio_reason,
+        recipe,
+        new_status,
+    )
+
     if recipe:
-        logger.info(
-            "Recipe generated: selected_menu=%s recipe=%s status=%s",
-            selected_menu,
-            recipe,
-            new_status,
-        )
         command_payload = {
             "drinks": graph_result.get("drinks", selected_menu),
             "recipe": recipe,
@@ -122,6 +136,7 @@ def stt_transcribe(request):
     return JsonResponse({
         "tts_text": tts_text,
         "status": new_status,
+        "making": bool(recipe),
     })
 
 

@@ -57,14 +57,15 @@ def make_order_node(state: GraphState) -> GraphState:
     status = state.get("status")
     text = str(state.get("input_text", "") or "").strip()
     detected = detect_menu_from_text(text)
-    recommend_menu = detected if detected else MENU_LABELS.get(state.get("recommend_menu"))
+    recommend_menu = detected if detected else state.get("recommend_menu", "")
     retry = state.get("retry")
     selected_menu = state.get("selected_menu", "")
+    ratio = state.get("ratio", "")
     
 
     if any(cue in text for cue in CONFIRM_CUES):
         selected_menu = recommend_menu
-        tts_text = build_order_confirmation_text(selected_menu)
+        tts_text = build_order_confirmation_text(selected_menu, ratio)
         status = "success"
 
     elif any(cue in text for cue in REJECT_CUES):
@@ -74,7 +75,7 @@ def make_order_node(state: GraphState) -> GraphState:
 
         else:
             retry=True
-            tts_text = "어떤 것을 그럼 원하시나요? 저희는 소주, 맥주, 소맥이 준비 되어있습니다."
+            tts_text = "어떤 것을 그럼 원하시나요? 저희는 소주, 맥주, 소맥, 주스, 칵테일이 준비 되어있습니다."
 
     else:
         selected_menu = _resolve_with_llm(text, recommend_menu)
@@ -86,7 +87,7 @@ def make_order_node(state: GraphState) -> GraphState:
             retry = True
             tts_text = "다시 한번 말씀해주시겠어요?"
         else:
-            tts_text = build_order_confirmation_text(selected_menu)
+            tts_text = build_order_confirmation_text(selected_menu, ratio)
             status = "success"
             
     return {

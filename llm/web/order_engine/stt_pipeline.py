@@ -11,15 +11,15 @@ from google.genai import types
 
 load_dotenv()
 
-STT_MODEL = "gemini-flash-latest"
-MAX_RETRIES = 3
+STT_MODEL = os.getenv("STT_MODEL", "gemini-flash-latest")
+MAX_RETRIES = int(os.getenv("STT_MAX_RETRIES", "2"))
 
 PROMPT = """You are an audio order analyzer for a Korean bartender app.
 Analyze the provided audio and return strict JSON only with these keys:
 {
   "transcript": "recognized Korean text",
   "emotion": "happy|sad|angry|tired|neutral",
-  "recommend_menu": "soju|beer|somaek",
+  "recommend_menu": "soju|beer|somaek|juice|koktail|",
   "reason": "short reason in Korean"
 }
 Rules:
