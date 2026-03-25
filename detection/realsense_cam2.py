@@ -80,8 +80,14 @@ class DepthReader(Node):
         self.snap_triggered = False    # To ensure we only trigger once per pour
         self.flow_started_sent = False # To ensure we only send flow_started once
         self.flow_stability_count = 0  # Counter for consecutive detections
-        self.FLOW_STABILITY_THRESHOLD = 1 # 1 frame for immediate responsiveness
+        self.FLOW_STABILITY_THRESHOLD = 1 # Keep at 1 for immediate responsiveness
+        self.PADDING_RATIO = 0.05          # 5% height padding between liquid and detection zone
 
+        self.baseline_height_px = 0.0
+
+        self.baseline_liquid_mask = None
+        self.available_mask = None
+        self.last_height_px = 0.0
         self.low_volume_count = 0      # Used to reset the trigger flag when cup is empty
         
         # --- Stability Logic ---
@@ -94,7 +100,9 @@ class DepthReader(Node):
         self.TARE_STABILITY_THRESHOLD = 90 
         self.NO_CUP_THRESHOLD = 45 
         
-        # Store last known cup bbox for visualization
+        # Store last known masks for handshake
+        self.last_cup_mask = None
+        self.last_liquid_mask = None
         self.last_cup_bbox = None
 
         # 구독자 설정
@@ -142,20 +150,20 @@ class DepthReader(Node):
 
     def prepare_pouring_callback(self, request, response):
         """Service handler: Robot is at CHEERS and wants to start pouring."""
-        self.get_logger().info("PREPARE POURING Service Called. Waiting for first liquid detection...")
+        self.get_logger().info("PREPARE POURING Service Called. Defining available area with padding...")
         
         # 1. Wait for stable cup detection if not locked
         wait_start = time.time()
         while self.locked_total_cup_px is None and (time.time() - wait_start < 2.0):
             time.sleep(0.1)
             
-        if self.locked_total_cup_px is None:
+        if self.locked_total_cup_px is None or self.last_cup_mask is None:
             self.get_logger().error("Prepare Failed: Cup not detected/stable.")
             response.success = False
             response.message = "Cup not found."
             return response
 
-        # 2. Lock scale
+        # 2. Lock scale & Baseline Area
         self.bottom_y_locked = True
         self.snap_triggered = False
         self.flow_started_sent = False 
@@ -163,9 +171,35 @@ class DepthReader(Node):
         self.liquid_stability_count = 0 
         self.is_pouring_active = True 
         
-        self.get_logger().info("Prepare Successful. Ready to detect flow.")
+        # Capture baseline height from EMA if available
+        if self.height_px_ema is not None:
+            self.baseline_height_px = self.height_px_ema
+        else:
+            self.baseline_height_px = 0.0
+            
+        # Define Available Area: Cup Mask MINUS Current Liquid Mask
+        if self.last_liquid_mask is not None:
+            self.baseline_liquid_mask = self.last_liquid_mask.copy()
+            # 1. Start with Cup MINUS Liquid
+            available = cv2.bitwise_and(self.last_cup_mask, cv2.bitwise_not(self.baseline_liquid_mask))
+            
+            # 2. Add Padding (Clear area just above the current surface to avoid ripple noise)
+            padding_px = int(self.PADDING_RATIO * self.locked_total_cup_px)
+            if padding_px > 0:
+                ys_l, _ = np.where(self.baseline_liquid_mask > 0)
+                if len(ys_l) > 0:
+                    waterline_y = int(np.min(ys_l))
+                    # Clear pixels in a strip of padding_px height above the waterline
+                    available[max(0, waterline_y - padding_px):waterline_y, :] = 0
+            
+            self.available_mask = available
+        else:
+            self.baseline_liquid_mask = np.zeros_like(self.last_cup_mask)
+            self.available_mask = self.last_cup_mask.copy()
+            
+        self.get_logger().info(f"Prepare Successful. Baseline: {self.baseline_height_px:.1f}px. Available area defined.")
         response.success = True
-        response.message = "Ready."
+        response.message = f"Ready. Baseline {self.baseline_height_px:.1f}px"
         return response
 
     def pouring_status_callback(self, msg):
@@ -176,13 +210,15 @@ class DepthReader(Node):
             self.bottom_y_locked = False
             self.flow_stability_count = 0
             self.liquid_stability_count = 0
+            self.baseline_height_px = 0.0
+            self.available_mask = None
 
     def depth_callback(self, msg):
         self.depth_image = self.bridge.imgmsg_to_cv2(msg, "16UC1")
         if self.color_image is None: return
         img_vis = self.color_image.copy()
 
-        results = model.predict(source=img_vis, conf=0.4, iou=0.5, retina_masks=True, verbose=False)
+        results = model.predict(source=img_vis, conf=0.5, iou=0.5, retina_masks=True, verbose=False)
         overlay = img_vis.copy()
         bottle_mask_current = None
         liquid_mask_combined = np.zeros(img_vis.shape[:2], dtype=np.uint8)
@@ -207,6 +243,7 @@ class DepthReader(Node):
                     if bottle_mask_current is None or mask_area > int(np.count_nonzero(bottle_mask_current)):
                         bottle_mask_current = mask_bin.copy()
                         self.last_cup_bbox = (x1, y1, x2, y2)
+                        self.last_cup_mask = bottle_mask_current # Update for handshake
                 else:
                     # Combine all liquid detections
                     liquid_mask_combined = cv2.bitwise_or(liquid_mask_combined, mask_bin)
@@ -218,6 +255,8 @@ class DepthReader(Node):
                 overlay = np.where(mask_bin[:, :, None].astype(bool), ((1 - MASK_ALPHA) * overlay + MASK_ALPHA * colored).astype(np.uint8), overlay)
                 cv2.rectangle(overlay, (x1, y1), (x2, y2), color, 2)
                 cv2.putText(overlay, f"{class_name}", (x1, max(0, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+
+        self.last_liquid_mask = liquid_mask_combined # Update for handshake
 
         # Calibration Logic
         if bottle_mask_current is not None and self.last_cup_bbox is not None:
@@ -235,37 +274,54 @@ class DepthReader(Node):
         
         # Liquid Logic
         has_liquid = np.any(liquid_mask_combined > 0)
+        height_px = None
         if self.fixed_bottle_bottom_y is not None:
             if has_liquid:
                 height_px, waterline_y = self.estimate_height_px(liquid_mask_combined)
                 self.current_waterline_y = waterline_y 
 
-            # --- Simple First Liquid Detection Trigger ---
+            # --- Spatial Flow Detection Strategy (Strict Available Area) ---
             if self.is_pouring_active and not self.flow_started_sent:
-                if has_liquid:
-                    self.flow_stability_count += 1
-                    if self.flow_stability_count >= self.FLOW_STABILITY_THRESHOLD:
-                        self.flow_started_pub.publish(Empty())
-                        self.flow_started_sent = True
-                        self.get_logger().info("--- FLOW STARTED! Liquid detected by YOLO ---")
+                if self.available_mask is not None:
+                    # Only consider liquid that appears in the previously empty 'available' area
+                    new_liquid_in_available_area = cv2.bitwise_and(liquid_mask_combined, self.available_mask)
+                    new_liquid_px_count = int(np.count_nonzero(new_liquid_in_available_area))
+                    
+                    # Threshold for detection (e.g. 100 pixels to ignore noise)
+                    if new_liquid_px_count > 100:
+                        self.flow_stability_count += 1
+                        if self.flow_stability_count >= self.FLOW_STABILITY_THRESHOLD:
+                            self.flow_started_pub.publish(Empty())
+                            self.flow_started_sent = True
+                            self.get_logger().info(f"--- FLOW STARTED! New liquid detected in available area ({new_liquid_px_count} px) ---")
+                    else:
+                        self.flow_stability_count = 0
                 else:
-                    self.flow_stability_count = 0 
+                    self.get_logger().warn("Pouring active but available_mask is None. Handshake might have failed.")
 
             # Report volume
-            if has_liquid:
+            if has_liquid and height_px is not None:
                 self.liquid_stability_count += 1
                 if self.liquid_stability_count >= self.STABILITY_THRESHOLD:
-                    if height_px is not None:
-                        height_px_ema = self.apply_height_ema(height_px)
-                        volume_ml = self.height_px_to_volume_ml(height_px_ema)
-                        self.estimated_ml_ema = self.apply_liquid_ml_ema(volume_ml)
-                        vol_msg = Float32()
-                        vol_msg.data = float(self.estimated_ml_ema)
-                        self.volume_pub.publish(vol_msg)
+                    height_px_ema = self.apply_height_ema(height_px)
+                    volume_ml = self.height_px_to_volume_ml(height_px_ema)
+                    self.estimated_ml_ema = self.apply_liquid_ml_ema(volume_ml)
+                    vol_msg = Float32()
+                    vol_msg.data = float(self.estimated_ml_ema)
+                    self.volume_pub.publish(vol_msg)
+            else:
+                self.liquid_stability_count = 0
         else:
             self.current_waterline_y = None
 
-        # Visualization
+        # Visualization for available area
+        if self.available_mask is not None and self.is_pouring_active:
+            # Draw available area as a subtle green overlay
+            colored_available = np.zeros_like(overlay)
+            colored_available[self.available_mask > 0] = (0, 100, 0)
+            overlay = cv2.addWeighted(overlay, 1.0, colored_available, 0.3, 0)
+
+        # Visualization for volume
         if self.last_cup_bbox is not None:
             cx1, cy1, cx2, cy2 = self.last_cup_bbox
             current_vol = self.estimated_ml_ema if self.estimated_ml_ema is not None else 0.0

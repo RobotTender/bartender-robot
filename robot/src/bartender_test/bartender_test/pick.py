@@ -36,7 +36,7 @@ from .defines import (
 
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "e0509"
-VELOCITY, ACC = 30.0, 30.0
+VELOCITY, ACC = 40.0, 40.0
 
 class RobotControllerNode(Node):
     def __init__(self):
@@ -251,9 +251,9 @@ class RobotControllerNode(Node):
         tx, ty = p_robot[0] + PICK_PLACE_X_OFFSET, p_robot[1] + PICK_PLACE_Y_OFFSET
         
         self.get_logger().info(f"Moving X to {tx}")
-        movel([tx, curr_pos[1], curr_pos[2], curr_pos[3], curr_pos[4], curr_pos[5]], vel=[40, 40], acc=[40, 40])
+        movel([tx, curr_pos[1], curr_pos[2], curr_pos[3], curr_pos[4], curr_pos[5]], vel=[VELOCITY, VELOCITY], acc=[ACC, ACC])
         self.get_logger().info(f"Moving Y to {ty}")
-        movel([tx, ty, curr_pos[2], curr_pos[3], curr_pos[4], curr_pos[5]], vel=[40, 40], acc=[40, 40])
+        movel([tx, ty, curr_pos[2], curr_pos[3], curr_pos[4], curr_pos[5]], vel=[VELOCITY, VELOCITY], acc=[ACC, ACC])
 
     def _grasp_logic(self, target_name):
         from DSR_ROBOT2 import movel, get_current_posx, wait
@@ -283,7 +283,7 @@ class RobotControllerNode(Node):
         curr_lifted = list(get_current_posx()[0])
         self.get_logger().info(f"Retreating Y to {ready_y:.1f}")
         target_pos_retreat = [curr_lifted[0], ready_y, curr_lifted[2], curr_lifted[3], curr_lifted[4], curr_lifted[5]]
-        movel(target_pos_retreat, vel=[40, 40], acc=[40, 40])
+        movel(target_pos_retreat, vel=[VELOCITY, VELOCITY], acc=[ACC, ACC])
         
         return True
 

@@ -20,6 +20,8 @@ from .defines import (
 # Import DR_init but do NOT import DSR_ROBOT2 at top level
 import DR_init
 
+VELOCITY, ACC = 30.0, 30.0
+
 class PlaceNode(Node):
     def __init__(self):
         super().__init__('robotender_place', namespace='/dsr01')
@@ -95,7 +97,7 @@ class PlaceNode(Node):
             self.get_logger().info("Step 1: Moving to POSJ_PICK_PLACE_READY")
             feedback_msg.current_state, feedback_msg.progress = "STEP 1: MOVING_TO_READY", 0.1
             goal_handle.publish_feedback(feedback_msg)
-            movej(POSJ_PICK_PLACE_READY, vel=60, acc=60)
+            movej(POSJ_PICK_PLACE_READY, vel=VELOCITY, acc=ACC)
 
             # STEP 2: Approach X alignment first
             self.get_logger().info("Step 2: X-Alignment")
@@ -105,7 +107,7 @@ class PlaceNode(Node):
             curr_posx = list(get_current_posx()[0])
             tx = self.target_xyz[0] + PICK_PLACE_X_OFFSET
             target_x = [tx, curr_posx[1], curr_posx[2], curr_posx[3], curr_posx[4], curr_posx[5]]
-            movel(target_x, vel=[40, 40], acc=[40, 40])
+            movel(target_x, vel=[VELOCITY, VELOCITY], acc=[ACC, ACC])
 
             # STEP 3: Before approach Y, lift up Z 3cm more first
             self.get_logger().info("Step 3: Lifting Z +30mm")
@@ -114,7 +116,7 @@ class PlaceNode(Node):
             
             curr = list(get_current_posx()[0])
             target_lift = [curr[0], curr[1], curr[2] + 30.0, curr[3], curr[4], curr[5]]
-            movel(target_lift, vel=[40, 40], acc=[40, 40])
+            movel(target_lift, vel=[VELOCITY, VELOCITY], acc=[ACC, ACC])
 
             # STEP 4: Then approach Y
             self.get_logger().info("Step 4: Y-Entry")
@@ -124,7 +126,7 @@ class PlaceNode(Node):
             ty = self.target_xyz[1] + PICK_PLACE_Y_OFFSET
             curr_lifted = list(get_current_posx()[0])
             target_y = [curr_lifted[0], ty, curr_lifted[2], curr_lifted[3], curr_lifted[4], curr_lifted[5]]
-            movel(target_y, vel=[40, 40], acc=[40, 40])
+            movel(target_y, vel=[VELOCITY, VELOCITY], acc=[ACC, ACC])
 
             # STEP 5: When approach Y is done, lift down 2.75cm
             self.get_logger().info("Step 5: Lowering Z -27.5mm")
@@ -152,13 +154,13 @@ class PlaceNode(Node):
             ready_y = ready_posx[1]
             curr_placed = list(get_current_posx()[0])
             target_retreat = [curr_placed[0], ready_y, curr_placed[2], curr_placed[3], curr_placed[4], curr_placed[5]]
-            movel(target_retreat, vel=[60, 60], acc=[60, 60])
+            movel(target_retreat, vel=[VELOCITY, VELOCITY], acc=[ACC, ACC])
 
             # STEP 8: Move back to pick_place_ready pose
             self.get_logger().info("Step 8: Returning to POSJ_PICK_PLACE_READY")
             feedback_msg.current_state, feedback_msg.progress = "STEP 8: RETURNING_TO_READY", 1.0
             goal_handle.publish_feedback(feedback_msg)
-            movej(POSJ_PICK_PLACE_READY, vel=60, acc=60)
+            movej(POSJ_PICK_PLACE_READY, vel=VELOCITY, acc=ACC)
             
             self.get_logger().info("--- [PLACE] SUCCESS. Goal Succeeding. ---")
             result.success, result.message = True, "Place success"

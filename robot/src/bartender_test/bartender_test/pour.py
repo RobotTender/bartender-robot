@@ -175,7 +175,7 @@ class ActionNode(Node):
                 return posx(xyz + orientation)
 
             p2, p3, p4, p5 = combine_pos('posx_contact', 'posj_contact'), combine_pos('posx_horizontal', 'posj_horizontal'), combine_pos('posx_diagonal', 'posj_diagonal'), combine_pos('posx_vertical', 'posj_vertical')
-            
+
             # MOVE TO STARTING POSITION (CHEERS)
             self.get_logger().info("Moving to POSJ_CHEERS...")
             movej(POSJ_CHEERS, vel=30, acc=30)
@@ -201,10 +201,10 @@ class ActionNode(Node):
             self.target_waypoints = [(p2, config.get('posj_contact')), (p3, config.get('posj_horizontal')), (p4, config.get('posj_diagonal')), (p5, config.get('posj_vertical'))]
             
             self.recording = True
-            movel(p2, vel=[30, 30], acc=[30, 30])
+            movel(p2, vel=[50, 50], acc=[50, 50])
             
             if not self.trigger_received:
-                movesx([p3, p4, p5], vel=2, acc=2)
+                movesx([p3, p4, p5], vel=config.get('pour_velocity'), acc=config.get('pour_acc'))
             
             wait(0.1)
             self.recording = False
@@ -227,7 +227,7 @@ class ActionNode(Node):
                     self.get_logger().info("Interrupted BEFORE horizontal. Executing posj_contact...")
                     contact_pose = config.get('posj_contact')
                     if contact_pose:
-                        movej(contact_pose, vel=150, acc=150)
+                        movej(contact_pose, vel=120, acc=120)
             else:
                 # Normal completion recovery
                 curr_j = list(get_current_posj())
