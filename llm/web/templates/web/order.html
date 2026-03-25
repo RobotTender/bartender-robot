@@ -15,6 +15,8 @@
       --line: rgba(108, 181, 255, 0.35);
       --chip-bg: rgba(8, 28, 81, 0.55);
       --chip-border: rgba(100, 160, 255, 0.45);
+      --panel-max-width: 740px;
+      --panel-max-height: 760px;
     }
 
     * {
@@ -28,7 +30,7 @@
       color: var(--text);
       display: grid;
       place-items: center;
-      padding: 20px;
+      padding: clamp(12px, 3vw, 20px);
       background:
         radial-gradient(circle at 20% 15%, rgba(54, 116, 255, 0.38), transparent 35%),
         radial-gradient(circle at 80% 20%, rgba(65, 229, 255, 0.26), transparent 32%),
@@ -36,12 +38,21 @@
     }
 
     .panel {
-      width: min(740px, 100%);
+      width: min(
+        var(--panel-max-width),
+        calc(100vw - 24px),
+        calc((100vh - 24px) * 0.9737)
+      );
+      min-height: min(var(--panel-max-height), calc(100vh - 24px));
+      aspect-ratio: 740 / 760;
       border-radius: 20px;
-      padding: 28px 22px 24px;
+      padding: clamp(18px, 3.6vw, 28px) clamp(16px, 3vw, 22px) clamp(18px, 3.2vw, 24px);
       text-align: center;
       position: relative;
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
       background:
         linear-gradient(rgba(14, 42, 115, 0.58), rgba(5, 14, 45, 0.8)),
         radial-gradient(circle at center, rgba(53, 180, 255, 0.12), transparent 60%);
@@ -70,7 +81,7 @@
 
     h1 {
       margin: 6px 0 12px;
-      font-size: clamp(30px, 5vw, 46px);
+      font-size: clamp(28px, 5vw, 46px);
       letter-spacing: -0.02em;
       text-shadow: 0 0 22px rgba(88, 189, 255, 0.45);
     }
@@ -78,7 +89,8 @@
     .subtitle {
       margin: 0 auto 18px;
       width: min(540px, 100%);
-      font-size: 24px;
+      max-width: 100%;
+      font-size: clamp(16px, 3vw, 24px);
       color: var(--muted);
       line-height: 1.55;
     }
@@ -90,8 +102,8 @@
     }
 
     #mic-btn {
-      width: 220px;
-      height: 220px;
+      width: clamp(160px, 29vw, 220px);
+      height: clamp(160px, 29vw, 220px);
       border-radius: 50%;
       border: 0;
       cursor: pointer;
@@ -121,8 +133,8 @@
     }
 
     #mic-btn svg {
-      width: 78px;
-      height: 78px;
+      width: clamp(56px, 10vw, 78px);
+      height: clamp(56px, 10vw, 78px);
       filter: drop-shadow(0 0 16px rgba(130, 220, 255, 0.7));
     }
 
@@ -138,8 +150,8 @@
     .wave {
       position: absolute;
       inset: 50% auto auto 50%;
-      width: 290px;
-      height: 290px;
+      width: clamp(210px, 38vw, 290px);
+      height: clamp(210px, 38vw, 290px);
       border-radius: 50%;
       transform: translate(-50%, -50%);
       border: 1px solid rgba(118, 210, 255, 0.35);
@@ -154,7 +166,7 @@
 
     .status {
       margin: 22px 0 8px;
-      font-size: 34px;
+      font-size: clamp(24px, 4.6vw, 34px);
       font-weight: 700;
       color: #bde8ff;
       text-shadow: 0 0 18px rgba(99, 206, 255, 0.48);
@@ -164,9 +176,11 @@
       min-height: 28px;
       margin: 0;
       color: #d8ebff;
-      font-size: 17px;
+      font-size: clamp(15px, 2.2vw, 17px);
       opacity: 0.95;
       white-space: pre-line;
+      line-height: 1.6;
+      word-break: keep-all;
     }
 
     .chips {
@@ -181,11 +195,13 @@
       border: 1px solid var(--chip-border);
       background: var(--chip-bg);
       color: #dceeff;
-      font-size: 14px;
+      font-size: clamp(13px, 2vw, 15px);
       padding: 10px 16px;
       border-radius: 999px;
       cursor: pointer;
       transition: 0.2s ease;
+      max-width: 100%;
+      overflow-wrap: anywhere;
     }
 
     .chip:hover {
@@ -199,11 +215,12 @@
       border: 1px solid var(--chip-border);
       background: var(--chip-bg);
       color: #dceeff;
-      font-size: 14px;
+      font-size: clamp(13px, 2vw, 15px);
       padding: 10px 16px;
       border-radius: 999px;
       opacity: 0.95;
       cursor: default;
+      max-width: 100%;
     }
 
     .result {
@@ -259,6 +276,59 @@
       100% {
         transform: translate(-50%, -50%) scale(1.18);
         opacity: 0;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .panel {
+        width: min(
+          var(--panel-max-width),
+          calc(100vw - 20px),
+          calc((100vh - 20px) * 0.9737)
+        );
+        min-height: min(var(--panel-max-height), calc(100vh - 20px));
+        border-radius: 18px;
+      }
+
+      .chips {
+        gap: 8px;
+      }
+
+      .chip,
+      .sample-text {
+        padding: 10px 14px;
+      }
+    }
+
+    @media (max-width: 420px) {
+      body {
+        padding: 10px;
+      }
+
+      .panel {
+        width: min(
+          var(--panel-max-width),
+          calc(100vw - 20px),
+          calc((100vh - 20px) * 0.9737)
+        );
+      }
+
+      h1 {
+        font-size: clamp(24px, 7vw, 30px);
+      }
+
+      .subtitle {
+        margin-bottom: 14px;
+      }
+
+      .chips {
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .chip,
+      .sample-text {
+        width: min(220px, 100%);
       }
     }
   </style>
