@@ -80,7 +80,7 @@ class DepthReader(Node):
         self.snap_triggered = False    # To ensure we only trigger once per pour
         self.flow_started_sent = False # To ensure we only send flow_started once
         self.flow_stability_count = 0  # Counter for consecutive detections
-        self.FLOW_STABILITY_THRESHOLD = 1 # Keep at 1 for immediate responsiveness
+        self.FLOW_STABILITY_THRESHOLD = 1  # Keep at 1 for immediate responsiveness
         self.PADDING_RATIO = 0.05          # 5% height padding between liquid and detection zone
 
         self.baseline_height_px = 0.0
@@ -88,16 +88,22 @@ class DepthReader(Node):
         self.baseline_liquid_mask = None
         self.available_mask = None
         self.last_height_px = 0.0
-        self.low_volume_count = 0      # Used to reset the trigger flag when cup is empty
         
+        # --- Noise Filtering Logic ---
+        self.MIN_LIQUID_RATIO = 0.02      # Ignore liquid detections smaller than 2% of cup mask (reflections)
+        self.liquid_present_frames = 0    # Stable detection count
+        self.liquid_absent_frames = 0     # Consistent absence count
+        self.STABILITY_CONSENSUS = 10     # Need 10 frames of stable liquid to trust it for baseline
+        self.ABSENCE_RESET_THRESHOLD = 5  # Frames of no liquid to force reset EMAs to zero
+
         # --- Stability Logic ---
         self.liquid_stability_count = 0 
-        self.STABILITY_THRESHOLD = 5   # number of frames for stabilzation
+        self.STABILITY_THRESHOLD = 15   # number of frames for stabilzation
         
         # --- Tare Safety Logic ---
         self.tare_stability_count = 0 
         self.no_cup_count = 0 
-        self.TARE_STABILITY_THRESHOLD = 90 
+        self.TARE_STABILITY_THRESHOLD = 60
         self.NO_CUP_THRESHOLD = 45 
         
         # Store last known masks for handshake
@@ -105,12 +111,23 @@ class DepthReader(Node):
         self.last_liquid_mask = None
         self.last_cup_bbox = None
 
-        # 구독자 설정
-        self.create_subscription(Image, '/camera/camera_2/color/image_raw', self.color_callback, 10)
-        self.create_subscription(Image, '/camera/camera_2/aligned_depth_to_color/image_raw', self.depth_callback, 10)
+        # 구독자 설정 (QoS: Keep Last 1 to avoid lag)
+        qos_profile = rclpy.qos.QoSProfile(depth=1)
+        self.create_subscription(Image, '/camera/camera_2/color/image_raw', self.color_callback, qos_profile)
+        self.create_subscription(Image, '/camera/camera_2/aligned_depth_to_color/image_raw', self.depth_callback, qos_profile)
+
+        # 윈도우 초기화
+        cv2.namedWindow("RGB with Depth (YOLO-Seg)", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("RGB with Depth (YOLO-Seg)", 850, 500)
+
+        # 타이머 기반 처리 (15 FPS 정도로 안정화)
+        self.timer = self.create_timer(1.0/15.0, self.timer_callback)
 
     def color_callback(self, msg):
         self.color_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+
+    def depth_callback(self, msg):
+        self.depth_image = self.bridge.imgmsg_to_cv2(msg, "16UC1")
 
     def apply_height_ema(self, value: float):
         if value is None:
@@ -122,13 +139,21 @@ class DepthReader(Node):
         return self.height_px_ema
 
     def estimate_height_px(self, liquid_mask: np.ndarray):
-        ys_l, _ = np.where(liquid_mask > 0)
+        # Only consider liquid that is INSIDE the cup mask to avoid bottle/stream noise
+        if self.last_cup_mask is not None:
+            cup_liquid_mask = cv2.bitwise_and(liquid_mask, self.last_cup_mask)
+        else:
+            cup_liquid_mask = liquid_mask
+
+        ys_l, _ = np.where(cup_liquid_mask > 0)
         if len(ys_l) == 0: return None, None
         if self.fixed_bottle_bottom_y is None: return None, None
 
         waterline_y = int(np.min(ys_l))
         height_px = self.fixed_bottle_bottom_y - waterline_y
-        if height_px < 0: return 0.0, waterline_y
+        
+        # Noise floor: If height is less than 5px, it's likely sensor jitter at the bottom
+        if height_px < 5: return 0.0, waterline_y
         return float(height_px), waterline_y
 
     def height_px_to_volume_ml(self, height_px: float):
@@ -171,14 +196,24 @@ class DepthReader(Node):
         self.liquid_stability_count = 0 
         self.is_pouring_active = True 
         
-        # Capture baseline height from EMA if available
-        if self.height_px_ema is not None:
+        # CONSENSUS: Only set non-zero baseline if liquid has been stable for STABILITY_CONSENSUS frames
+        is_liquid_stable = self.liquid_present_frames >= self.STABILITY_CONSENSUS
+        
+        if is_liquid_stable and self.height_px_ema is not None:
             self.baseline_height_px = self.height_px_ema
+            self.get_logger().info(f"Baseline set from stable liquid: {self.baseline_height_px:.1f}px")
         else:
             self.baseline_height_px = 0.0
+            self.height_px_ema = 0.0 
+            self.estimated_ml_ema = 0.0
+            if self.liquid_present_frames > 0:
+                self.get_logger().warn(f"Liquid detected but not stable ({self.liquid_present_frames}/{self.STABILITY_CONSENSUS}). Forcing empty baseline.")
+            else:
+                self.get_logger().info("Empty baseline set.")
             
         # Define Available Area: Cup Mask MINUS Current Liquid Mask
-        if self.last_liquid_mask is not None:
+        has_liquid = self.last_liquid_mask is not None and np.any(self.last_liquid_mask > 0)
+        if has_liquid and is_liquid_stable:
             self.baseline_liquid_mask = self.last_liquid_mask.copy()
             # 1. Start with Cup MINUS Liquid
             available = cv2.bitwise_and(self.last_cup_mask, cv2.bitwise_not(self.baseline_liquid_mask))
@@ -194,6 +229,7 @@ class DepthReader(Node):
             
             self.available_mask = available
         else:
+            # Force full cup as available if liquid wasn't stable
             self.baseline_liquid_mask = np.zeros_like(self.last_cup_mask)
             self.available_mask = self.last_cup_mask.copy()
             
@@ -212,11 +248,18 @@ class DepthReader(Node):
             self.liquid_stability_count = 0
             self.baseline_height_px = 0.0
             self.available_mask = None
+            # Reset EMAs so next pour starts fresh
+            self.height_px_ema = None
+            self.estimated_ml_ema = None
+            self.liquid_present_frames = 0
+            self.liquid_absent_frames = 10 # Start as absent
 
-    def depth_callback(self, msg):
-        self.depth_image = self.bridge.imgmsg_to_cv2(msg, "16UC1")
-        if self.color_image is None: return
+    def timer_callback(self):
+        if self.color_image is None or self.depth_image is None:
+            return
+
         img_vis = self.color_image.copy()
+        depth_img = self.depth_image.copy() # Local copy to avoid thread collision
 
         results = model.predict(source=img_vis, conf=0.5, iou=0.5, retina_masks=True, verbose=False)
         overlay = img_vis.copy()
@@ -271,9 +314,29 @@ class DepthReader(Node):
             if self.no_cup_count >= self.NO_CUP_THRESHOLD:
                 self.fixed_bottle_bottom_y, self.locked_total_cup_px, self.bottom_y_locked = None, None, False
                 self.is_pouring_active = False
+                self.last_cup_bbox = None # Explicitly clear last known bbox when calibration is lost
         
-        # Liquid Logic
-        has_liquid = np.any(liquid_mask_combined > 0)
+        # Liquid Ratio Filter
+        has_liquid = False
+        if self.last_cup_mask is not None:
+            liquid_area = int(np.count_nonzero(liquid_mask_combined))
+            cup_area = int(np.count_nonzero(self.last_cup_mask))
+            if cup_area > 0:
+                liquid_ratio = liquid_area / cup_area
+                has_liquid = liquid_ratio > self.MIN_LIQUID_RATIO
+        
+        # Stability State Update
+        if has_liquid:
+            self.liquid_present_frames += 1
+            self.liquid_absent_frames = 0
+        else:
+            self.liquid_present_frames = 0
+            self.liquid_absent_frames += 1
+            # Aggressive Reset: If liquid is absent for long enough, clear EMA history
+            if self.liquid_absent_frames >= self.ABSENCE_RESET_THRESHOLD:
+                self.height_px_ema = 0.0
+                self.estimated_ml_ema = 0.0
+
         height_px = None
         if self.fixed_bottle_bottom_y is not None:
             if has_liquid:
@@ -287,7 +350,7 @@ class DepthReader(Node):
                     new_liquid_in_available_area = cv2.bitwise_and(liquid_mask_combined, self.available_mask)
                     new_liquid_px_count = int(np.count_nonzero(new_liquid_in_available_area))
                     
-                    # Threshold for detection (e.g. 100 pixels to ignore noise)
+                    # Threshold for detection
                     if new_liquid_px_count > 100:
                         self.flow_stability_count += 1
                         if self.flow_stability_count >= self.FLOW_STABILITY_THRESHOLD:
@@ -311,8 +374,10 @@ class DepthReader(Node):
                     self.volume_pub.publish(vol_msg)
             else:
                 self.liquid_stability_count = 0
+                self.estimated_ml_ema = 0.0  # Reset volume if no liquid detected
         else:
             self.current_waterline_y = None
+            self.estimated_ml_ema = None  # Reset volume if no cup/scale
 
         # Visualization for available area
         if self.available_mask is not None and self.is_pouring_active:
@@ -322,10 +387,16 @@ class DepthReader(Node):
             overlay = cv2.addWeighted(overlay, 1.0, colored_available, 0.3, 0)
 
         # Visualization for volume
-        if self.last_cup_bbox is not None:
+        if bottle_mask_current is not None and self.last_cup_bbox is not None:
             cx1, cy1, cx2, cy2 = self.last_cup_bbox
-            current_vol = self.estimated_ml_ema if self.estimated_ml_ema is not None else 0.0
-            cv2.putText(overlay, f"CUR: {current_vol:.1f}ml", (cx1, cy2 + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            if has_liquid and self.estimated_ml_ema is not None:
+                vol_text = f"CUR: {self.estimated_ml_ema:.1f}ml"
+            else:
+                vol_text = "CUR: 0.0ml"
+            cv2.putText(overlay, vol_text, (cx1, cy2 + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        else:
+            # Immediate feedback: If cup is not detected in current frame, show N/A
+            cv2.putText(overlay, "CUR: N/A", (30, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
         # Status Display
         status_msg = "POURING" if self.is_pouring_active else ("READY" if self.locked_total_cup_px else "SEARCHING")
@@ -334,6 +405,7 @@ class DepthReader(Node):
 
         cv2.imshow("RGB with Depth (YOLO-Seg)", overlay)
         cv2.waitKey(1)
+
 
 def main(args=None):
     rclpy.init(args=args)

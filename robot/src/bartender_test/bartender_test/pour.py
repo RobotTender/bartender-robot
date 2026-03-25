@@ -20,7 +20,7 @@ from tf2_ros.transform_listener import TransformListener
 
 from robotender_msgs.action import PourBottle
 from .defines import (POSJ_HOME, POSJ_CHEERS, POSJ_SNAP, BOTTLE_CONFIG,
-                            SNAP_VELOCITY, SNAP_ACCELERATION, TEST_POUR_WAIT_TIME)
+                            SNAP_VELOCITY, SNAP_ACCELERATION)
 
 class ActionNode(Node):
     def __init__(self):
@@ -91,8 +91,16 @@ class ActionNode(Node):
             self.get_logger().info("--- FLOW STARTED RECEIVED (Camera Signal) ---")
             self.flow_started_received = True
             
-            wait_time = TEST_POUR_WAIT_TIME if TEST_POUR_WAIT_TIME is not None else 0.0
-            self.get_logger().info(f"Fixed Wait Snap: {wait_time}s")
+            # Logic: Use target volume to index the pour_wait_time list (50ml increments)
+            # Index 0: 50ml, Index 1: 100ml, ..., Index 5: 300ml
+            config = BOTTLE_CONFIG.get(self.current_bottle_type, BOTTLE_CONFIG['soju'])
+            wait_times = config.get('pour_wait_time', [0.0] * 6)
+            
+            # Robust index calculation: (volume / 50) - 1, clamped to [0, 5]
+            idx = int(max(0, min(5, (self.current_target_volume_ml / 50.0) - 1)))
+            wait_time = wait_times[idx]
+            
+            self.get_logger().info(f"Fixed Wait Snap for {self.current_target_volume_ml}ml: {wait_time}s (index {idx})")
             
             if wait_time > 0:
                 Timer(wait_time, self.trigger_snap).start()
@@ -158,6 +166,12 @@ class ActionNode(Node):
         self.current_target_volume_ml = goal_handle.request.target_volume_ml
         self.current_bottle_type = goal_handle.request.bottle_name or 'soju'
         config = BOTTLE_CONFIG.get(self.current_bottle_type, BOTTLE_CONFIG['soju'])
+
+        # --- LOG CONFIG MAPPING ---
+        wait_times = config.get('pour_wait_time', [0.0] * 6)
+        idx = int(max(0, min(5, (self.current_target_volume_ml / 50.0) - 1)))
+        wait_time = wait_times[idx]
+        self.get_logger().info(f"--- POUR START: {self.current_bottle_type.upper()} {self.current_target_volume_ml}ml (Mapped Wait: {wait_time}s, idx: {idx}) ---")
 
         # 1. Notify Target Volume
         vol_msg = Float32(data=float(self.current_target_volume_ml))

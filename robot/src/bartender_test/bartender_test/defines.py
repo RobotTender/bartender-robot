@@ -24,7 +24,8 @@ BOTTLE_CONFIG = {
         'posx_vertical': [233.48, -40.48, 333.73, 90.00, -1.01, 44.99],
         'posj_vertical': [36.16, -28.40, 150.63, 85.26, -82.54, 33.54],
         'pour_velocity': 10,
-        'pour_acc': 5
+        'pour_acc': 5,
+        'pour_wait_time': [ 0.0, 0.25, 0.5, 0.75, 1.0, 1.25 ]
     },
     'beer': {
         'id': 1,
@@ -40,7 +41,8 @@ BOTTLE_CONFIG = {
         'posx_vertical': [228.47, -45.50, 333.69, 90.00, -1.00, 44.99],
         'posj_vertical': [35.69, -30.28, 151.43, 85.15, -82.05, 32.48],
         'pour_velocity': 5,
-        'pour_acc': 5
+        'pour_acc': 5,
+        'pour_wait_time': [ 0.0, 0.25, 0.5, 0.75, 1.0, 1.25 ]
     },
     'soju': {
         'id': 2,
@@ -55,8 +57,9 @@ BOTTLE_CONFIG = {
         'posj_diagonal': [38.12, -7.68, 137.65, 85.57, -84.73, 0.16],
         'posx_vertical': [233.47, -40.50, 373.69, 90.00, -1.00, 44.99],
         'posj_vertical': [36.16, -33.75, 145.95, 86.64, -81.83, 23.45],
-        'pour_velocity': 7.5,
-        'pour_acc': 1.5
+        'pour_velocity': 6,
+        'pour_acc': 1.5,
+        'pour_wait_time': [ 0.0, 1.2, 2.0, 0.75, 1.0, 1.25 ]
     }
 }
 
@@ -80,6 +83,3 @@ PICK_PLACE_Y_OFFSET = -60.0
 # Snap Recovery Constants
 SNAP_VELOCITY = 150.0
 SNAP_ACCELERATION = 150.0
-
-# Calibration Experiment: Fixed wait time after flow detection
-TEST_POUR_WAIT_TIME = 0.0 
