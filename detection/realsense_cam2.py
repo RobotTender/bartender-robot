@@ -103,8 +103,8 @@ class DepthReader(Node):
         # --- Tare Safety Logic ---
         self.tare_stability_count = 0 
         self.no_cup_count = 0 
-        self.TARE_STABILITY_THRESHOLD = 60
-        self.NO_CUP_THRESHOLD = 45 
+        self.TARE_STABILITY_THRESHOLD = 45
+        self.NO_CUP_THRESHOLD = 15
         
         # Store last known masks for handshake
         self.last_cup_mask = None

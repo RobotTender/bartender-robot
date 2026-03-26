@@ -245,6 +245,7 @@ class RobotenderManager(Node):
                 self.get_logger().error(f"Gripper service error: {e}")
         else:
             self.get_logger().error("Gripper service not available!")
+        time.sleep(2.0)
             
         # 3. Order Topic
         if self.order_sub is None:

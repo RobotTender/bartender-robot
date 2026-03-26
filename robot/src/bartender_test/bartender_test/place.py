@@ -143,7 +143,7 @@ class PlaceNode(Node):
             goal_handle.publish_feedback(feedback_msg)
             
             self._gripper_move_fire_forget(GRIPPER_POSITION_OPEN, release_force)
-            time.sleep(8.0) # Using time.sleep here as it's a long blocking wait
+            time.sleep(10.0) # Using time.sleep here as it's a long blocking wait
 
             # STEP 7: Retreat Y
             self.get_logger().info("Step 7: Retreating Y")

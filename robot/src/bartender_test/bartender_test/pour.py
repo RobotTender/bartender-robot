@@ -104,8 +104,10 @@ class ActionNode(Node):
             
             if wait_time > 0:
                 Timer(wait_time, self.trigger_snap).start()
-            else:
+            elif wait_time == 0:
                 self.trigger_snap()
+            else:
+                self.get_logger().info("Wait time is negative, skipping auto-snap.")
 
     def trigger_snap(self):
         """Universal snap trigger: calls MoveStop and sets internal state."""

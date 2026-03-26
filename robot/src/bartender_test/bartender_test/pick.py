@@ -204,7 +204,7 @@ class RobotControllerNode(Node):
             release_force = cfg.get('gripper_force', GRIPPER_FORCE_DEFAULT)
             self.get_logger().info(f"Detection successful. Opening gripper sync for {target_name} (force={release_force})...")
             self._gripper_move_sync(GRIPPER_POSITION_OPEN, release_force)
-            time.sleep(2.0)
+            time.sleep(4.0)
 
             self.state = "RUNNING"
             # Step 3: Moving
