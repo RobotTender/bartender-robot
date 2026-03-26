@@ -1,3 +1,4 @@
+
 # RobotTender: Autonomous Bartender Robot Project
 
 This repository contains the implementation of an autonomous bartender system using a Doosan Robotics E0509 robot, a Robotis RH-P12-RN gripper, and RealSense depth cameras. This report summarizes the implementation details and improvements made in the current branch (`robot-llm-detection-combine-junsung`).
@@ -150,3 +151,16 @@ When in **Manual Mode**, you can trigger individual stages of the bartender sequ
 ---
 
 *This report reflects the status as of March 18, 2026.*
+
+## License
+
+This project is licensed under the MIT License.  
+See the [LICENSE](LICENSE) file for details.
+
+## Third-Party Dependencies
+
+This project depends on external robotics packages including the Doosan Robotics ROS2 packages.
+
+These packages remain under their respective licenses and are not covered by the MIT license of this repository.
+
+See [THIRD_PARTY.md](THIRD_PARTY.md) for details.
