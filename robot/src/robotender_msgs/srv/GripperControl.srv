@@ -1,0 +1,6 @@
+# Service for controlling the Robotis RH-P12-RN gripper
+int32 position   # Target stroke: 0 (Open) to 1100 (Closed)
+int32 force      # Target current/force: 0 to 1000
+---
+bool success     # True if command was successfully sent to the robot
+string message   # Detailed feedback message
