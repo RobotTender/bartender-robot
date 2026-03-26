@@ -14,6 +14,7 @@ json 예시
 
 import rclpy
 from rclpy.node import Node
+from pathlib import Path
 
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image, CameraInfo
@@ -24,7 +25,8 @@ from ultralytics import YOLO
 
 
 # Load drink YOLO model
-model = YOLO('detection/weights/cam_1.pt')
+WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "cam_1.pt"
+model = YOLO(str(WEIGHTS_PATH))
 
 
 class DepthReader(Node):

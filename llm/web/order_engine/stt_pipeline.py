@@ -14,6 +14,14 @@ load_dotenv()
 STT_MODEL = os.getenv("STT_MODEL", "gemini-flash-latest")
 MAX_RETRIES = int(os.getenv("STT_MAX_RETRIES", "2"))
 
+SOJU_HINTS = (
+    "소주", "소쥬", "쏘주", "소듀", "수주", "소주로", "소주를",
+    
+)
+JUICE_HINTS = (
+    "주스", "쥬스", "쥬쓰", "쥬수", "주수", "쥬", "주스를",
+)
+
 PROMPT = """You are an audio order analyzer for a Korean bartender app.
 Analyze the provided audio and return strict JSON only with these keys:
 {
@@ -26,6 +34,9 @@ Rules:
 - Output must be valid JSON only. No markdown.
 - If speech is unclear, set transcript to an empty string and emotion to neutral.
 - Keep reason concise (max 1 sentence).
+- Pay special attention to Korean menu words that sound similar.
+- "소주" and "주스" must be clearly distinguished.
+- If one of those two menus is intended, make both transcript and recommend_menu consistent with that same menu.
 """
 
 
@@ -91,6 +102,54 @@ def _generate_content_with_retry(client: genai.Client, audio_part: types.Part):
     raise RuntimeError("Unknown STT failure")
 
 
+def _align_menu_transcript(transcript: str, recommend_menu: str) -> str:
+    text = (transcript or "").strip()
+    menu = (recommend_menu or "").strip()
+    if not text or menu not in {"soju", "juice"}:
+        return text
+
+    if menu == "soju" and "주스" in text and "소주" not in text:
+        return text.replace("주스", "소주")
+    if menu == "juice" and "소주" in text and "주스" not in text:
+        return text.replace("소주", "주스")
+    return text
+
+
+def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
+    return any(hint in text for hint in hints)
+
+
+def _resolve_soju_juice_menu(transcript: str, recommend_menu: str) -> str:
+    text = (transcript or "").strip()
+    menu = (recommend_menu or "").strip()
+    if not text:
+        return menu
+
+    soju_score = 0
+    juice_score = 0
+
+    if _contains_any(text, SOJU_HINTS):
+        soju_score += 2
+    if _contains_any(text, JUICE_HINTS):
+        juice_score += 2
+
+    if "소주" in text:
+        soju_score += 3
+    if "주스" in text or "쥬스" in text:
+        juice_score += 3
+
+    if menu == "soju":
+        soju_score += 1
+    elif menu == "juice":
+        juice_score += 1
+
+    if soju_score > juice_score and soju_score >= 2:
+        return "soju"
+    if juice_score > soju_score and juice_score >= 2:
+        return "juice"
+    return menu
+
+
 def transcribe_audio_bytes(
     audio_bytes: bytes,
     *,
@@ -111,11 +170,17 @@ def transcribe_audio_bytes(
     except Exception as exc:
         raise RuntimeError(f"Failed to parse model response as JSON: {response.text}") from exc
 
-    transcript = str(payload.get("transcript", "")).strip()
-
     emotion = str(payload.get("emotion", "")).strip()
     recommend_menu = str(payload.get("recommend_menu", "")).strip()
     reason = str(payload.get("reason", "")).strip()
+    recommend_menu = _resolve_soju_juice_menu(
+        str(payload.get("transcript", "")).strip(),
+        recommend_menu,
+    )
+    transcript = _align_menu_transcript(
+        str(payload.get("transcript", "")).strip(),
+        recommend_menu,
+    )
 
     return STTResult(
         text=transcript,

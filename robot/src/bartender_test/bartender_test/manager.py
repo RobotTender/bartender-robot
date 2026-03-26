@@ -1,11 +1,13 @@
 import rclpy
 import json
 import time
+from pathlib import Path
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 # Message/Service/Action Imports
 from robotender_msgs.action import PickBottle, PlaceBottle, PourBottle
@@ -23,6 +25,7 @@ class RobotenderManager(Node):
     def __init__(self):
         super().__init__('robotender_manager', namespace='/dsr01')
         self.callback_group = ReentrantCallbackGroup()
+        self.order_status_file = Path("/tmp/bartender_order_status.json")
         
         # 0. Parameters
         self.declare_parameter('execution_mode', 'auto') # 'auto' or 'manual'
@@ -52,8 +55,17 @@ class RobotenderManager(Node):
         self.place_trigger_srv = self.create_service(Trigger, 'robotender_manager/place_bottle', self.manual_place_callback, callback_group=self.callback_group)
         
         self.order_topic = "/bartender/order_detail"
+        self.order_status_topic = "/bartender/order_status"
         self.order_sub = None 
         self.is_busy = False 
+        self.system_ready = False
+
+        status_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.order_status_pub = self.create_publisher(String, self.order_status_topic, status_qos)
         
         # Recipe Queue Logic
         self.current_drinks_name = "None"
@@ -64,9 +76,23 @@ class RobotenderManager(Node):
         self.get_logger().info('   Robotender Manager Node Initialized')
         self.get_logger().info(f'   Execution Mode: {self.execution_mode.upper()}')
         self.get_logger().info('====================================================')
-        
+
+        self.publish_order_status("idle")
+
         # Trigger initial standby via a safe one-shot timer
         self.init_timer = self.create_timer(1.0, self.initial_standby_trigger, callback_group=self.callback_group)
+
+    def publish_order_status(self, state: str, **extra):
+        payload = {"state": state, **extra}
+        self.order_status_pub.publish(String(data=json.dumps(payload, ensure_ascii=False)))
+        try:
+            self.order_status_file.write_text(
+                json.dumps(payload, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            self.get_logger().warn(f"Failed to write order status file: {exc}")
+        self.get_logger().info(f"[ORDER STATUS] {payload}")
 
     async def mode_control_callback(self, msg: String):
         new_mode = msg.data.lower().strip()
@@ -223,6 +249,8 @@ class RobotenderManager(Node):
         await self.run_standby_sequence()
 
     async def run_standby_sequence(self):
+        self.system_ready = False
+
         # 1. POSJ_HOME
         self.get_logger().info("[STANDBY] 1/3: Moving to POSJ_HOME...")
         if self.movej_cli.wait_for_service(timeout_sec=2.0):
@@ -231,6 +259,8 @@ class RobotenderManager(Node):
             await self.movej_cli.call_async(req_move)
         else:
             self.get_logger().error("MoveJoint service not available!")
+            self.publish_order_status("blocked", reason="move_joint_unavailable")
+            return
 
         # 2. Close Gripper
         self.get_logger().info("[STANDBY] 2/3: Closing gripper (Force Mode)...")
@@ -245,6 +275,8 @@ class RobotenderManager(Node):
                 self.get_logger().error(f"Gripper service error: {e}")
         else:
             self.get_logger().error("Gripper service not available!")
+            self.publish_order_status("blocked", reason="gripper_unavailable")
+            return
         time.sleep(2.0)
             
         # 3. Order Topic
@@ -252,11 +284,17 @@ class RobotenderManager(Node):
             self.get_logger().info("[STANDBY] 3/3: Opening order subscription...")
             self.order_sub = self.create_subscription(String, self.order_topic, self.order_callback, 10, callback_group=self.callback_group)
         
+        self.system_ready = True
         self.is_busy = False
         self.get_logger().info("--- SYSTEM READY ---")
+        self.publish_order_status("idle")
 
     async def order_callback(self, msg: String):
-        if self.is_busy: return
+        if self.is_busy:
+            return
+        if not self.system_ready:
+            self.get_logger().warn("Order received while system is not ready. Ignoring.")
+            return
         try:
             order_data = json.loads(msg.data)
             drinks_name = order_data.get("drinks", "Unknown")
@@ -275,11 +313,21 @@ class RobotenderManager(Node):
             self.get_logger().info(
                 f"ORDER RECEIVED: drinks='{self.current_drinks_name}' ingredients={self.ingredient_queue}"
             )
+            self.publish_order_status(
+                "accepted",
+                drinks=self.current_drinks_name,
+                remaining=len(self.ingredient_queue),
+            )
             
             # Auto-trigger if mode is set
             if self.execution_mode == "auto":
                 self.get_logger().info(f"[AUTO] Starting full sequence for '{self.current_drinks_name}'")
                 self.is_busy = True
+                self.publish_order_status(
+                    "running",
+                    drinks=self.current_drinks_name,
+                    remaining=len(self.ingredient_queue),
+                )
 
                 # In Auto mode, we process the whole queue
                 while self.ingredient_queue:
@@ -290,17 +338,20 @@ class RobotenderManager(Node):
                     # 1. Pick
                     if not await self.execute_pick_sequence(bottle_name):
                         self.get_logger().error(f"[AUTO] Pick failed for {bottle_name}. Aborting.")
+                        self.publish_order_status("failed", step="pick", bottle=bottle_name)
                         self.is_busy = False
                         return
 
                     if self.execution_mode != "auto":
                         self.get_logger().info("[AUTO->MANUAL] Switched during Pick. Handing over to manual.")
+                        self.publish_order_status("paused", step="pick", bottle=bottle_name)
                         self.is_busy = False
                         return
 
                     # 2. Pour
                     if not await self.execute_pour_sequence(bottle_name, target_ml):
                         self.get_logger().error(f"[AUTO] Pour failed for {bottle_name}. Attempting to return bottle.")
+                        self.publish_order_status("failed", step="pour", bottle=bottle_name)
                         await self.execute_place_sequence(self.last_picked_pose, bottle_name)
                         self.ingredient_queue.pop(0) 
                         self.is_busy = False
@@ -308,23 +359,33 @@ class RobotenderManager(Node):
 
                     if self.execution_mode != "auto":
                         self.get_logger().info("[AUTO->MANUAL] Switched during Pour. Handing over to manual.")
+                        self.publish_order_status("paused", step="pour", bottle=bottle_name)
                         self.is_busy = False
                         return
 
                     # 3. Place
                     if not await self.execute_place_sequence(self.last_picked_pose, bottle_name):
                         self.get_logger().error(f"[AUTO] Place failed for {bottle_name}.")
+                        self.publish_order_status("failed", step="place", bottle=bottle_name)
                         self.is_busy = False
                         return
                     
                     # Successfully completed this ingredient
                     self.ingredient_queue.pop(0)
+                    self.publish_order_status(
+                        "running",
+                        drinks=self.current_drinks_name,
+                        completed_bottle=bottle_name,
+                        remaining=len(self.ingredient_queue),
+                    )
 
                 self.get_logger().info(f"[AUTO] Full sequence finished for '{self.current_drinks_name}'.")
+                self.publish_order_status("completed", drinks=self.current_drinks_name, remaining=0)
                 self.is_busy = False
 
         except Exception as e:
             self.get_logger().error(f'Order parsing error: {e}')
+            self.publish_order_status("failed", error=str(e))
             self.is_busy = False
 
     async def send_pick_goal(self, bottle_name):

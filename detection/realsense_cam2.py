@@ -1,5 +1,6 @@
 import rclpy
 from rclpy.node import Node
+from pathlib import Path
 
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
@@ -13,8 +14,8 @@ from ultralytics import YOLO
 
 
 # ✅ YOLO Segmentation 모델로 교체하세요 (예: yolo11n-seg.pt 또는 커스텀 best.pt)
-# model = YOLO("yolo11n-seg.pt")
-model = YOLO("/home/fastcampus/bartender-robot/detection/weights/cam_2.pt")  # Updated path to match workspace
+WEIGHTS_PATH = Path(__file__).resolve().parent / "weights" / "cam_2.pt"
+model = YOLO(str(WEIGHTS_PATH))
 
 # 클래스별 색 (BGR)
 CLASS_COLORS = {

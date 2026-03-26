@@ -11,7 +11,7 @@ from state import GraphState
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-ORDER_CUES = ("줘", "주세요", "주문", "말아", "말아줘", "한잔", "한 잔", "주라", "내놔")
+ORDER_CUES = ("줘", "주세요", "시킬게", "주문", "말아", "말아줘", "한잔", "한 잔", "주라", "내놔",'부탁해', '먹고싶어', '마시고싶어', '먹고싶다', '마시고싶다')
 
 
 def _is_direct_order(input_text: str) -> tuple[bool, str]:

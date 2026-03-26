@@ -262,6 +262,41 @@
       font-weight: 700;
     }
 
+    .making-detail {
+      margin-top: 10px;
+      font-size: 15px;
+      color: #b9daf6;
+      font-weight: 500;
+    }
+
+    .notice-overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      background: rgba(2, 8, 24, 0.72);
+      backdrop-filter: blur(2px);
+      z-index: 60;
+    }
+
+    .notice-overlay.show {
+      display: grid;
+    }
+
+    .notice-card {
+      width: min(420px, 88vw);
+      border: 1px solid rgba(113, 195, 255, 0.42);
+      border-radius: 14px;
+      background: rgba(8, 24, 66, 0.96);
+      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
+      padding: 24px 20px;
+      text-align: center;
+      color: #dff1ff;
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.5;
+    }
+
     @keyframes pulse {
       0% { transform: scale(1); }
       50% { transform: scale(1.04); }
@@ -370,7 +405,14 @@
 
 
   <div id="making-overlay" class="making-overlay" aria-live="polite">
-    <div class="making-card">제조중입니다.</div>
+    <div class="making-card">
+      <div>제조중입니다.</div>
+      <div id="making-detail" class="making-detail">음료가 제조중입니다.</div>
+    </div>
+  </div>
+
+  <div id="notice-overlay" class="notice-overlay" aria-live="assertive">
+    <div class="notice-card">주문 완료되었습니다.<br>음료를 가져가 주세요.</div>
   </div>
 
   <script>
@@ -384,13 +426,17 @@
     const transcribeUrl = "{% url 'stt_transcribe' %}";
     const ttsUrl = "{% url 'tts' %}";
     const homeUrl = "{% url 'home' %}";
+    const robotStatusUrl = "{% url 'robot_status' %}";
     const makingOverlay = document.getElementById("making-overlay");
+    const makingDetail = document.getElementById("making-detail");
+    const noticeOverlay = document.getElementById("notice-overlay");
 
     let mediaRecorder = null;
     let mediaStream = null;
     let chunks = [];
     let recording = false;
     let isMaking = false;
+    let robotStatusTimer = null;
     let currentAudio = null;
     let currentAudioUrl = null;
 
@@ -406,8 +452,69 @@
     function showMakingOverlay() {
       isMaking = true;
       if (makingOverlay) makingOverlay.classList.add("show");
+      if (makingDetail) makingDetail.textContent = "로봇이 음료를 만들고 있습니다.";
       statusEl.textContent = "제조중";
       micBtn.disabled = true;
+    }
+
+    function hideMakingOverlay() {
+      isMaking = false;
+      if (makingOverlay) makingOverlay.classList.remove("show");
+      if (robotStatusTimer) {
+        window.clearTimeout(robotStatusTimer);
+        robotStatusTimer = null;
+      }
+      statusEl.textContent = "Ready";
+      micBtn.disabled = false;
+    }
+
+    function showCompletionNotice() {
+      if (noticeOverlay) noticeOverlay.classList.add("show");
+    }
+
+    function formatRobotState(state) {
+      if (state === "accepted") return "주문이 접수되었습니다.";
+      if (state === "running") return "로봇이 음료를 만들고 있습니다.";
+      if (state === "completed") return "제조가 완료되었습니다.";
+      if (state === "failed") return "제조 중 문제가 발생했습니다.";
+      if (state === "paused") return "로봇이 잠시 대기 중입니다.";
+      return "로봇 상태를 확인하고 있습니다.";
+    }
+
+    async function pollRobotStatus() {
+      try {
+        const response = await fetch(robotStatusUrl, {
+          headers: { "X-Requested-With": "XMLHttpRequest" },
+          cache: "no-store",
+        });
+        const data = await response.json();
+        const state = data.state || (data.status && data.status.state) || "unknown";
+
+        if (makingDetail) {
+          makingDetail.textContent = formatRobotState(state);
+        }
+
+        if (data.done) {
+          hideMakingOverlay();
+          if (state === "completed") {
+            statusEl.textContent = "제조 완료";
+            replyEl.textContent = "주문 완료되었습니다. 음료를 가져가주세요.";
+            showCompletionNotice();
+            await playTts("주문 완료되었습니다. 음료를 가져가주세요.");
+            window.location.href = homeUrl;
+          } else if (state === "failed") {
+            statusEl.textContent = "Error";
+            replyEl.textContent = "로봇 동작 중 문제가 발생했습니다. 다시 시도해 주세요.";
+          }
+          return;
+        }
+      } catch (_error) {
+        if (makingDetail) {
+          makingDetail.textContent = "로봇 상태를 다시 확인하고 있습니다.";
+        }
+      }
+
+      robotStatusTimer = window.setTimeout(pollRobotStatus, 1500);
     }
 
     async function playTts(text) {
@@ -525,10 +632,12 @@
       if (ttsText) {
         await playTts(ttsText);
         if (data.making) {
-          window.location.href = homeUrl;
+          showMakingOverlay();
+          pollRobotStatus();
         }
       } else if (data.making) {
-        window.location.href = homeUrl;
+        showMakingOverlay();
+        pollRobotStatus();
       } else {
         statusEl.textContent = "Ready";
       }

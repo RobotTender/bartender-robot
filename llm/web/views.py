@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import sys
 import logging
 
@@ -23,6 +24,19 @@ logger = logging.getLogger(__name__)
 
 
 ORDER_START_CUES = ("제조시작합니다", "주문 시작합니다")
+ROBOT_STATUS_FILE = Path("/tmp/bartender_order_status.json")
+
+
+def _read_robot_status() -> dict:
+    try:
+        if not ROBOT_STATUS_FILE.exists():
+            return {"state": "unknown"}
+        payload = json.loads(ROBOT_STATUS_FILE.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Failed to read robot status: %s", exc)
+        return {"state": "unknown"}
+
+    return payload if isinstance(payload, dict) else {"state": "unknown"}
 
 
 
@@ -33,6 +47,7 @@ def home(request):
 def order(request):
     # Start page -> order page 진입 시 이전 주문 세션 상태 초기화
     request.session["order_state"] = {}
+    request.session["robot_job_active"] = False
     context = {
         "status": "init",
         "retry":False,
@@ -131,12 +146,30 @@ def stt_transcribe(request):
             "recipe": recipe,
             "status": new_status,
         }
+        request.session["robot_job_active"] = True
         _start_robot_topic_publish(command_payload)
+    else:
+        request.session["robot_job_active"] = False
 
     return JsonResponse({
         "tts_text": tts_text,
         "status": new_status,
         "making": bool(recipe),
+    })
+
+
+def robot_status(request):
+    status_payload = _read_robot_status()
+    state = status_payload.get("state", "unknown")
+    done = state in {"completed", "failed", "idle"}
+    if done:
+        request.session["robot_job_active"] = False
+
+    return JsonResponse({
+        "active": bool(request.session.get("robot_job_active", False)),
+        "state": state,
+        "done": done,
+        "status": status_payload,
     })
 
 
