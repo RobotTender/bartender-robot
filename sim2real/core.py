@@ -6,8 +6,16 @@ from pathlib import Path
 import re
 
 import numpy as np
-import torch
-import torch.nn as nn
+
+try:
+    import torch
+    import torch.nn as nn
+except Exception as exc:  # pragma: no cover
+    torch = None  # type: ignore[assignment]
+    nn = None  # type: ignore[assignment]
+    _TORCH_IMPORT_ERROR = exc
+else:
+    _TORCH_IMPORT_ERROR = None
 
 
 DEFAULT_OBS_DIM = 29
@@ -214,159 +222,189 @@ class ObservationBuilder:
         return np.clip(obs, -5.0, 5.0).astype(np.float32)
 
 
-class ActorPolicy(nn.Module):
-    def __init__(
-        self,
-        obs_dim: int = DEFAULT_OBS_DIM,
-        act_dim: int = DEFAULT_ACT_DIM,
-        hidden_sizes: tuple[int, ...] = (256, 128, 64),
-        activation: str = "elu",
-    ):
-        super().__init__()
-        self.obs_dim = int(obs_dim)
-        self.act_dim = int(act_dim)
-        self.hidden_sizes = tuple(int(v) for v in hidden_sizes)
-        self.activation = str(activation).lower()
-        self.actor = self._build_actor(self.obs_dim, self.act_dim, self.hidden_sizes, self.activation)
-        self.register_buffer("obs_mean", torch.zeros(self.obs_dim))
-        self.register_buffer("obs_std", torch.ones(self.obs_dim))
-        self.register_buffer("obs_count", torch.tensor(0.0))
+if nn is None or torch is None:
+    class ActorPolicy:  # type: ignore[no-redef]
+        def __init__(
+            self,
+            obs_dim: int = DEFAULT_OBS_DIM,
+            act_dim: int = DEFAULT_ACT_DIM,
+            hidden_sizes: tuple[int, ...] = (256, 128, 64),
+            activation: str = "elu",
+        ):
+            raise RuntimeError("ActorPolicy 사용에는 torch가 필요합니다.") from _TORCH_IMPORT_ERROR
 
-    @staticmethod
-    def _activation_factory(name: str) -> nn.Module:
-        key = str(name).lower()
-        if key == "elu":
-            return nn.ELU()
-        if key == "relu":
-            return nn.ReLU()
-        if key == "tanh":
-            return nn.Tanh()
-        if key == "silu":
-            return nn.SiLU()
-        raise ValueError(f"지원하지 않는 activation: {name}")
+        @classmethod
+        def from_checkpoint(
+            cls,
+            checkpoint_path: Path,
+            device: object,
+            activation: str = "elu",
+            obs_dim_override: int | None = None,
+            act_dim_override: int | None = None,
+            hidden_sizes_override: tuple[int, ...] | None = None,
+        ) -> "ActorPolicy":
+            raise RuntimeError("체크포인트 로드에는 torch가 필요합니다.") from _TORCH_IMPORT_ERROR
 
-    @classmethod
-    def _build_actor(cls, obs_dim: int, act_dim: int, hidden_sizes: tuple[int, ...], activation: str) -> nn.Sequential:
-        layers: list[nn.Module] = []
-        in_dim = int(obs_dim)
-        for h in hidden_sizes:
-            layers.append(nn.Linear(in_dim, int(h)))
-            layers.append(cls._activation_factory(activation))
-            in_dim = int(h)
-        layers.append(nn.Linear(in_dim, int(act_dim)))
-        return nn.Sequential(*layers)
+        def summary(self) -> str:
+            return "torch unavailable"
 
-    @staticmethod
-    def _to_state_dict(raw_ckpt: object) -> dict[str, torch.Tensor]:
-        if isinstance(raw_ckpt, dict) and "model_state_dict" in raw_ckpt:
-            state_dict = raw_ckpt["model_state_dict"]
-        elif isinstance(raw_ckpt, dict):
-            state_dict = raw_ckpt
-        else:
-            raise ValueError("지원하지 않는 체크포인트 형식입니다.")
-        if not isinstance(state_dict, dict):
-            raise ValueError("state_dict를 찾지 못했습니다.")
-        return state_dict
+        def act(self, obs_np: np.ndarray, device: object) -> np.ndarray:
+            raise RuntimeError("정책 추론에는 torch가 필요합니다.") from _TORCH_IMPORT_ERROR
 
-    @staticmethod
-    def _extract_actor_state(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        actor_state = {k: v for k, v in state_dict.items() if isinstance(k, str) and k.startswith("actor.")}
-        if len(actor_state) == 0:
-            raise RuntimeError("체크포인트에서 actor.* 키를 찾지 못했습니다.")
-        return actor_state
+else:
+    class ActorPolicy(nn.Module):
+        def __init__(
+            self,
+            obs_dim: int = DEFAULT_OBS_DIM,
+            act_dim: int = DEFAULT_ACT_DIM,
+            hidden_sizes: tuple[int, ...] = (256, 128, 64),
+            activation: str = "elu",
+        ):
+            super().__init__()
+            self.obs_dim = int(obs_dim)
+            self.act_dim = int(act_dim)
+            self.hidden_sizes = tuple(int(v) for v in hidden_sizes)
+            self.activation = str(activation).lower()
+            self.actor = self._build_actor(self.obs_dim, self.act_dim, self.hidden_sizes, self.activation)
+            self.register_buffer("obs_mean", torch.zeros(self.obs_dim))
+            self.register_buffer("obs_std", torch.ones(self.obs_dim))
+            self.register_buffer("obs_count", torch.tensor(0.0))
 
-    @staticmethod
-    def _extract_layer_index(key: str) -> int | None:
-        match = re.match(r"actor\.(\d+)\.weight$", key)
-        if match is None:
-            return None
-        return int(match.group(1))
+        @staticmethod
+        def _activation_factory(name: str) -> nn.Module:
+            key = str(name).lower()
+            if key == "elu":
+                return nn.ELU()
+            if key == "relu":
+                return nn.ReLU()
+            if key == "tanh":
+                return nn.Tanh()
+            if key == "silu":
+                return nn.SiLU()
+            raise ValueError(f"지원하지 않는 activation: {name}")
 
-    @classmethod
-    def _infer_actor_spec(cls, actor_state: dict[str, torch.Tensor]) -> tuple[int, tuple[int, ...], int]:
-        indexed: list[tuple[int, torch.Tensor]] = []
-        for key, tensor in actor_state.items():
-            idx = cls._extract_layer_index(key)
-            if idx is None:
-                continue
-            if not isinstance(tensor, torch.Tensor) or tensor.ndim != 2:
-                continue
-            indexed.append((idx, tensor))
-        if len(indexed) == 0:
-            raise RuntimeError("actor 선형 레이어(weight)를 추론할 수 없습니다.")
+        @classmethod
+        def _build_actor(cls, obs_dim: int, act_dim: int, hidden_sizes: tuple[int, ...], activation: str) -> nn.Sequential:
+            layers: list[nn.Module] = []
+            in_dim = int(obs_dim)
+            for h in hidden_sizes:
+                layers.append(nn.Linear(in_dim, int(h)))
+                layers.append(cls._activation_factory(activation))
+                in_dim = int(h)
+            layers.append(nn.Linear(in_dim, int(act_dim)))
+            return nn.Sequential(*layers)
 
-        indexed.sort(key=lambda x: x[0])
-        first = indexed[0][1]
-        last = indexed[-1][1]
-        obs_dim = int(first.shape[1])
-        act_dim = int(last.shape[0])
-        hidden_sizes = tuple(int(t.shape[0]) for _, t in indexed[:-1])
-        return obs_dim, hidden_sizes, act_dim
+        @staticmethod
+        def _to_state_dict(raw_ckpt: object) -> dict[str, torch.Tensor]:
+            if isinstance(raw_ckpt, dict) and "model_state_dict" in raw_ckpt:
+                state_dict = raw_ckpt["model_state_dict"]
+            elif isinstance(raw_ckpt, dict):
+                state_dict = raw_ckpt
+            else:
+                raise ValueError("지원하지 않는 체크포인트 형식입니다.")
+            if not isinstance(state_dict, dict):
+                raise ValueError("state_dict를 찾지 못했습니다.")
+            return state_dict
 
-    @classmethod
-    def from_checkpoint(
-        cls,
-        checkpoint_path: Path,
-        device: torch.device,
-        activation: str = "elu",
-        obs_dim_override: int | None = None,
-        act_dim_override: int | None = None,
-        hidden_sizes_override: tuple[int, ...] | None = None,
-    ) -> "ActorPolicy":
-        raw = torch.load(str(checkpoint_path), map_location=device)
-        state_dict = cls._to_state_dict(raw)
-        actor_state = cls._extract_actor_state(state_dict)
-        inferred_obs_dim, inferred_hidden_sizes, inferred_act_dim = cls._infer_actor_spec(actor_state)
+        @staticmethod
+        def _extract_actor_state(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+            actor_state = {k: v for k, v in state_dict.items() if isinstance(k, str) and k.startswith("actor.")}
+            if len(actor_state) == 0:
+                raise RuntimeError("체크포인트에서 actor.* 키를 찾지 못했습니다.")
+            return actor_state
 
-        obs_dim = int(obs_dim_override) if obs_dim_override is not None else inferred_obs_dim
-        act_dim = int(act_dim_override) if act_dim_override is not None else inferred_act_dim
-        hidden_sizes = tuple(hidden_sizes_override) if hidden_sizes_override is not None else inferred_hidden_sizes
-        model = cls(obs_dim=obs_dim, act_dim=act_dim, hidden_sizes=hidden_sizes, activation=activation).to(device)
+        @staticmethod
+        def _extract_layer_index(key: str) -> int | None:
+            match = re.match(r"actor\.(\d+)\.weight$", key)
+            if match is None:
+                return None
+            return int(match.group(1))
 
-        actor_local_state = {k[len("actor.") :]: v for k, v in actor_state.items() if k.startswith("actor.")}
-        try:
-            missing, unexpected = model.actor.load_state_dict(actor_local_state, strict=True)
-        except RuntimeError as exc:
-            raise RuntimeError(
-                f"actor 파라미터 shape 불일치: inferred(obs={inferred_obs_dim}, hidden={inferred_hidden_sizes}, act={inferred_act_dim}), "
-                f"applied(obs={obs_dim}, hidden={hidden_sizes}, act={act_dim})"
-            ) from exc
-        if missing:
-            raise RuntimeError(f"actor 파라미터 로드 실패: missing={missing}")
-        if unexpected:
-            raise RuntimeError(f"actor 파라미터 로드 실패: unexpected={unexpected}")
+        @classmethod
+        def _infer_actor_spec(cls, actor_state: dict[str, torch.Tensor]) -> tuple[int, tuple[int, ...], int]:
+            indexed: list[tuple[int, torch.Tensor]] = []
+            for key, tensor in actor_state.items():
+                idx = cls._extract_layer_index(key)
+                if idx is None:
+                    continue
+                if not isinstance(tensor, torch.Tensor) or tensor.ndim != 2:
+                    continue
+                indexed.append((idx, tensor))
+            if len(indexed) == 0:
+                raise RuntimeError("actor 선형 레이어(weight)를 추론할 수 없습니다.")
 
-        with torch.no_grad():
-            mean = state_dict.get("actor_obs_normalizer._mean")
-            std = state_dict.get("actor_obs_normalizer._std")
-            var = state_dict.get("actor_obs_normalizer._var")
-            count = state_dict.get("actor_obs_normalizer.count")
-            if mean is not None:
-                model.obs_mean.copy_(mean.to(device=device, dtype=torch.float32).view(-1))
-            if std is not None:
-                model.obs_std.copy_(std.to(device=device, dtype=torch.float32).view(-1))
-            elif var is not None:
-                model.obs_std.copy_(torch.sqrt(torch.clamp(var.to(device=device, dtype=torch.float32).view(-1), min=1.0e-8)))
-            if count is not None:
-                model.obs_count.copy_(count.to(device=device, dtype=torch.float32).view(()))
-        model.eval()
-        return model
+            indexed.sort(key=lambda x: x[0])
+            first = indexed[0][1]
+            last = indexed[-1][1]
+            obs_dim = int(first.shape[1])
+            act_dim = int(last.shape[0])
+            hidden_sizes = tuple(int(t.shape[0]) for _, t in indexed[:-1])
+            return obs_dim, hidden_sizes, act_dim
 
-    def summary(self) -> str:
-        return f"obs_dim={self.obs_dim}, hidden={self.hidden_sizes}, act_dim={self.act_dim}, activation={self.activation}"
+        @classmethod
+        def from_checkpoint(
+            cls,
+            checkpoint_path: Path,
+            device: torch.device,
+            activation: str = "elu",
+            obs_dim_override: int | None = None,
+            act_dim_override: int | None = None,
+            hidden_sizes_override: tuple[int, ...] | None = None,
+        ) -> "ActorPolicy":
+            raw = torch.load(str(checkpoint_path), map_location=device)
+            state_dict = cls._to_state_dict(raw)
+            actor_state = cls._extract_actor_state(state_dict)
+            inferred_obs_dim, inferred_hidden_sizes, inferred_act_dim = cls._infer_actor_spec(actor_state)
 
-    def _normalize_obs(self, obs: torch.Tensor) -> torch.Tensor:
-        if float(self.obs_count.item()) <= 0.0:
-            return obs
-        std = torch.clamp(self.obs_std, min=1.0e-6)
-        return (obs - self.obs_mean) / std
+            obs_dim = int(obs_dim_override) if obs_dim_override is not None else inferred_obs_dim
+            act_dim = int(act_dim_override) if act_dim_override is not None else inferred_act_dim
+            hidden_sizes = tuple(hidden_sizes_override) if hidden_sizes_override is not None else inferred_hidden_sizes
+            model = cls(obs_dim=obs_dim, act_dim=act_dim, hidden_sizes=hidden_sizes, activation=activation).to(device)
 
-    @torch.no_grad()
-    def act(self, obs_np: np.ndarray, device: torch.device) -> np.ndarray:
-        obs = torch.from_numpy(obs_np).to(device=device, dtype=torch.float32).unsqueeze(0)
-        obs = self._normalize_obs(obs)
-        action = self.actor(obs).squeeze(0)
-        return torch.clamp(action, -1.0, 1.0).cpu().numpy().astype(np.float32)
+            actor_local_state = {k[len("actor.") :]: v for k, v in actor_state.items() if k.startswith("actor.")}
+            try:
+                missing, unexpected = model.actor.load_state_dict(actor_local_state, strict=True)
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"actor 파라미터 shape 불일치: inferred(obs={inferred_obs_dim}, hidden={inferred_hidden_sizes}, act={inferred_act_dim}), "
+                    f"applied(obs={obs_dim}, hidden={hidden_sizes}, act={act_dim})"
+                ) from exc
+            if missing:
+                raise RuntimeError(f"actor 파라미터 로드 실패: missing={missing}")
+            if unexpected:
+                raise RuntimeError(f"actor 파라미터 로드 실패: unexpected={unexpected}")
+
+            with torch.no_grad():
+                mean = state_dict.get("actor_obs_normalizer._mean")
+                std = state_dict.get("actor_obs_normalizer._std")
+                var = state_dict.get("actor_obs_normalizer._var")
+                count = state_dict.get("actor_obs_normalizer.count")
+                if mean is not None:
+                    model.obs_mean.copy_(mean.to(device=device, dtype=torch.float32).view(-1))
+                if std is not None:
+                    model.obs_std.copy_(std.to(device=device, dtype=torch.float32).view(-1))
+                elif var is not None:
+                    model.obs_std.copy_(torch.sqrt(torch.clamp(var.to(device=device, dtype=torch.float32).view(-1), min=1.0e-8)))
+                if count is not None:
+                    model.obs_count.copy_(count.to(device=device, dtype=torch.float32).view(()))
+            model.eval()
+            return model
+
+        def summary(self) -> str:
+            return f"obs_dim={self.obs_dim}, hidden={self.hidden_sizes}, act_dim={self.act_dim}, activation={self.activation}"
+
+        def _normalize_obs(self, obs: torch.Tensor) -> torch.Tensor:
+            if float(self.obs_count.item()) <= 0.0:
+                return obs
+            std = torch.clamp(self.obs_std, min=1.0e-6)
+            return (obs - self.obs_mean) / std
+
+        @torch.no_grad()
+        def act(self, obs_np: np.ndarray, device: torch.device) -> np.ndarray:
+            obs = torch.from_numpy(obs_np).to(device=device, dtype=torch.float32).unsqueeze(0)
+            obs = self._normalize_obs(obs)
+            action = self.actor(obs).squeeze(0)
+            return torch.clamp(action, -1.0, 1.0).cpu().numpy().astype(np.float32)
 
 
 class ActionController:
@@ -384,19 +422,26 @@ class ActionController:
         self.joint_targets = np.asarray(current_joint_pos_rad, dtype=np.float32).copy()
         self.gripper_target = float(np.clip(current_gripper_close_ratio, 0.0, 1.0))
 
-    def step(self, action: np.ndarray) -> tuple[np.ndarray, float]:
+    def step(self, action: np.ndarray) -> tuple[np.ndarray, float, np.ndarray]:
         if self.joint_targets is None:
             raise RuntimeError("ActionController.reset()이 먼저 호출되어야 합니다.")
         action = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
 
+        prev_targets = self.joint_targets.copy()
+        joint_velocity_cmd = np.zeros_like(self.joint_targets, dtype=np.float32)
+
         arm_dim = min(6, action.shape[0], self.joint_targets.shape[0])
         if arm_dim > 0:
             delta = self.cfg.arm_speed_scale * self.cfg.control_dt * self.cfg.action_scale * action[:arm_dim]
-            self.joint_targets[:arm_dim] = np.clip(
+            next_targets = np.clip(
                 self.joint_targets[:arm_dim] + delta,
                 self.joint_lower[:arm_dim],
                 self.joint_upper[:arm_dim],
             )
+            applied_delta = next_targets - prev_targets[:arm_dim]
+            self.joint_targets[:arm_dim] = next_targets
+            dt = max(float(self.cfg.control_dt), 1.0e-6)
+            joint_velocity_cmd[:arm_dim] = applied_delta / dt
 
         if action.shape[0] > 6:
             desired_close_ratio = 0.5 * (float(action[6]) + 1.0)
@@ -404,7 +449,7 @@ class ActionController:
             self.gripper_target = self.gripper_target + alpha * (desired_close_ratio - self.gripper_target)
             self.gripper_target = float(np.clip(self.gripper_target, 0.0, 1.0))
 
-        return self.joint_targets.copy(), float(self.gripper_target)
+        return self.joint_targets.copy(), float(self.gripper_target), joint_velocity_cmd.astype(np.float32)
 
 
 def parse_comma_floats(raw: str, expected_len: int) -> np.ndarray:

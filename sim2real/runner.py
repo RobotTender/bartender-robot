@@ -183,6 +183,7 @@ def build_robot_io(mode: str, class_index: int, args: argparse.Namespace) -> Rob
         if loop_hz <= 0.0:
             raise ValueError(f"--hz는 0보다 커야 합니다. 입력={args.hz}")
         servo_time_s = float(args.servo_time_s) if args.servo_time_s is not None else (1.0 / loop_hz)
+        speedj_time_s = float(args.speedj_time_s) if args.speedj_time_s is not None else (1.0 / loop_hz)
 
         gripper_cfg = ModbusGripperConfig(
             protocol=str(args.gripper_protocol),
@@ -223,9 +224,14 @@ def build_robot_io(mode: str, class_index: int, args: argparse.Namespace) -> Rob
             robot_model=str(args.doosan_model),
             robot_host=str(args.doosan_host),
             robot_port=int(args.doosan_port),
+            joint_command_mode=str(args.joint_command_mode),
             servo_time_s=servo_time_s,
             servo_vel_deg_s=float(args.servo_vel_deg_s),
             servo_acc_deg_s2=float(args.servo_acc_deg_s2),
+            speedj_time_s=speedj_time_s,
+            speedj_vel_deg_s=float(args.speedj_vel_deg_s),
+            speedj_acc_deg_s2=float(args.speedj_acc_deg_s2),
+            speedj_reanchor_to_measured=bool(args.speedj_reanchor_to_measured),
             use_posx_orientation=bool(args.use_posx_orientation),
             object_source=str(args.object_source),
             object_json_path=str(args.object_json_path),
@@ -341,8 +347,12 @@ def run(args: argparse.Namespace) -> None:
             object_state = robot_io.read_object_state()
             obs = obs_builder.build(robot_state, object_state)
             action = policy.act(obs, device=device)
-            joint_targets, gripper_target = controller.step(action)
-            robot_io.send_joint_targets(joint_targets, gripper_target)
+            joint_targets, gripper_target, joint_velocity_cmd = controller.step(action)
+            robot_io.send_joint_targets(
+                joint_targets,
+                gripper_target,
+                joint_velocity_cmd_rad_s=joint_velocity_cmd,
+            )
 
             if step % max(1, int(loop_hz)) == 0:
                 print(
@@ -510,6 +520,13 @@ def create_arg_parser() -> argparse.ArgumentParser:
         help="Doosan controller port (0이면 SDK 기본값 사용)",
     )
     parser.add_argument(
+        "--joint-command-mode",
+        type=str,
+        choices=["servoj", "speedj"],
+        default="servoj",
+        help="mode=real에서 사용할 Doosan 조인트 명령 방식",
+    )
+    parser.add_argument(
         "--servo-time-s",
         type=float,
         default=None,
@@ -517,6 +534,20 @@ def create_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--servo-vel-deg-s", type=float, default=90.0, help="servoj 속도 제한(deg/s)")
     parser.add_argument("--servo-acc-deg-s2", type=float, default=180.0, help="servoj 가속도 제한(deg/s^2)")
+    parser.add_argument(
+        "--speedj-time-s",
+        type=float,
+        default=None,
+        help="speedj 도달 시간(s). 미지정 시 1/--hz를 자동 사용",
+    )
+    parser.add_argument("--speedj-vel-deg-s", type=float, default=30.0, help="speedj 최대 속도(deg/s)")
+    parser.add_argument("--speedj-acc-deg-s2", type=float, default=100.0, help="speedj 최대 가속도(deg/s^2)")
+    parser.add_argument(
+        "--speedj-reanchor-to-measured",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="speedj에서 목표각 기준 속도를 실측 조인트값으로 매 스텝 재계산",
+    )
     parser.add_argument("--use-posx-orientation", action="store_true", help="get_current_posx 자세를 quaternion에 반영")
     parser.add_argument("--object-source", type=str, choices=["fixed", "json"], default="fixed", help="실물 오브젝트 상태 소스")
     parser.add_argument("--object-json-path", type=str, default="/tmp/object_state.json", help="object-source=json일 때 입력 파일")

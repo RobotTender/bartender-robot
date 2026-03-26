@@ -158,10 +158,11 @@ class Sim2RealRuntime:
 
         obs = self.obs_builder.build(robot_state, object_state)
         action = self.policy.act(obs, device=self.device)
-        joint_targets, gripper_target = self.controller.step(action)
+        joint_targets, gripper_target, joint_velocity_cmd = self.controller.step(action)
         return {
             "obs": obs,
             "action": action,
             "joint_targets": joint_targets,
+            "joint_velocity_cmd_rad_s": joint_velocity_cmd,
             "gripper_target": float(gripper_target),
         }

@@ -4,6 +4,14 @@
 카메라/비전 처리 자체는 이 저장소의 책임 범위가 아니며, 외부 노드/클래스에서 계산된 상태를 입력으로 받는 구조를 기준으로 합니다.
 초보자도 바로 따라할 수 있게 순서대로 정리했습니다.
 
+문서 역할은 아래처럼 나눠서 보는 것을 권장합니다.
+
+- 루트 `README.md`(현재 문서): sim2real 실행법, ROS2/실기 연결법, 체크포인트 교체법, 입출력 연결 규약
+- `test_e0509/README.md`: 학습 태스크 자체의 관측/액션 의미, stage 차이, 정규화 기준, 환경 맥락
+- `test_e0509/TRAINING.md`: IsaacLab/rsl_rl 학습 실행, 체크포인트 저장 경로, 재생/평가 스크립트 사용법
+
+즉, **이 문서는 “어떻게 연결해서 쓰는지” 중심**, `test_e0509` 문서는 **“그 모델이 무엇을 배우고 어떤 의미로 입출력하는지” 중심**으로 읽으면 덜 헷갈립니다.
+
 ---
 
 ## 1. 이 프로젝트가 하는 일
@@ -19,9 +27,14 @@
 
 - `run_sim2real_e0509.py`: 실행 엔트리
 - `sim2real/runner.py`: 실행 루프 + CLI 옵션
-- `sim2real/core.py`: 정책 로딩, 관측 생성, 액션 변환
+- `sim2real/core.py`: 정책 로딩, 관측 생성, 액션 출력 가공
 - `sim2real/io.py`: I/O 백엔드(ROS2/실기/더미)
 - `sim2real/api.py`: 통합 파이썬 코드에 직접 붙이는 API
+
+참고:
+
+- 체크포인트의 관측/액션 의미가 궁금하면 `test_e0509/README.md`를 먼저 확인하세요.
+- 이 문서는 그 의미를 새로 정의하기보다, **이미 정의된 관측/액션을 실제 입력/출력 경로에 맞게 연결하는 방법**을 설명합니다.
 
 ---
 
@@ -52,6 +65,7 @@ python run_sim2real_e0509.py --mode dummy --checkpoint test_model.pt --print-pol
   - 루프 sleep 주기
   - 액션 증분 적분 시간(`control_dt`)
   - `mode=real`에서 `--servo-time-s` 미지정 시 기본 `servoj t = 1/--hz`
+  - `mode=real`에서 `--speedj-time-s` 미지정 시 기본 `speedj t = 1/--hz`
 
 시작 전 1회 주기 점검(preflight):
 
@@ -123,7 +137,7 @@ ROS2 노드들이 아래 토픽을 제공해야 합니다.
 중요:
 
 - 아래는 "토픽 인터페이스" 목록입니다. 관측/출력 차원(`obs_dim`, `act_dim`)은 체크포인트 모델마다 달라질 수 있습니다.
-- 모델 차원 호환 방법은 [5장](#5-입력출력입출력-상세), [6장](#6-모델pt-교체-방법)을 따릅니다.
+- 모델 차원 호환 방법은 [5장](#5-입력출력입출력-연결-규약), [6장](#6-모델pt-교체-방법)을 따릅니다.
 
 입력(정책이 구독):
 
@@ -237,16 +251,26 @@ while True:
 
     # 3) 결과 사용
     joint_targets_rad = out["joint_targets"]
+    joint_velocity_cmd_rad_s = out["joint_velocity_cmd_rad_s"]
     gripper_target = out["gripper_target"]
 
     # 4) 로봇 명령으로 변환해서 송신
     # ex) servoj(np.rad2deg(joint_targets_rad).tolist(), ...)
+    # ex) speedj(np.rad2deg(joint_velocity_cmd_rad_s).tolist(), ...)
     # ex) gripper stroke = int(round(gripper_target * 750))
 ```
 
 ---
 
-## 5. 입력/출력(입출력) 상세
+## 5. 입력/출력(입출력) 연결 규약
+
+이 장은 sim2real 실행기가 **정책 입력/출력을 어떤 형식으로 주고받는지** 설명합니다.
+
+중요:
+
+- 여기서는 "입출력 형식과 연결 규약"을 설명합니다.
+- 특정 학습 태스크의 정확한 의미(예: GripBottle의 액션이 step 증분인지, MoveBottle의 액션이 속도 비율인지)는 `test_e0509/README.md`에서 설명합니다.
+- 즉, 루트 README는 **형식/연결**, 태스크 README는 **의미/물리 해석** 담당입니다.
 
 ## 5-1. 정책 입력(Observation)
 
@@ -318,8 +342,23 @@ python run_sim2real_e0509.py \
 `ActionController`가 이를 실제 명령으로 바꿉니다.
 
 - 조인트: 증분 적분 후 절대 목표각(`joint_targets`, rad)
+- 조인트 속도 명령: 적분 직전 증분을 시간으로 나눈 값(`joint_velocity_cmd_rad_s`, rad/s)
 - 그리퍼: 0~1 비율(`gripper_target`)
 - 조인트 증분 스케일은 `control_dt`를 사용하며, CLI 실행 시 `control_dt = 1/--hz`로 자동 동기화됩니다.
+
+실무 해석 포인트:
+
+- 정책 raw 출력값 자체는 단위가 없는 연속 실수값이며, 보통 각 원소가 `[-1, 1]` 범위입니다.
+- 따라서 출력값을 보정/클램프/스무딩할 때는 raw 값만 보기보다, 이 값이 실제로 어떤 물리량으로 해석된 뒤 로봇에 들어가는지 같이 봐야 합니다.
+- 이 sim2real 실행기 기본 동작은 `servoj`용 절대 목표각(`joint_targets`, rad)을 만드는 방식입니다.
+- `speedj`를 쓰고 싶다면 raw action을 바로 넣지 말고, 먼저 조인트 목표 속도(`deg/s` 또는 `rad/s`)로 변환한 뒤 보내야 합니다.
+- 체크포인트의 정확한 액션 의미(예: step 증분인지, 속도 비율인지)는 학습 태스크 문서를 따라야 합니다. `test_e0509` 계열 모델 기준 설명은 `test_e0509/README.md`를 참고하세요.
+
+Doosan 명령으로 옮길 때:
+
+- `servoj`를 쓸 때: `runtime.step(...)` 결과의 `joint_targets`를 `rad -> deg`로 바꿔서 넣습니다.
+- `speedj`를 쓸 때: `runtime.step(...)` 결과의 `joint_velocity_cmd_rad_s`를 `rad/s -> deg/s`로 바꿔서 넣거나, 별도 속도 명령 변환층을 둡니다.
+- 급격한 튐 방지를 위해서는 `speedj`에 넣기 전에 속도 스무딩, 가속도 제한, 이상치 차단을 추가하는 편이 안전합니다.
 
 ---
 
@@ -366,6 +405,11 @@ python run_sim2real_e0509.py \
 - 체크포인트 로드 가능 여부
 - 추론된 `obs_dim / act_dim / hidden` 구조
 - 현재 sim2real 관측 구성과 최소 실행 호환 여부
+
+주의:
+
+- 여기서 통과하는 것은 **형식 호환성** 확인입니다.
+- 실제 관측 의미까지 맞는지는 학습 태스크 문서(예: `test_e0509/README.md`)와 함께 확인해야 합니다.
 
 ---
 
@@ -415,7 +459,7 @@ python run_sim2real_e0509.py \
   --no-ros2-enable-gripper-output
 ```
 
-실기 직접 제어(`mode=real`, host 지정 예시):
+실기 직접 제어(`mode=real`, host 지정 예시, 기본 `servoj`):
 
 ```bash
 python run_sim2real_e0509.py \
@@ -428,12 +472,31 @@ python run_sim2real_e0509.py \
   --doosan-port 12345
 ```
 
+실기 직접 제어(`mode=real`, `speedj` 사용 예시):
+
+```bash
+python run_sim2real_e0509.py \
+  --mode real \
+  --checkpoint /path/to/model_XXXX.pt \
+  --hz 60 \
+  --joint-command-mode speedj \
+  --speedj-vel-deg-s 30 \
+  --speedj-acc-deg-s2 100 \
+  --doosan-robot-id dsr01 \
+  --doosan-model e0509 \
+  --doosan-host 192.168.137.100 \
+  --doosan-port 12345
+```
+
 참고:
 
 - `mode=real`에서 `--servo-time-s`를 생략하면 `1/--hz`가 자동 적용됩니다.
-- 필요하면 `--servo-time-s`로 수동 고정할 수 있습니다.
+- `mode=real`에서 `--speedj-time-s`를 생략하면 `1/--hz`가 자동 적용됩니다.
+- `speedj`는 기본적으로 실측 조인트 기준 재앵커링(`--speedj-reanchor-to-measured`)이 켜져 있습니다.
+- 내부 누적 속도(`joint_velocity_cmd_rad_s`)를 그대로 쓰고 싶으면 `--no-speedj-reanchor-to-measured`를 사용합니다.
+- 필요하면 `--servo-time-s`, `--speedj-time-s`를 각각 수동 고정할 수 있습니다.
 
 통합 파이썬 코드 임베드:
 
 - `from sim2real import Sim2RealRuntime`
-- `runtime.step(...)` 결과를 네 기존 `servoj`/그리퍼 함수로 전달
+- `runtime.step(...)` 결과의 `joint_targets`는 `servoj`용, `joint_velocity_cmd_rad_s`는 `speedj`용으로 사용할 수 있습니다.

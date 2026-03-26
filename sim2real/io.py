@@ -58,9 +58,14 @@ class RealRobotConfig:
     robot_model: str = "e0509"
     robot_host: str = ""
     robot_port: int = 0
+    joint_command_mode: str = "servoj"  # servoj | speedj
     servo_time_s: float = 1.0 / 60.0
     servo_vel_deg_s: float = 90.0
     servo_acc_deg_s2: float = 180.0
+    speedj_time_s: float = 1.0 / 60.0
+    speedj_vel_deg_s: float = 30.0
+    speedj_acc_deg_s2: float = 100.0
+    speedj_reanchor_to_measured: bool = True
     use_posx_orientation: bool = False
     object_source: str = "fixed"  # fixed | json
     object_json_path: str = "/tmp/object_state.json"
@@ -121,7 +126,12 @@ class RobotIO(Protocol):
 
     def read_object_state(self) -> ObjectState: ...
 
-    def send_joint_targets(self, joint_targets_rad: np.ndarray, gripper_close_ratio: float) -> None: ...
+    def send_joint_targets(
+        self,
+        joint_targets_rad: np.ndarray,
+        gripper_close_ratio: float,
+        joint_velocity_cmd_rad_s: np.ndarray | None = None,
+    ) -> None: ...
 
     def shutdown(self) -> None: ...
 
@@ -170,11 +180,33 @@ class DummyRobotIO:
             custom_extra=self.object_custom_extra.copy(),
         )
 
-    def send_joint_targets(self, joint_targets_rad: np.ndarray, gripper_close_ratio: float) -> None:
-        next_pos = np.asarray(joint_targets_rad, dtype=np.float32).copy()
-        next_vel = next_pos - self.joint_pos
-        self.joint_vel = next_vel.astype(np.float32)
-        self.joint_pos = next_pos
+    def send_joint_targets(
+        self,
+        joint_targets_rad: np.ndarray,
+        gripper_close_ratio: float,
+        joint_velocity_cmd_rad_s: np.ndarray | None = None,
+    ) -> None:
+        target = np.asarray(joint_targets_rad, dtype=np.float32).reshape(-1)
+        if target.shape[0] < self.joint_pos.shape[0]:
+            padded = np.zeros_like(self.joint_pos, dtype=np.float32)
+            padded[: target.shape[0]] = target
+            target = padded
+        else:
+            target = target[: self.joint_pos.shape[0]]
+
+        if joint_velocity_cmd_rad_s is None:
+            self.joint_vel = (target - self.joint_pos).astype(np.float32)
+        else:
+            vel = np.asarray(joint_velocity_cmd_rad_s, dtype=np.float32).reshape(-1)
+            if vel.shape[0] < self.joint_vel.shape[0]:
+                padded_vel = np.zeros_like(self.joint_vel, dtype=np.float32)
+                padded_vel[: vel.shape[0]] = vel
+                vel = padded_vel
+            else:
+                vel = vel[: self.joint_vel.shape[0]]
+            self.joint_vel = vel.astype(np.float32)
+
+        self.joint_pos = target.astype(np.float32)
         self.gripper = float(np.clip(gripper_close_ratio, 0.0, 1.0))
 
     def shutdown(self) -> None:
@@ -441,7 +473,12 @@ class ROS2RobotIO:
         self._spin_once()
         return self._get_object_state_from_topics()
 
-    def send_joint_targets(self, joint_targets_rad: np.ndarray, gripper_close_ratio: float) -> None:
+    def send_joint_targets(
+        self,
+        joint_targets_rad: np.ndarray,
+        gripper_close_ratio: float,
+        joint_velocity_cmd_rad_s: np.ndarray | None = None,
+    ) -> None:
         assert self._joint_cmd_pub is not None and self._node is not None
         sensor_msgs = importlib.import_module("sensor_msgs.msg")
 
@@ -488,6 +525,7 @@ class RealRobotIO:
         self._last_gripper_write_ts = 0.0
         self._last_gripper_ratio = 0.0
         self._flange_serial_opened = False
+        self._last_speedj_vel_deg_s: np.ndarray | None = None
 
     def _import_doosan_api(self) -> Any:
         try:
@@ -516,16 +554,16 @@ class RealRobotIO:
                 else:
                     crc >>= 1
         crc &= 0xFFFF
-        crc_high = (crc >> 8) & 0xFF
         crc_low = crc & 0xFF
-        return crc_high, crc_low
+        crc_high = (crc >> 8) & 0xFF
+        return crc_low, crc_high
 
     def _modbus_send_make(self, raw_data: bytes) -> bytes:
         assert self._dr is not None
         if hasattr(self._dr, "modbus_send_make"):
             return bytes(self._dr.modbus_send_make(raw_data))
-        crc_high, crc_low = self._modbus_crc16(raw_data)
-        return raw_data + bytes([crc_high, crc_low])
+        crc_low, crc_high = self._modbus_crc16(raw_data)
+        return raw_data + bytes([crc_low, crc_high])
 
     @staticmethod
     def _to_byte_list(resp: Any) -> list[int]:
@@ -778,6 +816,7 @@ class RealRobotIO:
     def connect(self) -> None:
         self._dr = self._import_doosan_api()
         assert self._dr is not None
+        self._last_speedj_vel_deg_s = np.zeros((6,), dtype=np.float32)
         try:
             self._dr.set_velj(float(self.cfg.servo_vel_deg_s))
             self._dr.set_accj(float(self.cfg.servo_acc_deg_s2))
@@ -857,19 +896,79 @@ class RealRobotIO:
             custom_extra=np.asarray(self.cfg.object_fixed_custom_extra, dtype=np.float32).reshape(-1),
         )
 
-    def send_joint_targets(self, joint_targets_rad: np.ndarray, gripper_close_ratio: float) -> None:
+    def send_joint_targets(
+        self,
+        joint_targets_rad: np.ndarray,
+        gripper_close_ratio: float,
+        joint_velocity_cmd_rad_s: np.ndarray | None = None,
+    ) -> None:
         assert self._dr is not None
-        joint_targets_deg = np.rad2deg(np.asarray(joint_targets_rad, dtype=np.float32)).tolist()
-        self._dr.servoj(
-            joint_targets_deg,
-            v=float(self.cfg.servo_vel_deg_s),
-            a=float(self.cfg.servo_acc_deg_s2),
-            t=float(self.cfg.servo_time_s),
-        )
+        joint_targets_deg = np.rad2deg(np.asarray(joint_targets_rad, dtype=np.float32)).astype(np.float32)
+        command_mode = str(self.cfg.joint_command_mode).lower().strip()
+
+        if command_mode == "speedj":
+            if not hasattr(self._dr, "speedj"):
+                raise RuntimeError("DSR_ROBOT2에 speedj 함수가 없습니다.")
+
+            n = int(joint_targets_deg.shape[0])
+            dt_cmd = max(float(self.cfg.speedj_time_s), 1.0e-6)
+            raw_vel_deg_s: np.ndarray | None = None
+
+            # Re-anchor speed command to measured joint state to reduce drift.
+            if bool(self.cfg.speedj_reanchor_to_measured):
+                try:
+                    current_joint_deg = np.asarray(self._dr.get_current_posj(), dtype=np.float32)[:n]
+                    raw_vel_deg_s = (joint_targets_deg[: current_joint_deg.shape[0]] - current_joint_deg) / dt_cmd
+                except Exception:
+                    raw_vel_deg_s = None
+
+            if raw_vel_deg_s is None:
+                if joint_velocity_cmd_rad_s is not None:
+                    raw_vel_deg_s = np.rad2deg(np.asarray(joint_velocity_cmd_rad_s, dtype=np.float32))[:n]
+                else:
+                    current_joint_deg = np.asarray(self._dr.get_current_posj(), dtype=np.float32)[:n]
+                    raw_vel_deg_s = (joint_targets_deg[: current_joint_deg.shape[0]] - current_joint_deg) / dt_cmd
+
+            if raw_vel_deg_s.shape[0] < n:
+                padded_vel = np.zeros((n,), dtype=np.float32)
+                padded_vel[: raw_vel_deg_s.shape[0]] = raw_vel_deg_s
+                raw_vel_deg_s = padded_vel
+            else:
+                raw_vel_deg_s = raw_vel_deg_s[:n]
+
+            vel_limit = abs(float(self.cfg.speedj_vel_deg_s))
+            raw_vel_deg_s = np.clip(raw_vel_deg_s, -vel_limit, vel_limit)
+            acc_limit = abs(float(self.cfg.speedj_acc_deg_s2))
+            prev_vel = self._last_speedj_vel_deg_s
+            if prev_vel is None or prev_vel.shape[0] != n:
+                prev_vel = np.zeros((n,), dtype=np.float32)
+            dv_max = acc_limit * dt_cmd
+            vel_cmd_deg_s = prev_vel + np.clip(raw_vel_deg_s - prev_vel, -dv_max, dv_max)
+            vel_cmd_deg_s = np.clip(vel_cmd_deg_s, -vel_limit, vel_limit).astype(np.float32)
+
+            self._dr.speedj(
+                vel_cmd_deg_s.tolist(),
+                a=float(self.cfg.speedj_acc_deg_s2),
+                t=float(self.cfg.speedj_time_s),
+            )
+            self._last_speedj_vel_deg_s = vel_cmd_deg_s.copy()
+        else:
+            self._dr.servoj(
+                joint_targets_deg.tolist(),
+                v=float(self.cfg.servo_vel_deg_s),
+                a=float(self.cfg.servo_acc_deg_s2),
+                t=float(self.cfg.servo_time_s),
+            )
+
         if self.cfg.gripper.enabled:
             self._write_gripper_command(self._ratio_to_raw(gripper_close_ratio))
 
     def shutdown(self) -> None:
+        if self._dr is not None and str(self.cfg.joint_command_mode).lower().strip() == "speedj":
+            try:
+                self._dr.speedj([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], a=float(self.cfg.speedj_acc_deg_s2), t=float(self.cfg.speedj_time_s))
+            except Exception:
+                pass
         if self.cfg.gripper.enabled:
             try:
                 self._write_gripper_command(raw_cmd=self.cfg.gripper.open_raw, force=True)
