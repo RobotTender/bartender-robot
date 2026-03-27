@@ -1,7 +1,8 @@
 # Named Joint Poses (Joint angles in degrees)
 # Order: J1, J2, J3, J4, J5, J6
 POSJ_HOME = [69.5, -43.0, 102.0, 101.0, -72.0, -213.0]
-POSJ_PICK_PLACE_READY = [28.00, -36.23, 103.71, 78.25, 62.47, -156.73]
+POSJ_PICK_READY = [28.00, -36.23, 103.71, 78.25, 62.47, -156.73]
+POSJ_PLACE_READY = POSJ_PICK_READY
 POSJ_CHEERS = [45.0, 0.0, 135.0, 90.0, -90.0, -135.0]
 
 # Final snap pose
@@ -14,7 +15,6 @@ BOTTLE_CONFIG = {
         'id': 0,
         'gripper_pos': 800,
         'gripper_force': 400,
-        'pour_target_ml': 100.0,
         'posx_contact': [319.05, 45.09, 236.98, -90.00, 29.99, -135.02],
         'posj_contact': [40.29, 13.27, 139.13, 85.84, -87.82, -87.53],
         'posx_horizontal': [304.75, 20.79, 241.55, -87.60, 90.00, -132.7],
@@ -25,13 +25,13 @@ BOTTLE_CONFIG = {
         'posj_vertical': [36.16, -26.64, 151.69, 84.90, -82.78, 36.38],
         'pour_velocity': 6,
         'pour_acc': 1.5,
-        'pour_wait_time': [ 0.0, 1.1, 2.25, 3.25, 6.0, -1 ]
+        'pour_wait_time': [ 0.0, 1.1, 2.25, 3.25, 6.0, -1 ],
+        'grasp_wait_time': 1.5
     },
     'beer': {
         'id': 1,
         'gripper_pos': 570,
         'gripper_force': 90,
-        'pour_target_ml': 100.0,
         'posx_contact': [279.07, 5.10, 277.00, -90.00, 30.00, -135.01],
         'posj_contact': [38.97, -3.01, 146.55, 85.16, -86.43, -96.32],
         'posx_horizontal': [304.80, 20.82, 251.66, 62.10, 89.99, 17.2],
@@ -42,13 +42,13 @@ BOTTLE_CONFIG = {
         'posj_vertical': [35.69, -30.28, 151.43, 85.15, -82.05, 32.48],
         'pour_velocity': 6,
         'pour_acc': 1.5,
-        'pour_wait_time': [ 2.0, 4.8, 5.75, 7.0, 8.0, 10.5 ]
+        'pour_wait_time': [ 2.0, 4.8, 5.75, 7.0, 8.0, 10.5 ],
+        'grasp_wait_time': 4
     },
     'soju': {
         'id': 2,
-        'gripper_pos': 400,
-        'gripper_force': 175,
-        'pour_target_ml': 50.0,
+        'gripper_pos': 425,
+        'gripper_force': 200,
         'posx_contact': [319.05, 45.09, 257.00, -90.00, 29.99, -135.01],
         'posj_contact': [40.29, 9.21, 138.60, 86.02, -87.50, -92.1],
         'posx_horizontal': [344.75, 80.77, 251.54, -84.30, 89.98, -129.30],
@@ -59,7 +59,8 @@ BOTTLE_CONFIG = {
         'posj_vertical': [42.03, -34.12, 146.10, 88.89, -87.25, 23.01],
         'pour_velocity': 4,
         'pour_acc': 1.0,
-        'pour_wait_time': [ 0.0, 1.25, 3.0, 4.25, 6.5, 7.8 ]
+        'pour_wait_time': [ 0.0, 1.25, 3.0, 4.25, 6.5, 7.8 ],
+        'grasp_wait_time': 4
     }
 }
 
@@ -83,3 +84,8 @@ PICK_PLACE_Y_OFFSET = -60.0
 # Snap Recovery Constants
 SNAP_VELOCITY = 150.0
 SNAP_ACCELERATION = 150.0
+
+VEL_READY, ACC_READY = 100.0, 100.0
+VEL_APPROACH, ACC_APPROACH = 100.0, 100.0
+VEL_LIFT, ACC_LIFT = 75.0, 75.0
+VEL_RETREAT, ACC_RETREAT = 100.0, 100.0

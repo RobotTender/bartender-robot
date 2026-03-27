@@ -27,16 +27,19 @@ from robotender_msgs.action import PickBottle
 import DR_init
 
 from .defines import (
-    POSJ_HOME, POSJ_PICK_PLACE_READY,
+    POSJ_HOME, POSJ_PICK_READY,
     GRIPPER_POSITION_OPEN,
     GRIPPER_FORCE_DEFAULT,
     BOTTLE_CONFIG, BOTTLE_ID_MAP,
-    PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET
+    PICK_PLACE_X_OFFSET, PICK_PLACE_Y_OFFSET,
+    VEL_READY, ACC_READY,
+    VEL_APPROACH, ACC_APPROACH,
+    VEL_LIFT, ACC_LIFT,
+    VEL_RETREAT, ACC_RETREAT
 )
 
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "e0509"
-VELOCITY, ACC = 40.0, 40.0
 
 class RobotControllerNode(Node):
     def __init__(self):
@@ -155,8 +158,8 @@ class RobotControllerNode(Node):
             feedback_msg.current_state, feedback_msg.progress = "STEP 1: PREPARING", 0.1
             goal_handle.publish_feedback(feedback_msg)
             
-            self.get_logger().info(f"Moving to POSJ_PICK_PLACE_READY: {POSJ_PICK_PLACE_READY}")
-            movej(POSJ_PICK_PLACE_READY, vel=VELOCITY, acc=ACC)
+            self.get_logger().info(f"Moving to POSJ_PICK_READY: {POSJ_PICK_READY}")
+            movej(POSJ_PICK_READY, vel=VEL_READY, acc=ACC_READY)
             self.get_logger().info("movej(READY) returned.")
             
             if goal_handle.is_cancel_requested: 
@@ -190,9 +193,10 @@ class RobotControllerNode(Node):
             # Successful detection - Open Gripper now
             cfg = BOTTLE_CONFIG.get(target_name, {})
             release_force = cfg.get('gripper_force', GRIPPER_FORCE_DEFAULT)
+            grasp_wait_time = cfg.get('grasp_wait_time', 4.0)
             self.get_logger().info(f"Detection successful. Opening gripper sync for {target_name} (force={release_force})...")
             self._gripper_move_sync(GRIPPER_POSITION_OPEN, release_force)
-            time.sleep(4.0)
+            time.sleep(grasp_wait_time)
 
             self.state = "RUNNING"
             # Step 3: Moving
@@ -212,10 +216,9 @@ class RobotControllerNode(Node):
             self._grasp_logic(target_name)
 
             # Step 5: Completed
-            self.get_logger().info("Step 5: Pick completed. Moving back to READY pose...")
+            self.get_logger().info("Step 5: Pick completed.")
             feedback_msg.current_state, feedback_msg.progress = "STEP 5: COMPLETED", 1.0
             goal_handle.publish_feedback(feedback_msg)
-            movej(POSJ_PICK_PLACE_READY, vel=VELOCITY, acc=ACC)
 
             result.success, result.message = True, "Pick success"
             result.pick_pose = [float(p) for p in p_robot]
@@ -239,9 +242,9 @@ class RobotControllerNode(Node):
         tx, ty = p_robot[0] + PICK_PLACE_X_OFFSET, p_robot[1] + PICK_PLACE_Y_OFFSET
         
         self.get_logger().info(f"Moving X to {tx}")
-        movel([tx, curr_pos[1], curr_pos[2], curr_pos[3], curr_pos[4], curr_pos[5]], vel=[VELOCITY, VELOCITY], acc=[ACC, ACC])
+        movel([tx, curr_pos[1], curr_pos[2], curr_pos[3], curr_pos[4], curr_pos[5]], vel=[VEL_APPROACH, VEL_APPROACH], acc=[ACC_APPROACH, ACC_APPROACH])
         self.get_logger().info(f"Moving Y to {ty}")
-        movel([tx, ty, curr_pos[2], curr_pos[3], curr_pos[4], curr_pos[5]], vel=[VELOCITY, VELOCITY], acc=[ACC, ACC])
+        movel([tx, ty, curr_pos[2], curr_pos[3], curr_pos[4], curr_pos[5]], vel=[VEL_APPROACH, VEL_APPROACH], acc=[ACC_APPROACH, ACC_APPROACH])
 
     def _grasp_logic(self, target_name):
         from DSR_ROBOT2 import movel, get_current_posx, wait
@@ -250,8 +253,9 @@ class RobotControllerNode(Node):
         self._gripper_move_sync(cfg['gripper_pos'], cfg['gripper_force'])
         
         # Wait 5s before lifting as requested
-        self.get_logger().info("Wait 5.0s before lifting...")
-        time.sleep(5.0)
+        grasp_wait_time = cfg['grasp_wait_time']
+        self.get_logger().info(f"Wait {grasp_wait_time}s before lifting...")
+        time.sleep(grasp_wait_time)
 
         # Step 4.1: Return sequence (Lift then Y-Retreat)
         self.get_logger().info("Step 4.1: Return sequence (Lift then Y-Retreat)...")
@@ -260,18 +264,18 @@ class RobotControllerNode(Node):
         curr = list(get_current_posx()[0])
         self.get_logger().info("Lifting bottle (+30mm Z)")
         target_pos_lift = [curr[0], curr[1], curr[2] + 30.0, curr[3], curr[4], curr[5]]
-        movel(target_pos_lift, vel=[40, 40], acc=[40, 40])
+        movel(target_pos_lift, vel=[VEL_LIFT, VEL_LIFT], acc=[ACC_LIFT, ACC_LIFT])
         
         # 2. Retreat (Y-Exit)
-        from .defines import POSJ_PICK_PLACE_READY
+        #from .defines import POSJ_PICK_READY
         from DSR_ROBOT2 import fkin
-        ready_posx = list(fkin(POSJ_PICK_PLACE_READY, ref=0))
+        ready_posx = list(fkin(POSJ_PICK_READY, ref=0))
         ready_y = ready_posx[1]
         
         curr_lifted = list(get_current_posx()[0])
         self.get_logger().info(f"Retreating Y to {ready_y:.1f}")
         target_pos_retreat = [curr_lifted[0], ready_y, curr_lifted[2], curr_lifted[3], curr_lifted[4], curr_lifted[5]]
-        movel(target_pos_retreat, vel=[VELOCITY, VELOCITY], acc=[ACC, ACC])
+        movel(target_pos_retreat, vel=[VEL_RETREAT, VEL_RETREAT], acc=[ACC_RETREAT, ACC_RETREAT])
         
         return True
 
