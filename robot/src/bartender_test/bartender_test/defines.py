@@ -57,9 +57,9 @@ BOTTLE_CONFIG = {
         'posj_diagonal': [41.55, -9.33, 137.00, 87.89, -87.27, -2.28],
         'posx_vertical': [223.47, -30.50, 373.71, 90.00, -1.00, 44.99],
         'posj_vertical': [42.03, -34.12, 146.10, 88.89, -87.25, 23.01],
-        'pour_velocity': 6,
-        'pour_acc': 1.5,
-        'pour_wait_time': [ 0.0, 1.25, 2.0, 3.0, 4.0, 5.25 ]
+        'pour_velocity': 4,
+        'pour_acc': 1.0,
+        'pour_wait_time': [ 0.0, 1.25, 3.0, 4.25, 6.5, 7.8 ]
     }
 }
 

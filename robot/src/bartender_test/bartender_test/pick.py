@@ -49,11 +49,7 @@ class RobotControllerNode(Node):
         
         self.bridge = CvBridge()
 
-        # Mock Mode Parameter
-        self.declare_parameter('use_mock_vision', False)
-        self.use_mock_vision = self.get_parameter('use_mock_vision').value
-
-        self.get_logger().info(f"Pick Node Starting (Mock: {self.use_mock_vision})")
+        self.get_logger().info("Pick Node Starting (Real Vision)")
 
         self.intrinsics = None
         self.latest_cv_color = None
@@ -97,11 +93,7 @@ class RobotControllerNode(Node):
             callback_group=self.action_cb_group
         )
 
-        if self.use_mock_vision:
-            from types import SimpleNamespace
-            self.intrinsics = SimpleNamespace(width=640, height=480, ppx=320.0, ppy=240.0, fx=600.0, fy=600.0)
-        else:
-            self.load_yolo()
+        self.load_yolo()
 
     def _heartbeat_callback(self):
         self.get_logger().info(f"[HEARTBEAT] Node alive. State: {self.state}")
@@ -124,7 +116,7 @@ class RobotControllerNode(Node):
             self.latest_cv_depth_mm = self.bridge.imgmsg_to_cv2(depth_msg, "16UC1")
         except: return
         
-        if self.intrinsics is None and not self.use_mock_vision and rs is not None:
+        if self.intrinsics is None and rs is not None:
             self.intrinsics = rs.intrinsics()
             self.intrinsics.width, self.intrinsics.height = info_msg.width, info_msg.height
             self.intrinsics.ppx, self.intrinsics.ppy = info_msg.k[2], info_msg.k[5]
@@ -179,25 +171,21 @@ class RobotControllerNode(Node):
             time.sleep(1.0) # wait for camera to settle
             
             p_robot = None
-            if self.use_mock_vision:
-                self.get_logger().info("Using MOCK vision, sleeping 1s...")
-                p_robot = np.array([450.0, 50.0, 120.0])
-            else:
-                self.get_logger().info(f"Using REAL vision for {target_name}...")
-                # Try detection up to 3 times
-                for attempt in range(3):
-                    self.get_logger().info(f"Detection attempt {attempt+1}/3")
-                    target_data = self.vision_detect(target_name)
-                    if target_data:
-                        p_robot = self.calculate_pose(target_data)
-                        self.get_logger().info(f"Detected pose in robot frame: {p_robot}")
-                        break
-                    time.sleep(0.5)
-                
-                if p_robot is None:
-                    self.get_logger().error("Detection failed after 3 attempts.")
-                    result.success, result.message = False, "Detection failed"
-                    goal_handle.succeed(); self.state = "IDLE"; return result
+            self.get_logger().info(f"Using REAL vision for {target_name}...")
+            # Try detection up to 3 times
+            for attempt in range(3):
+                self.get_logger().info(f"Detection attempt {attempt+1}/3")
+                target_data = self.vision_detect(target_name)
+                if target_data:
+                    p_robot = self.calculate_pose(target_data)
+                    self.get_logger().info(f"Detected pose in robot frame: {p_robot}")
+                    break
+                time.sleep(0.5)
+            
+            if p_robot is None:
+                self.get_logger().error("Detection failed after 3 attempts.")
+                result.success, result.message = False, "Detection failed"
+                goal_handle.succeed(); self.state = "IDLE"; return result
 
             # Successful detection - Open Gripper now
             cfg = BOTTLE_CONFIG.get(target_name, {})

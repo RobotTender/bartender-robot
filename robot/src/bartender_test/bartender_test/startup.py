@@ -42,28 +42,31 @@ class RobotStartupNode(Node):
         )
         time.sleep(0.5)
 
+        # Use virtual environment python to ensure dependencies like 'ultralytics' are found
+        VENV_PYTHON = "/home/fastcampus/bartender-robot/.venv/bin/python3"
+
         self.get_logger().info("Launching Persistent Logic Nodes...")
-        subprocess.Popen(["python3", "-m", "bartender_test.gripper"], start_new_session=True)
+        subprocess.Popen([VENV_PYTHON, "-m", "bartender_test.gripper"], start_new_session=True)
         if not self.wait_for_gripper_service(timeout=10.0):
             self.get_logger().error("Gripper service did not become available in time.")
             return False
 
-        subprocess.Popen(["python3", "-m", "bartender_test.pick"], start_new_session=True)
+        subprocess.Popen([VENV_PYTHON, "-m", "bartender_test.pick"], start_new_session=True)
         if not self.wait_for_action_server(PickBottle, 'robotender_pick/execute', timeout=10.0):
             self.get_logger().error("Pick action server did not become available in time.")
             return False
 
-        subprocess.Popen(["python3", "-m", "bartender_test.pour"], start_new_session=True)
+        subprocess.Popen([VENV_PYTHON, "-m", "bartender_test.pour"], start_new_session=True)
         if not self.wait_for_action_server(PourBottle, 'robotender_pour/execute', timeout=10.0):
             self.get_logger().error("Pour action server did not become available in time.")
             return False
 
-        subprocess.Popen(["python3", "-m", "bartender_test.place"], start_new_session=True)
+        subprocess.Popen([VENV_PYTHON, "-m", "bartender_test.place"], start_new_session=True)
         if not self.wait_for_action_server(PlaceBottle, 'robotender_place/execute', timeout=10.0):
             self.get_logger().error("Place action server did not become available in time.")
             return False
 
-        subprocess.Popen(["python3", "-m", "bartender_test.manager"], start_new_session=True)
+        subprocess.Popen([VENV_PYTHON, "-m", "bartender_test.manager"], start_new_session=True)
         self.get_logger().info("Gripper, Pick, Pour, Place, and Manager logic nodes spawned in background.")
         return True
 
