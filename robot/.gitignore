@@ -1,0 +1,21 @@
+GEMINI.md
+
+# ROS 2 build artifacts
+build/
+install/
+log/
+
+# Python artifacts
+**/__pycache__/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+
+# Editor/System specific files
+.vscode/
+.idea/
+.DS_Store
+.tmp/

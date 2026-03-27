@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ROBOTENDER</title>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Pretendard:wght@500;700&display=swap");
+
+    :root {
+      --bg0: #040b24;
+      --bg1: #0a1f54;
+      --text: #eef6ff;
+      --accent: #59c8ff;
+      --accent2: #2a94ff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 20% 15%, rgba(72, 187, 255, 0.28), transparent 36%),
+        radial-gradient(circle at 88% 10%, rgba(58, 138, 255, 0.22), transparent 34%),
+        linear-gradient(150deg, var(--bg0), var(--bg1) 70%);
+      color: var(--text);
+      font-family: "Pretendard", sans-serif;
+      padding: clamp(16px, 4vw, 24px);
+    }
+
+    .wrap {
+      text-align: center;
+      width: min(900px, 100%);
+      max-width: 100%;
+      min-height: calc(100vh - clamp(32px, 8vw, 48px));
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .kicker {
+      margin: 0;
+      font-family: "Orbitron", sans-serif;
+      letter-spacing: 0.24em;
+      font-size: clamp(14px, 2vw, 22px);
+      opacity: 0.9;
+      color: #9dd8ff;
+    }
+
+    .title {
+      margin: 0;
+      margin-top: 20px;
+      font-family: "Orbitron", sans-serif;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      font-size: clamp(42px, 8.4vw, 112px);
+      line-height: 0.95;
+      text-shadow: 0 0 28px rgba(95, 201, 255, 0.42);
+      width: auto;
+      max-width: 100%;
+      white-space: nowrap;
+    }
+
+    .start-btn {
+      margin-top: 36px;
+      display: block;
+      text-decoration: none;
+      color: #06253f;
+      font-weight: 800;
+      font-size: clamp(18px, 2.2vw, 28px);
+      padding: 14px 36px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      box-shadow: 0 14px 28px rgba(36, 150, 255, 0.36);
+      transition: transform 0.15s ease, filter 0.15s ease;
+    }
+
+    .start-btn:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.04);
+    }
+
+    .start-btn:active {
+      transform: translateY(1px);
+    }
+
+    @media (max-width: 640px) {
+      .wrap {
+        justify-content: center;
+        gap: 18px;
+        padding: 8vh 0 6vh;
+      }
+
+      .kicker {
+        letter-spacing: 0.18em;
+        font-size: clamp(12px, 4vw, 18px);
+      }
+
+      .title {
+        margin-top: 8px;
+        font-size: clamp(28px, 8vw, 54px);
+        line-height: 1;
+        letter-spacing: 0;
+      }
+
+      .start-btn {
+        width: min(72vw, 240px);
+        margin-top: 8px;
+        padding: 16px 24px;
+      }
+    }
+
+    @media (max-width: 400px) {
+      body {
+        padding: 12px;
+      }
+
+      .wrap {
+        gap: 16px;
+      }
+
+      .title {
+        font-size: clamp(24px, 7.2vw, 40px);
+        letter-spacing: 0;
+      }
+
+      .start-btn {
+        width: min(78vw, 220px);
+        padding: 14px 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <p class="kicker">VOICE ORDER</p>
+    <h1 class="title">ROBOTENDER</h1>
+    <a class="start-btn" href="{% url 'order' %}">주문 시작</a>
+  </main>
+</body>
+</html>

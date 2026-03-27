@@ -1,0 +1,8 @@
+string bottle_name
+float32 target_volume_ml
+---
+bool success
+string message
+---
+string current_state
+float32 progress

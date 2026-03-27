@@ -1,0 +1,11 @@
+# Goal
+string bottle_name
+---
+# Result
+bool success
+string message
+float64[3] pick_pose
+---
+# Feedback
+string current_state
+float32 progress

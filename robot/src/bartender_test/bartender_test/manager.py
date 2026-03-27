@@ -1,0 +1,422 @@
+import rclpy
+import json
+import time
+from pathlib import Path
+from rclpy.node import Node
+from rclpy.action import ActionClient
+from rclpy.callback_groups import ReentrantCallbackGroup
+from std_msgs.msg import String
+from std_srvs.srv import Trigger
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+
+# Message/Service/Action Imports
+from robotender_msgs.action import PickBottle, PlaceBottle, PourBottle
+from robotender_msgs.srv import GripperControl
+from dsr_msgs2.srv import MoveJoint
+
+from .defines import (
+    POSJ_HOME, 
+    GRIPPER_POSITION_OPEN,
+    GRIPPER_FORCE_DEFAULT,
+    BOTTLE_CONFIG
+)
+
+class RobotenderManager(Node):
+    def __init__(self):
+        super().__init__('robotender_manager', namespace='/dsr01')
+        self.callback_group = ReentrantCallbackGroup()
+        self.order_status_file = Path("/tmp/bartender_order_status.json")
+        
+        # 0. Parameters
+        self.declare_parameter('execution_mode', 'auto') # 'auto' or 'manual'
+        self.execution_mode = self.get_parameter('execution_mode').get_parameter_value().string_value
+        
+        # Mode Control Topic
+        self.mode_sub = self.create_subscription(
+            String, 
+            'robotender_manager/mode', 
+            self.mode_control_callback, 
+            10, 
+            callback_group=self.callback_group
+        )
+        
+        # 1. Service Clients
+        self.movej_cli = self.create_client(MoveJoint, 'motion/move_joint', callback_group=self.callback_group)
+        self.gripper_cli = self.create_client(GripperControl, 'robotender_gripper/move', callback_group=self.callback_group)
+
+        # 2. Action clients
+        self.pick_action_client = ActionClient(self, PickBottle, 'robotender_pick/execute', callback_group=self.callback_group)
+        self.place_action_client = ActionClient(self, PlaceBottle, 'robotender_place/execute', callback_group=self.callback_group)
+        self.pour_action_client = ActionClient(self, PourBottle, 'robotender_pour/execute', callback_group=self.callback_group)
+
+        # 3. Manual Control Services
+        self.pick_trigger_srv = self.create_service(Trigger, 'robotender_manager/pick_bottle', self.manual_pick_callback, callback_group=self.callback_group)
+        self.pour_trigger_srv = self.create_service(Trigger, 'robotender_manager/pour_bottle', self.manual_pour_callback, callback_group=self.callback_group)
+        self.place_trigger_srv = self.create_service(Trigger, 'robotender_manager/place_bottle', self.manual_place_callback, callback_group=self.callback_group)
+        
+        self.order_topic = "/bartender/order_detail"
+        self.order_status_topic = "/bartender/order_status"
+        self.order_sub = None 
+        self.is_busy = False 
+        self.system_ready = False
+
+        status_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.order_status_pub = self.create_publisher(String, self.order_status_topic, status_qos)
+        
+        # Recipe Queue Logic
+        self.current_drinks_name = "None"
+        self.ingredient_queue = [] # List of (bottle_name, volume_ml)
+        self.last_picked_pose = None 
+        
+        self.get_logger().info('====================================================')
+        self.get_logger().info('   Robotender Manager Node Initialized')
+        self.get_logger().info(f'   Execution Mode: {self.execution_mode.upper()}')
+        self.get_logger().info('====================================================')
+
+        self.publish_order_status("idle")
+
+        # Trigger initial standby via a safe one-shot timer
+        self.init_timer = self.create_timer(1.0, self.initial_standby_trigger, callback_group=self.callback_group)
+
+    def publish_order_status(self, state: str, **extra):
+        payload = {"state": state, **extra}
+        self.order_status_pub.publish(String(data=json.dumps(payload, ensure_ascii=False)))
+        try:
+            self.order_status_file.write_text(
+                json.dumps(payload, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            self.get_logger().warn(f"Failed to write order status file: {exc}")
+        self.get_logger().info(f"[ORDER STATUS] {payload}")
+
+    async def mode_control_callback(self, msg: String):
+        new_mode = msg.data.lower().strip()
+        if new_mode in ['auto', 'manual']:
+            self.execution_mode = new_mode
+            self.get_logger().info('====================================================')
+            self.get_logger().info(f'   MODE SWITCHED TO: {self.execution_mode.upper()}')
+            self.get_logger().info('====================================================')
+        else:
+            self.get_logger().warn(f"Invalid mode received: {msg.data}")
+
+    async def manual_pick_callback(self, request, response):
+        if self.is_busy:
+            response.success, response.message = False, "System is busy"
+            return response
+        if not self.ingredient_queue:
+            response.success, response.message = False, "No ingredients in queue! Order something first."
+            return response
+
+        bottle_name, target_ml = self.ingredient_queue[0]
+        self.get_logger().info(f"[MANUAL] Pick Triggered for: {bottle_name} ({target_ml}ml)")
+        
+        self.is_busy = True
+        success = await self.execute_pick_sequence(bottle_name)
+        
+        if success:
+            response.success, response.message = True, f"Pick completed for {bottle_name}."
+        else:
+            response.success, response.message = False, f"Pick failed for {bottle_name}."
+
+        self.is_busy = False
+        return response
+
+    async def execute_pick_sequence(self, bottle_name):
+        """Helper to run the full pick motion and return to home"""
+        success = await self.send_pick_goal(bottle_name)
+        if success:
+            req_move = MoveJoint.Request()
+            req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], 30.0, 30.0
+            await self.movej_cli.call_async(req_move)
+            return True
+        else:
+            await self.run_standby_sequence()
+            return False
+
+    async def manual_pour_callback(self, request, response):
+        if self.is_busy:
+            response.success, response.message = False, "System is busy"
+            return response
+        if not self.ingredient_queue:
+            response.success, response.message = False, "No active ingredient queue!"
+            return response
+
+        bottle_name, target_ml = self.ingredient_queue[0]
+        self.get_logger().info(f"[MANUAL] Pour Triggered for: {bottle_name} ({target_ml}ml)")
+        
+        self.is_busy = True
+        success = await self.execute_pour_sequence(bottle_name, target_ml)
+        
+        if success:
+            response.success, response.message = True, f"Pour completed for {bottle_name}."
+        else:
+            response.success, response.message = False, f"Pour failed for {bottle_name}."
+
+        self.is_busy = False
+        return response
+
+    async def execute_pour_sequence(self, bottle_name, target_volume_ml=None):
+        """Helper to run the full pour motion and return to home"""
+        success = await self.send_pour_goal(bottle_name, target_volume_ml)
+        if success:
+            req_move = MoveJoint.Request()
+            req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], 30.0, 30.0
+            await self.movej_cli.call_async(req_move)
+            return True
+        return False
+
+    async def manual_place_callback(self, request, response):
+        if self.is_busy:
+            response.success, response.message = False, "System is busy"
+            return response
+        if not self.ingredient_queue or self.last_picked_pose is None:
+            response.success, response.message = False, "Nothing to place!"
+            return response
+
+        bottle_name, target_ml = self.ingredient_queue[0]
+        self.get_logger().info(f"[MANUAL] Place Triggered for: {bottle_name}")
+        
+        self.is_busy = True
+        success = await self.execute_place_sequence(self.last_picked_pose, bottle_name)
+        
+        if success:
+            # Ingredient finished! Remove it from the queue
+            self.ingredient_queue.pop(0)
+            remaining = len(self.ingredient_queue)
+            msg = f"Placed {bottle_name}. {remaining} ingredients left."
+            self.get_logger().info(f"[MANUAL] {msg}")
+            response.success, response.message = True, msg
+        else:
+            response.success, response.message = False, "Place failed."
+        
+        self.is_busy = False
+        return response
+
+    async def execute_place_sequence(self, picked_pose, bottle_name):
+        """Helper to run the full place motion and return to standby"""
+        success = await self.send_place_goal(picked_pose, bottle_name)
+        await self.run_standby_sequence()
+        return success
+
+    async def send_pour_goal(self, bottle_name, target_volume_ml=None):
+        if not self.pour_action_client.wait_for_server(timeout_sec=5.0):
+            return False
+
+        config = BOTTLE_CONFIG.get(bottle_name)
+        if config is None: return False
+
+        if target_volume_ml is None:
+            target_volume = float(config.get('pour_target_ml', 100.0))
+        else:
+            target_volume = float(target_volume_ml)
+
+        goal_msg = PourBottle.Goal()
+        goal_msg.bottle_name = bottle_name
+        goal_msg.target_volume_ml = target_volume
+
+        goal_handle = await self.pour_action_client.send_goal_async(goal_msg, feedback_callback=self.pour_feedback_callback)
+        if not goal_handle.accepted: return False
+
+        result_response = await goal_handle.get_result_async()
+        return result_response.result.success
+
+    def pour_feedback_callback(self, feedback_msg):
+        fb = feedback_msg.feedback
+        self.get_logger().info(f'[POUR FB] {fb.current_state} ({fb.progress*100:.0f}%)')
+
+    async def send_place_goal(self, picked_pose, bottle_name):
+        if not self.place_action_client.wait_for_server(timeout_sec=5.0): return False
+        goal_msg = PlaceBottle.Goal()
+        goal_msg.picked_pose = [float(x) for x in picked_pose]
+        goal_msg.bottle_name = bottle_name
+        goal_handle = await self.place_action_client.send_goal_async(goal_msg, feedback_callback=self.place_feedback_callback)
+        if not goal_handle.accepted: return False
+        result_response = await goal_handle.get_result_async()
+        return result_response.result.success
+
+    def place_feedback_callback(self, feedback_msg):
+        fb = feedback_msg.feedback
+        self.get_logger().info(f'[PLACE FB] {fb.current_state}')
+
+    async def initial_standby_trigger(self):
+        self.init_timer.cancel()
+        self.get_logger().info("--- SYSTEM STARTUP ---")
+        await self.run_standby_sequence()
+
+    async def run_standby_sequence(self):
+        self.system_ready = False
+
+        # 1. POSJ_HOME
+        self.get_logger().info("[STANDBY] 1/3: Moving to POSJ_HOME...")
+        if self.movej_cli.wait_for_service(timeout_sec=2.0):
+            req_move = MoveJoint.Request()
+            req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], 30.0, 30.0
+            await self.movej_cli.call_async(req_move)
+        else:
+            self.get_logger().error("MoveJoint service not available!")
+            self.publish_order_status("blocked", reason="move_joint_unavailable")
+            return
+
+        # 2. Close Gripper
+        self.get_logger().info("[STANDBY] 2/3: Closing gripper (Force Mode)...")
+        if self.gripper_cli.wait_for_service(timeout_sec=2.0):
+            req_grip = GripperControl.Request()
+            req_grip.position, req_grip.force = 1100, GRIPPER_FORCE_DEFAULT
+            # Safety: Don't await indefinitely if physical gripper is stuck
+            try:
+                self.gripper_cli.call_async(req_grip)
+                self.get_logger().info("   (Gripper command sent)")
+            except Exception as e:
+                self.get_logger().error(f"Gripper service error: {e}")
+        else:
+            self.get_logger().error("Gripper service not available!")
+            self.publish_order_status("blocked", reason="gripper_unavailable")
+            return
+        time.sleep(2.0)
+            
+        # 3. Order Topic
+        if self.order_sub is None:
+            self.get_logger().info("[STANDBY] 3/3: Opening order subscription...")
+            self.order_sub = self.create_subscription(String, self.order_topic, self.order_callback, 10, callback_group=self.callback_group)
+        
+        self.system_ready = True
+        self.is_busy = False
+        self.get_logger().info("--- SYSTEM READY ---")
+        self.publish_order_status("idle")
+
+    async def order_callback(self, msg: String):
+        if self.is_busy:
+            return
+        if not self.system_ready:
+            self.get_logger().warn("Order received while system is not ready. Ignoring.")
+            return
+        try:
+            order_data = json.loads(msg.data)
+            drinks_name = order_data.get("drinks", "Unknown")
+            recipe = order_data.get("recipe") or {}
+
+            if not recipe:
+                self.get_logger().warn(f"Order received for '{drinks_name}' but recipe is empty.")
+                return
+
+            # Reset and populate the ingredient queue
+            self.current_drinks_name = drinks_name
+            self.ingredient_queue = [
+                (str(name), float(vol)) for name, vol in recipe.items()
+            ]
+            
+            self.get_logger().info(
+                f"ORDER RECEIVED: drinks='{self.current_drinks_name}' ingredients={self.ingredient_queue}"
+            )
+            self.publish_order_status(
+                "accepted",
+                drinks=self.current_drinks_name,
+                remaining=len(self.ingredient_queue),
+            )
+            
+            # Auto-trigger if mode is set
+            if self.execution_mode == "auto":
+                self.get_logger().info(f"[AUTO] Starting full sequence for '{self.current_drinks_name}'")
+                self.is_busy = True
+                self.publish_order_status(
+                    "running",
+                    drinks=self.current_drinks_name,
+                    remaining=len(self.ingredient_queue),
+                )
+
+                # In Auto mode, we process the whole queue
+                while self.ingredient_queue:
+                    bottle_name, target_ml = self.ingredient_queue[0]
+                    
+                    self.get_logger().info(f"[AUTO] Processing ingredient: {bottle_name} ({target_ml}ml)")
+
+                    # 1. Pick
+                    if not await self.execute_pick_sequence(bottle_name):
+                        self.get_logger().error(f"[AUTO] Pick failed for {bottle_name}. Aborting.")
+                        self.publish_order_status("failed", step="pick", bottle=bottle_name)
+                        self.is_busy = False
+                        return
+
+                    if self.execution_mode != "auto":
+                        self.get_logger().info("[AUTO->MANUAL] Switched during Pick. Handing over to manual.")
+                        self.publish_order_status("paused", step="pick", bottle=bottle_name)
+                        self.is_busy = False
+                        return
+
+                    # 2. Pour
+                    if not await self.execute_pour_sequence(bottle_name, target_ml):
+                        self.get_logger().error(f"[AUTO] Pour failed for {bottle_name}. Attempting to return bottle.")
+                        self.publish_order_status("failed", step="pour", bottle=bottle_name)
+                        await self.execute_place_sequence(self.last_picked_pose, bottle_name)
+                        self.ingredient_queue.pop(0) 
+                        self.is_busy = False
+                        return
+
+                    if self.execution_mode != "auto":
+                        self.get_logger().info("[AUTO->MANUAL] Switched during Pour. Handing over to manual.")
+                        self.publish_order_status("paused", step="pour", bottle=bottle_name)
+                        self.is_busy = False
+                        return
+
+                    # 3. Place
+                    if not await self.execute_place_sequence(self.last_picked_pose, bottle_name):
+                        self.get_logger().error(f"[AUTO] Place failed for {bottle_name}.")
+                        self.publish_order_status("failed", step="place", bottle=bottle_name)
+                        self.is_busy = False
+                        return
+                    
+                    # Successfully completed this ingredient
+                    self.ingredient_queue.pop(0)
+                    self.publish_order_status(
+                        "running",
+                        drinks=self.current_drinks_name,
+                        completed_bottle=bottle_name,
+                        remaining=len(self.ingredient_queue),
+                    )
+
+                self.get_logger().info(f"[AUTO] Full sequence finished for '{self.current_drinks_name}'.")
+                self.publish_order_status("completed", drinks=self.current_drinks_name, remaining=0)
+                self.is_busy = False
+
+        except Exception as e:
+            self.get_logger().error(f'Order parsing error: {e}')
+            self.publish_order_status("failed", error=str(e))
+            self.is_busy = False
+
+    async def send_pick_goal(self, bottle_name):
+        if not self.pick_action_client.wait_for_server(timeout_sec=5.0): return False
+        goal_msg = PickBottle.Goal()
+        goal_msg.bottle_name = bottle_name
+        goal_handle = await self.pick_action_client.send_goal_async(goal_msg, feedback_callback=self.pick_feedback_callback)
+        if not goal_handle.accepted: return False
+        result_response = await goal_handle.get_result_async()
+        res = result_response.result
+        if res.success: self.last_picked_pose = list(res.pick_pose)
+        return res.success
+
+    def pick_feedback_callback(self, feedback_msg):
+        fb = feedback_msg.feedback
+        self.get_logger().info(f'[PICK FB] {fb.current_state}')
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = RobotenderManager()
+    from rclpy.executors import MultiThreadedExecutor
+    # Use explicit thread count to prevent deadlock in async chains
+    executor = MultiThreadedExecutor(num_threads=8)
+    executor.add_node(node)
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
