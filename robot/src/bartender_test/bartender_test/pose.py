@@ -2,7 +2,7 @@ import rclpy
 import sys
 from rclpy.node import Node
 from dsr_msgs2.srv import MoveJoint
-from .defines import (POSJ_HOME, POSJ_CHEERS, POSJ_PICK_PLACE_READY, POSJ_SNAP,
+from .defines import (POSJ_HOME, POSJ_CHEERS, POSJ_PICK_READY, POSJ_PLACE_READY, POSJ_SNAP,
                       BOTTLE_CONFIG, SNAP_VELOCITY, SNAP_ACCELERATION)
 
 def main(args=None):
@@ -29,7 +29,7 @@ def main(args=None):
         if pose_name == 'home':
             target_joint_pose = POSJ_HOME
         elif pose_name == 'ready':
-            target_joint_pose = POSJ_PICK_PLACE_READY
+            target_joint_pose = POSJ_PICK_READY
         elif pose_name == 'cheers':
             target_joint_pose = POSJ_CHEERS
         elif pose_name == 'snap':
