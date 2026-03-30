@@ -1,9 +1,14 @@
-## Working Context (March 23, 2026 - Real-time Mode Orchestration)
+## Working Context (March 30, 2026 - Real-time Mode Orchestration)
 - **Current Branch:** `robot-llm-detection-combine-junsung`
 - **Architecture Status:** 
     - **Full Manager-Orchestration** for Pick, Pour, and Place.
     - **Auto/Manual Mode:** Real-time switching via ROS topic.
     - **Node Isolation Standard:** All motion nodes use isolated internal nodes.
+
+## Achievements (March 30, 2026)
+- **Enhanced Linear Motion (`movel`):** Upgraded the `movel` utility to support relative movements in both **Base** and **Tool** coordinate frames.
+    - Users can now move the robot relative to its current orientation (e.g., "move 1cm forward") using the `tool` flag.
+- **Repository Consolidation:** Merged latest logic into the primary orchestration branch `robot-llm-detection-combine-junsung`.
 
 ## Achievements (March 25, 2026)
 - **Multi-Menu & Ingredient Support:** Successfully merged `llm-newmenu` branch. The system now supports complex orders involving multiple ingredients (e.g., Somaek, Cocktail).
