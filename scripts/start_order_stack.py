@@ -43,45 +43,51 @@ class ManagedProcess:
 
 
 def _build_startup_command() -> str:
+    python_bin = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
     return (
         f"{_build_workspace_source_prefix()} && "
         f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
-        "exec python3 -m bartender_test.startup"
+        f"exec {sh_quote(python_bin)} -m bartender_test.startup"
     )
 
 def _build_gripper_command() -> str:
+    python_bin = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
     return (
         f"{_build_workspace_source_prefix()} && "
         f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
-        "exec python3 -m bartender_test.gripper"
+        f"exec {sh_quote(python_bin)} -m bartender_test.gripper"
     )
 
 def _build_pick_command() -> str:
+    python_bin = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
     return (
         f"{_build_workspace_source_prefix()} && "
         f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
-        "exec python3 -m bartender_test.pick"
+        f"exec {sh_quote(python_bin)} -m bartender_test.pick"
     )
 
 def _build_pour_command() -> str:
+    python_bin = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
     return (
         f"{_build_workspace_source_prefix()} && "
         f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
-        "exec python3 -m bartender_test.pour"
+        f"exec {sh_quote(python_bin)} -m bartender_test.pour"
     )
 
 def _build_place_command() -> str:
+    python_bin = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
     return (
         f"{_build_workspace_source_prefix()} && "
         f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
-        "exec python3 -m bartender_test.place"
+        f"exec {sh_quote(python_bin)} -m bartender_test.place"
     )
 
 def _build_snap_command() -> str:
+    python_bin = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
     return (
         f"{_build_workspace_source_prefix()} && "
         f"export PYTHONPATH={sh_quote(str(ROOT / 'robot' / 'src' / 'bartender_test'))}:$PYTHONPATH && "
-        "exec python3 -m bartender_test.snap"
+        f"exec {sh_quote(python_bin)} -m bartender_test.snap"
     )
 
 def _build_volume_detection_command() -> str:

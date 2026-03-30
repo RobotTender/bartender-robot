@@ -18,7 +18,8 @@ from .defines import (
     POSJ_HOME, 
     GRIPPER_POSITION_OPEN,
     GRIPPER_FORCE_DEFAULT,
-    BOTTLE_CONFIG
+    BOTTLE_CONFIG,
+    VEL_READY, ACC_READY
 )
 
 class RobotenderManager(Node):
@@ -131,7 +132,7 @@ class RobotenderManager(Node):
         success = await self.send_pick_goal(bottle_name)
         if success:
             req_move = MoveJoint.Request()
-            req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], 30.0, 30.0
+            req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], VEL_READY, ACC_READY
             await self.movej_cli.call_async(req_move)
             return True
         else:
@@ -165,7 +166,7 @@ class RobotenderManager(Node):
         success = await self.send_pour_goal(bottle_name, target_volume_ml)
         if success:
             req_move = MoveJoint.Request()
-            req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], 30.0, 30.0
+            req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], VEL_READY, ACC_READY
             await self.movej_cli.call_async(req_move)
             return True
         return False
@@ -200,7 +201,7 @@ class RobotenderManager(Node):
     async def execute_place_sequence(self, picked_pose, bottle_name):
         """Helper to run the full place motion and return to standby"""
         success = await self.send_place_goal(picked_pose, bottle_name)
-        await self.run_standby_sequence()
+        #await self.run_standby_sequence()
         return success
 
     async def send_pour_goal(self, bottle_name, target_volume_ml=None):
@@ -255,7 +256,7 @@ class RobotenderManager(Node):
         self.get_logger().info("[STANDBY] 1/3: Moving to POSJ_HOME...")
         if self.movej_cli.wait_for_service(timeout_sec=2.0):
             req_move = MoveJoint.Request()
-            req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], 30.0, 30.0
+            req_move.pos, req_move.vel, req_move.acc = [float(x) for x in POSJ_HOME], VEL_READY, ACC_READY
             await self.movej_cli.call_async(req_move)
         else:
             self.get_logger().error("MoveJoint service not available!")
@@ -378,7 +379,8 @@ class RobotenderManager(Node):
                         completed_bottle=bottle_name,
                         remaining=len(self.ingredient_queue),
                     )
-
+                
+                await self.run_standby_sequence()
                 self.get_logger().info(f"[AUTO] Full sequence finished for '{self.current_drinks_name}'.")
                 self.publish_order_status("completed", drinks=self.current_drinks_name, remaining=0)
                 self.is_busy = False
