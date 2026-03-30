@@ -118,8 +118,8 @@ class PickRlPolicyConfig:
     ee_frame: str = "link_6"
     robot_ns: str = "/dsr01"
 
-    policy_hz: float = 30.0
-    servo_hz: float = 60.0
+    policy_hz: float = 35.0
+    servo_hz: float = 80.0
 
     action_scale_rad: float = 0.078
     max_joint_step_rad: float = 0.0028
@@ -139,7 +139,7 @@ class PickRlPolicyConfig:
     startup_ramp_sec: float = 2.0
     startup_action_scale: float = 0.08
 
-    goal_y_tolerance: float = 0.15
+    goal_y_tolerance: float = 0.02 # 0.15
     pos_tolerance_m: float = 0.012
     stop_vel_tolerance_rad_s: float = 0.03
     settle_count: int = 12
@@ -685,8 +685,8 @@ class RobotControllerNode(Node):
         time.sleep(0.5)
 
         target_xyz_m = np.array([
-            (p_robot[0] + PICK_PLACE_X_OFFSET) / 1000.0,
-            (p_robot[1] + PICK_PLACE_Y_OFFSET) / 1000.0,
+            (p_robot[0]) / 1000.0,
+            (p_robot[1]) / 1000.0,
             p_robot[2] / 1000.0,
         ], dtype=np.float64)
         self._publish_target(target_xyz_m)
@@ -707,7 +707,7 @@ class RobotControllerNode(Node):
         dt_policy = self.policy_dt
         dt_servo = self.servo_dt
         servo_per_policy = max(1, int(round(self.rl_cfg.servo_hz / self.rl_cfg.policy_hz)))
-        max_policy_steps = int(self.rl_cfg.policy_hz * 20.0)
+        max_policy_steps = int(self.rl_cfg.policy_hz * 20.0 * 10.0)
 
         self.get_logger().info(
             f"[RL] start target_xyz_m={np.round(target_xyz_m, 4).tolist()}, "
@@ -784,7 +784,8 @@ class RobotControllerNode(Node):
             self.get_logger().info(
                 f"[RL] step={step:03d} dist={dist:.4f} "
                 f"err={np.round(err, 4).tolist()} "
-                f"action={np.round(action, 4).tolist()}"
+                f"action={np.round(action, 4).tolist()} "
+                f"target={object_grasp_pos_w}"
             )
 
             if self._check_goal(robot_grasp_pos_w, object_grasp_pos_w):
