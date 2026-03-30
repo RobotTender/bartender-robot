@@ -42,7 +42,7 @@ BOTTLE_CONFIG = {
         'posj_vertical': [35.69, -30.28, 151.43, 85.15, -82.05, 32.48],
         'pour_velocity': 6,
         'pour_acc': 1.5,
-        'pour_wait_time': [ 2.0, 4.8, 5.75, 7.0, 8.0, 10.5 ],
+        'pour_wait_time': [ 2.0, 4.8, 6.0, 7.5, 9.0, 11.0 ],
         'grasp_wait_time': 4
     },
     'soju': {
