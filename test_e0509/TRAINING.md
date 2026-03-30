@@ -6,6 +6,7 @@
 문서 역할 구분:
 
 - 관측/액션 의미, 정규화 기준, stage 차이: [`README.md`](./README.md)
+- 남겨둔 USD 자산 역할/구성 메모: [`USD/README.md`](./USD/README.md)
 - sim2real 이식, ROS2/실기 연결, 체크포인트 교체: [`../README.md`](../README.md)
 - 현재 문서: 학습 실행, 로그/체크포인트 경로, 재생/평가 메모
 

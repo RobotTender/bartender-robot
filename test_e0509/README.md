@@ -7,12 +7,14 @@
   - `/IsaacLab/source/isaaclab_tasks/isaaclab_tasks/direct/test_e0509`
 - 즉, `direct` 아래에 `test_e0509` 폴더 전체(현재 폴더)를 그대로 넣어야 합니다.
 - 학습/체크포인트 운영 메모는 [TRAINING.md](./TRAINING.md)를 참고하세요.
+- USD 자산 자체의 역할과 보존 기준은 [USD/README.md](./USD/README.md)를 참고하세요.
 - sim2real 실행법, ROS2/실기 연결법, 체크포인트 교체법은 상위 문서인 [`../README.md`](../README.md)를 참고하세요.
 
 읽는 순서 추천:
 
 - 이 문서: 관측/액션 의미, 정규화 기준, stage 차이
 - `TRAINING.md`: 학습/재생/평가 메모
+- `USD/README.md`: 워크스페이스/로봇/오브젝트 USD 자산 메모
 - 루트 `README.md`: sim2real 이식/연결/실행 방법
 
 ## 환경 시나리오 요약 (Grip Bottle 기준)

@@ -8,8 +8,20 @@ venv/
 venv*/
 **/venv*/
 
+# Python caches / compiled files
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Editor-local settings
+.vscode/
+**/.vscode/
+
 # Local sync backup artifacts
 test_e0509/.sync_backup_*/
+
+# Codex session mount artifact in this workspace
+/.codex
 
 # Keep these local-only task files out of this repo
 test_e0509/e0509_pick_place_k_env.py
