@@ -48,6 +48,22 @@ class MoveBottleEnvCfg(GripBottleEnvCfg):
     reset_action_hold_steps = 6
     # After hold, linearly ramp policy action magnitude to avoid reset-transient contact spikes.
     reset_action_ramp_steps = 0
+    # Optional startup escape assist (pre-escape only): softly steer to waypoint at episode start.
+    # This is designed to break "rest arm on shelf then slide out" local minima.
+    startup_escape_assist_enable = False
+    startup_escape_assist_steps = 0
+    startup_escape_assist_kp = 2.2
+    # Post-lock anti-drop guard: briefly bias command away from downward/supported contact right after hard-lock release.
+    post_lock_anti_drop_enable = False
+    post_lock_anti_drop_steps = 0
+    post_lock_anti_drop_blend = 0.0
+    post_lock_anti_drop_kp = 2.4
+    post_lock_min_tcp_height_from_table_m = 0.08
+    post_lock_support_touch_threshold = 0.08
+    # True hard-lock: force arm joint state to start pose for initial steps after reset.
+    # Unlike target-hold, this pins the simulated joint state directly (anti-sag).
+    startup_joint_hard_lock_enable = False
+    startup_joint_hard_lock_steps = 0
     # Optional grace period before collision-based termination becomes active.
     collision_terminate_grace_steps = 3
     # Terminate on collision only when threshold violation persists for N consecutive steps.
@@ -151,6 +167,10 @@ class MoveBottleEnvCfg(GripBottleEnvCfg):
     # Pre-escape motion shaping (active only before shelf-clear): discourage low-height and downward diving.
     simple_pre_escape_low_height_penalty_scale = 0.0
     simple_pre_escape_descent_penalty_scale = 0.0
+    # Positive shaping before shelf-escape: reward keeping TCP above the minimum height.
+    simple_pre_escape_height_reward_scale = 0.0
+    # If enabled, pre-escape height reward is active only while startup hard-lock is active.
+    pre_escape_height_reward_use_startup_lock_gate = False
     pre_escape_descent_speed_ref_m_s = 0.08
     # Penalize support-like arm contact (link_5/link_6) before shelf escape.
     simple_pre_escape_support_touch_penalty_scale = 0.0
@@ -319,17 +339,36 @@ class MoveBottleStage2EnvCfg(MoveBottleEnvCfg):
 
     # 10.0 s at 60 Hz policy rate => ~600 control steps.
     episode_length_s = 10.0
-    # Stage-2: smooth startup to suppress "immediate shelf-lean" reset transient.
-    reset_action_ramp_steps = 24
+    # Stage-2 startup hard-guard:
+    # keep arm at reset start joints for initial steps to block immediate shelf-leaning collapse.
+    reset_action_ramp_steps = 48
+    reset_action_hold_steps = 16
+    startup_joint_hard_lock_enable = True
+    startup_joint_hard_lock_steps = 16
+    post_lock_anti_drop_enable = True
+    post_lock_anti_drop_steps = 10
+    post_lock_anti_drop_blend = 0.85
+    post_lock_anti_drop_kp = 2.4
+    post_lock_min_tcp_height_from_table_m = 0.08
+    post_lock_support_touch_threshold = 0.08
+    # Pre-escape startup assist to waypoint (decays to 0 over early steps).
+    startup_escape_assist_enable = True
+    startup_escape_assist_steps = 24
+    startup_escape_assist_kp = 2.4
+    # Keep only minimal reset settle so policy-controlled startup can react earlier.
+    reset_settle_steps = 1
     pre_escape_gate_goal_rewards = True
-    # Stage-2: use soft reward gate so goal signal is not fully muted before full escape.
+    # Stage-2: stronger pre-escape goal gating baseline.
     pre_escape_reward_gate_floor = 0.20
     pre_escape_reward_gate_power = 1.0
     pre_escape_support_touch_reward_block_enable = True
-    pre_escape_support_touch_reward_block_threshold = 0.20
+    pre_escape_support_touch_reward_block_threshold = 0.08
     pre_escape_support_touch_reward_gate_floor = 0.0
     success_use_jointwise_tolerance = True
     success_joint_tolerance_deg = (25.0, 15.0, 15.0, 25.0, 10.0, 25.0)
+    simple_goal_proximity_reward_scale = 2.5
+    simple_goal_gate_reward_scale = 6.0
+    simple_shelf_escape_reward_scale = 0.0
     use_waypoint_reward = True
     move_waypoint_joint_pos_deg = (90.0, -45.0, 90.0, 0.0, 45.0, -90.0)
     # Keep waypoint as early guidance only; fade it out sooner to avoid stage-1 posture relapse.
@@ -346,33 +385,36 @@ class MoveBottleStage2EnvCfg(MoveBottleEnvCfg):
     simple_space_limit_count_penalty_scale = 0.30
     simple_space_limit_depth_penalty_scale = 5.5
     # Stage-2: discourage early downward diving before clearing shelf region.
-    simple_pre_escape_descent_penalty_scale = 0.30
+    simple_pre_escape_descent_penalty_scale = 0.80
     # Active only before shelf escape (shelf_escape_ratio < 1.0).
-    simple_pre_escape_low_height_penalty_scale = 0.60
+    simple_pre_escape_low_height_penalty_scale = 1.20
+    # Give positive signal during startup lock / early rollout for staying above min height.
+    simple_pre_escape_height_reward_scale = 0.80
+    pre_escape_height_reward_use_startup_lock_gate = True
     # Directly discourage "resting link_5/link_6 on shelf" shortcut before escape.
-    simple_pre_escape_support_touch_penalty_scale = 0.75
+    simple_pre_escape_support_touch_penalty_scale = 1.50
     # Video-oriented quick-tuning: reuse Stage-1's stronger joint-error shaping style.
     # Keep Stage-2 waypoint curriculum while making final-pose pull more explicit.
-    simple_goal_max_abs_err_penalty_scale = 0.90
-    simple_weighted_joint_err_penalty_scale = 0.30
+    simple_goal_max_abs_err_penalty_scale = 0.45
+    simple_weighted_joint_err_penalty_scale = 0.15
     simple_joint_weight_mode = "legacy_wrist"
-    simple_joint_focus_penalty_scale = 0.80
+    simple_joint_focus_penalty_scale = 0.40
     simple_joint_focus_tol_deg = (24.0, 14.0, 12.0)
     simple_joint_focus_weights = (1.0, 0.8, 0.65)
     simple_joint_focus_penalty_mode = "mean"
     simple_joint_focus_penalty_power = 2.0
-    # Stage-2: tighten J2/J5 success gate to reduce residual shoulder/wrist error.
+    # Stage-2: baseline focus gate for (J2, J3, J5).
     simple_joint_focus_success_tol_deg = (15.0, 15.0, 10.0)
     enable_joint_focus_success_gate = True
     success_min_y_parallel = 0.88
     success_require_y = False
     success_require_speed = False
-    success_require_collision = False
+    success_require_collision = True
     terminate_on_severe_tilt = False
     terminate_on_sustained_tilt = False
     success_hold_steps = 5
     virtual_terminate_on_collision = False
-    # Stage-2: filter out bad reset states (early shelf-support contact / low TCP) before rollout.
+    # Stage-2: filter out bad reset states before rollout (baseline thresholds).
     reset_quality_gate_enable = True
     reset_quality_max_resamples = 4
     reset_quality_check_steps = 4
@@ -711,6 +753,12 @@ class MoveBottleEnv(GripBottleEnv):
             self.collision_violation_steps = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
         if not hasattr(self, "arm_cmd_vel"):
             self.arm_cmd_vel = torch.zeros((self.num_envs, self.arm_dim), dtype=torch.float, device=self.device)
+        if not hasattr(self, "startup_escape_assist_alpha"):
+            self.startup_escape_assist_alpha = torch.zeros((self.num_envs,), dtype=torch.float, device=self.device)
+        if not hasattr(self, "startup_joint_hard_lock_alpha"):
+            self.startup_joint_hard_lock_alpha = torch.zeros((self.num_envs,), dtype=torch.float, device=self.device)
+        if not hasattr(self, "post_lock_anti_drop_alpha"):
+            self.post_lock_anti_drop_alpha = torch.zeros((self.num_envs,), dtype=torch.float, device=self.device)
         if not hasattr(self, "space_limit_violation_steps"):
             self.space_limit_violation_steps = torch.zeros((self.num_envs,), dtype=torch.long, device=self.device)
         if not hasattr(self, "space_limit_violation_count"):
@@ -1094,6 +1142,9 @@ class MoveBottleEnv(GripBottleEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self.actions = actions.clone().clamp(-1.0, 1.0)
+        self.startup_escape_assist_alpha[:] = 0.0
+        self.startup_joint_hard_lock_alpha[:] = 0.0
+        self.post_lock_anti_drop_alpha[:] = 0.0
         hold_steps = max(int(getattr(self.cfg, "reset_action_hold_steps", 0)), 0)
         startup_ramp_steps = max(int(getattr(self.cfg, "reset_action_ramp_steps", 0)), 0)
         hold_mask = None
@@ -1134,6 +1185,72 @@ class MoveBottleEnv(GripBottleEnv):
                 assist_alpha = assist_alpha.unsqueeze(-1)
                 desired_vel = (1.0 - assist_alpha) * desired_vel + assist_alpha * (goal_vel + residual_scale * desired_vel)
 
+            # Startup pre-escape assist: early guidance toward waypoint to avoid shelf-support shortcut.
+            if bool(getattr(self.cfg, "startup_escape_assist_enable", False)):
+                assist_steps = max(int(getattr(self.cfg, "startup_escape_assist_steps", 0)), 0)
+                if assist_steps > 0:
+                    shelf_escape_target = max(float(self.cfg.shelf_escape_delta_y_m), 1.0e-6)
+                    shelf_escape_delta_y = torch.clamp(self.reset_tcp_pos_y - self.robot_grasp_pos[:, 1], min=0.0)
+                    shelf_escape_ratio = torch.clamp(shelf_escape_delta_y / shelf_escape_target, min=0.0, max=1.0)
+                    pre_escape_mask = shelf_escape_ratio < 0.999
+                    phase = torch.clamp(self.episode_length_buf.float() / float(assist_steps), 0.0, 1.0)
+                    startup_alpha = (1.0 - phase) * pre_escape_mask.float()
+                    if bool(torch.any(startup_alpha > 0.0).item()):
+                        wp_q = self.waypoint_joint_pos[:arm_dim].unsqueeze(0)
+                        curr_q = self._robot.data.joint_pos[:, :arm_dim]
+                        wp_kp = float(getattr(self.cfg, "startup_escape_assist_kp", 2.2))
+                        wp_vel = wp_kp * (wp_q - curr_q)
+                        wp_vel = torch.clamp(
+                            wp_vel,
+                            min=-float(self.arm_joint_vel_limit_rad_s),
+                            max=float(self.arm_joint_vel_limit_rad_s),
+                        )
+                        startup_alpha_exp = startup_alpha.unsqueeze(-1)
+                        desired_vel = (1.0 - startup_alpha_exp) * desired_vel + startup_alpha_exp * wp_vel
+                    self.startup_escape_assist_alpha[:] = startup_alpha
+
+            # Post-lock anti-drop guard: right after startup hard-lock release, bias away from shelf-support collapse.
+            if bool(getattr(self.cfg, "post_lock_anti_drop_enable", False)):
+                hard_steps = max(int(getattr(self.cfg, "startup_joint_hard_lock_steps", 0)), 0)
+                anti_steps = max(int(getattr(self.cfg, "post_lock_anti_drop_steps", 0)), 0)
+                if anti_steps > 0:
+                    post_lock_window = (self.episode_length_buf >= hard_steps) & (
+                        self.episode_length_buf < (hard_steps + anti_steps)
+                    )
+                    if bool(torch.any(post_lock_window).item()):
+                        shelf_escape_target = max(float(self.cfg.shelf_escape_delta_y_m), 1.0e-6)
+                        shelf_escape_delta_y = torch.clamp(self.reset_tcp_pos_y - self.robot_grasp_pos[:, 1], min=0.0)
+                        shelf_escape_ratio = torch.clamp(shelf_escape_delta_y / shelf_escape_target, min=0.0, max=1.0)
+                        pre_escape_mask = shelf_escape_ratio < 0.999
+
+                        table_top_world_z = self.scene.env_origins[:, 2] + float(self.cfg.table_top_z)
+                        tcp_height_from_table = self.robot_grasp_pos[:, 2] - table_top_world_z
+                        min_h = float(
+                            getattr(self.cfg, "post_lock_min_tcp_height_from_table_m", self.cfg.shelf_escape_min_tcp_height_from_table_m)
+                        )
+                        low_height = tcp_height_from_table < min_h
+
+                        self._update_pre_escape_support_metrics()
+                        touch_th = float(getattr(self.cfg, "post_lock_support_touch_threshold", 0.08))
+                        support_touched = self.pre_escape_support_touch_penalty > touch_th
+
+                        anti_drop_mask = post_lock_window & pre_escape_mask & (low_height | support_touched)
+                        if bool(torch.any(anti_drop_mask).item()):
+                            wp_q = self.waypoint_joint_pos[:arm_dim].unsqueeze(0)
+                            curr_q = self._robot.data.joint_pos[:, :arm_dim]
+                            guard_kp = float(getattr(self.cfg, "post_lock_anti_drop_kp", 2.4))
+                            wp_vel = guard_kp * (wp_q - curr_q)
+                            wp_vel = torch.clamp(
+                                wp_vel,
+                                min=-float(self.arm_joint_vel_limit_rad_s),
+                                max=float(self.arm_joint_vel_limit_rad_s),
+                            )
+                            blend = min(max(float(getattr(self.cfg, "post_lock_anti_drop_blend", 0.85)), 0.0), 1.0)
+                            desired_vel[anti_drop_mask] = (
+                                (1.0 - blend) * desired_vel[anti_drop_mask] + blend * wp_vel[anti_drop_mask]
+                            )
+                            self.post_lock_anti_drop_alpha[anti_drop_mask] = blend
+
             max_delta_vel = float(self.arm_joint_acc_limit_rad_s2) * self.dt
             vel_delta = torch.clamp(
                 desired_vel - self.arm_cmd_vel[:, :arm_dim], min=-max_delta_vel, max=max_delta_vel
@@ -1163,7 +1280,38 @@ class MoveBottleEnv(GripBottleEnv):
             targets[hold_mask, : self.arm_dim] = start_pose[hold_mask]
             self.arm_cmd_vel[hold_mask, : self.arm_dim] = 0.0
 
+        if bool(getattr(self.cfg, "startup_joint_hard_lock_enable", False)):
+            hard_steps = max(int(getattr(self.cfg, "startup_joint_hard_lock_steps", 0)), 0)
+            if hard_steps > 0:
+                self.startup_joint_hard_lock_alpha[:] = (self.episode_length_buf < hard_steps).float()
+
         self.robot_dof_targets[:] = torch.clamp(targets, self.policy_dof_lower_limits, self.policy_dof_upper_limits)
+
+    def _apply_action(self):
+        """Apply joint targets and optionally hard-lock startup arm state."""
+        self._robot.set_joint_position_target(self.robot_dof_targets)
+
+        if not bool(getattr(self.cfg, "startup_joint_hard_lock_enable", False)):
+            return
+        hard_steps = max(int(getattr(self.cfg, "startup_joint_hard_lock_steps", 0)), 0)
+        if hard_steps <= 0 or self.arm_dim <= 0:
+            return
+
+        hard_mask = self.episode_length_buf < hard_steps
+        if not bool(torch.any(hard_mask).item()):
+            return
+
+        env_ids = torch.nonzero(hard_mask, as_tuple=False).squeeze(-1)
+        locked_joint_pos = self.robot_dof_targets[env_ids].clone()
+        start_pose = self.start_joint_pos[: self.arm_dim].unsqueeze(0).expand(env_ids.shape[0], -1)
+        locked_joint_pos[:, : self.arm_dim] = start_pose
+        locked_joint_vel = torch.zeros_like(locked_joint_pos)
+
+        # Pin both target and simulated state to start pose to suppress startup sag/contact.
+        self.robot_dof_targets[env_ids] = locked_joint_pos
+        self._robot.set_joint_position_target(locked_joint_pos, env_ids=env_ids)
+        self._robot.write_joint_state_to_sim(locked_joint_pos, locked_joint_vel, env_ids=env_ids)
+        self.arm_cmd_vel[env_ids, : self.arm_dim] = 0.0
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
         self._ensure_move_buffers()
@@ -1554,6 +1702,11 @@ class MoveBottleEnv(GripBottleEnv):
         pre_escape_low_height_penalty = pre_escape_active * torch.clamp(
             (pre_escape_height_ref - tcp_height_from_table) / pre_escape_height_ref, min=0.0, max=2.0
         )
+        pre_escape_height_reward = pre_escape_active * torch.clamp(
+            (tcp_height_from_table - pre_escape_height_ref) / pre_escape_height_ref, min=0.0, max=2.0
+        )
+        if bool(getattr(self.cfg, "pre_escape_height_reward_use_startup_lock_gate", False)):
+            pre_escape_height_reward = pre_escape_height_reward * self.startup_joint_hard_lock_alpha
         ee_lin_vel_z = self._robot.data.body_lin_vel_w[:, self.ee_body_idx, 2]
         pre_escape_speed_ref = max(float(self.cfg.pre_escape_descent_speed_ref_m_s), 1.0e-6)
         pre_escape_descent_penalty = pre_escape_active * torch.clamp(
@@ -1613,11 +1766,12 @@ class MoveBottleEnv(GripBottleEnv):
             + self.cfg.simple_goal_gate_reward_scale * goal_reached.float() * post_escape_reward_gate
             + self.cfg.simple_y_parallel_reward_scale * y_parallel_reward
             + self.cfg.simple_shelf_escape_reward_scale * shelf_escape_reward
+            + self.cfg.simple_pre_escape_height_reward_scale * pre_escape_height_reward
             - self.cfg.simple_goal_distance_penalty_scale * self.goal_dist
             - self.cfg.simple_goal_max_abs_err_penalty_scale * goal_joint_max_abs_err
             - self.cfg.simple_weighted_joint_err_penalty_scale * self.weighted_goal_joint_err
             - self.cfg.simple_joint_focus_penalty_scale * joint_focus_penalty
-            - time_penalty_scale * time_ratio
+            - time_penalty_scale * time_ratio * post_escape_reward_gate
             - self.cfg.simple_collision_peak_penalty_scale * collision_peak_penalty
             - self.cfg.simple_collision_penalty_scale * collision_over_penalty
             - self.cfg.simple_collision_speed_penalty_scale * collision_speed_penalty
@@ -1670,9 +1824,13 @@ class MoveBottleEnv(GripBottleEnv):
             "mean_shelf_escape_ratio": shelf_escape_ratio.mean(),
             "mean_shelf_escape_reward": shelf_escape_reward.mean(),
             "mean_pre_escape_low_height_penalty": pre_escape_low_height_penalty.mean(),
+            "mean_pre_escape_height_reward": pre_escape_height_reward.mean(),
             "mean_pre_escape_descent_penalty": pre_escape_descent_penalty.mean(),
             "mean_pre_escape_support_contact_peak": self.pre_escape_support_contact_peak.mean(),
             "mean_pre_escape_support_touch_penalty": pre_escape_support_touch_penalty.mean(),
+            "mean_startup_escape_assist_alpha": self.startup_escape_assist_alpha.mean(),
+            "mean_startup_joint_hard_lock_alpha": self.startup_joint_hard_lock_alpha.mean(),
+            "mean_post_lock_anti_drop_alpha": self.post_lock_anti_drop_alpha.mean(),
             "mean_goal_progress": goal_progress.mean(),
             "goal_reached_rate": goal_reached.float().mean(),
             "goal_reached_norm_rate": goal_reached_norm.float().mean(),
@@ -1736,6 +1894,30 @@ class MoveBottleEnv(GripBottleEnv):
             "end_timeout_goal_joint_dist_deg_mean": self.end_timeout_goal_joint_dist_deg_mean,
             "end_timeout_goal_joint_dist_deg_p50": self.end_timeout_goal_joint_dist_deg_p50,
         }
+        # Single-env trace for visual-vs-aggregate diagnosis (env index 0).
+        if self.num_envs > 0:
+            trace_idx = 0
+            full_log.update(
+                {
+                    "trace_env0_goal_dist_deg": torch.rad2deg(self.goal_dist[trace_idx]),
+                    "trace_env0_tcp_height_from_table_m": tcp_height_from_table[trace_idx],
+                    "trace_env0_shelf_escape_ratio": shelf_escape_ratio[trace_idx],
+                    "trace_env0_shelf_escape_reward": shelf_escape_reward[trace_idx],
+                    "trace_env0_pre_escape_height_reward": pre_escape_height_reward[trace_idx],
+                    "trace_env0_pre_escape_support_contact_peak": self.pre_escape_support_contact_peak[trace_idx],
+                    "trace_env0_pre_escape_support_touch_penalty": pre_escape_support_touch_penalty[trace_idx],
+                    "trace_env0_startup_escape_assist_alpha": self.startup_escape_assist_alpha[trace_idx],
+                    "trace_env0_startup_joint_hard_lock_alpha": self.startup_joint_hard_lock_alpha[trace_idx],
+                    "trace_env0_post_lock_anti_drop_alpha": self.post_lock_anti_drop_alpha[trace_idx],
+                    "trace_env0_arm_collision_over": collision_over_penalty[trace_idx],
+                    "trace_env0_y_signed_align": y_signed_align[trace_idx],
+                    "trace_env0_ee_body_speed": self.ee_body_speed[trace_idx],
+                    "trace_env0_time_ratio": time_ratio[trace_idx],
+                    "trace_env0_goal_ok": goal_reached[trace_idx].float(),
+                    "trace_env0_goal_ok_norm": goal_reached_norm[trace_idx].float(),
+                    "trace_env0_shelf_escape_height_ok": shelf_escape_height_ok[trace_idx],
+                }
+            )
         for j_idx in range(1, 7):
             full_log[f"end_goal_abs_err_deg_j{j_idx}_mean"] = getattr(self, f"end_goal_abs_err_deg_j{j_idx}_mean")
             full_log[f"end_goal_abs_err_deg_j{j_idx}_p50"] = getattr(self, f"end_goal_abs_err_deg_j{j_idx}_p50")
@@ -1776,7 +1958,9 @@ class MoveBottleEnv(GripBottleEnv):
             "mean_arm_collision_peak": full_log["mean_arm_collision_peak"],
             "mean_arm_collision_over": full_log["mean_arm_collision_over"],
             "mean_gripper_collision_over": full_log["mean_gripper_collision_over"],
+            "mean_pre_escape_height_reward": full_log["mean_pre_escape_height_reward"],
             "mean_pre_escape_support_touch_penalty": full_log["mean_pre_escape_support_touch_penalty"],
+            "mean_post_lock_anti_drop_alpha": full_log["mean_post_lock_anti_drop_alpha"],
             "space_limit_violation_rate": full_log["space_limit_violation_rate"],
             "mean_space_limit_violation_count": full_log["mean_space_limit_violation_count"],
             "mean_space_limit_min_clearance_m": full_log["mean_space_limit_min_clearance_m"],
@@ -1788,6 +1972,21 @@ class MoveBottleEnv(GripBottleEnv):
             "reset_reason_collision_rate": full_log["reset_reason_collision_rate"],
             "reset_reason_timeout_rate": full_log["reset_reason_timeout_rate"],
         }
+        if self.num_envs > 0:
+            compact_log.update(
+                {
+                    "trace_env0_goal_dist_deg": full_log["trace_env0_goal_dist_deg"],
+                    "trace_env0_tcp_height_from_table_m": full_log["trace_env0_tcp_height_from_table_m"],
+                    "trace_env0_shelf_escape_ratio": full_log["trace_env0_shelf_escape_ratio"],
+                    "trace_env0_pre_escape_height_reward": full_log["trace_env0_pre_escape_height_reward"],
+                    "trace_env0_pre_escape_support_touch_penalty": full_log[
+                        "trace_env0_pre_escape_support_touch_penalty"
+                    ],
+                    "trace_env0_post_lock_anti_drop_alpha": full_log["trace_env0_post_lock_anti_drop_alpha"],
+                    "trace_env0_arm_collision_over": full_log["trace_env0_arm_collision_over"],
+                    "trace_env0_time_ratio": full_log["trace_env0_time_ratio"],
+                }
+            )
         if bool(getattr(self.cfg, "log_compact", True)):
             self.extras["log"] = compact_log
             # Keep full diagnostics available for optional downstream readers.

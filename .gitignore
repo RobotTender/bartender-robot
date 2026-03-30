@@ -1,5 +1,16 @@
-.venv_usd/
-**/.venv_usd/
+# Local virtual environments (do not commit)
+.venv/
+**/.venv/
+.venv*/
+**/.venv*/
+venv/
+**/venv/
+venv*/
+**/venv*/
+
+# Local sync backup artifacts
 test_e0509/.sync_backup_*/
+
+# Keep these local-only task files out of this repo
 test_e0509/e0509_pick_place_k_env.py
 test_e0509/franka_cabinet_env.py
