@@ -112,7 +112,7 @@ def quat_to_rotmat(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
 
 @dataclass
 class PickRlPolicyConfig:
-    policy_path: str = "robot/exported/policy_re.pt"
+    policy_path: str = str(Path(__file__).resolve().parents[4] / "robot" / "exported" / "policy_re.pt")
     joint_state_topic: str = "/dsr01/joint_states"
     base_frame: str = "base_link"
     ee_frame: str = "link_6"
