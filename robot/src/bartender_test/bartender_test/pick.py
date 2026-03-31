@@ -34,10 +34,13 @@ from .defines import (
     GRIPPER_POSITION_OPEN,
     GRIPPER_FORCE_DEFAULT,
     BOTTLE_CONFIG,
+    PICK_PLACE_Z,
     PICK_PLACE_X_OFFSET,
     PICK_PLACE_Y_OFFSET,
     VEL_READY,
     ACC_READY,
+    VEL_APPROACH,
+    ACC_APPROACH,
     VEL_LIFT,
     ACC_LIFT,
     VEL_RETREAT,
@@ -141,8 +144,9 @@ class PickRlPolicyConfig:
 
     goal_y_tolerance: float = 0.02 # 0.15
     pos_tolerance_m: float = 0.012
-    stop_vel_tolerance_rad_s: float = 0.03
-    settle_count: int = 12
+    stop_vel_tolerance_rad_s: float = 0.01
+    stop_spread_tolerance: float = 0.005
+    settle_count: int = 15
 
     dof_velocity_scale: float = 0.1
     joint_vel_lpf_alpha: float = 0.20
@@ -351,7 +355,6 @@ class RobotControllerNode(Node):
         if self.arm_q_targets is None:
             self.arm_q_targets = self.q_meas.copy()
         elif np.linalg.norm(self.arm_q_targets - self.q_meas) > 0.2:
-            self.get_logger().warn("arm_q_targets desynced. resyncing to measured q.")
             self.arm_q_targets = self.q_meas.copy()
 
         if len(msg.velocity) >= 6:
@@ -627,7 +630,7 @@ class RobotControllerNode(Node):
         if self.last_qd_cmd is None:
             qdd_cmd_send = np.zeros_like(qd_cmd_send)
         else:
-            qdd_cmd_send = (qd_cmd_send - self.last_qd_cmd) / max(self.servo_dt, 1e-6)
+            qdd_cmd_send = (q_cmd_send - self.last_qd_cmd) / max(self.servo_dt, 1e-6)
         qdd_cmd_send = clamp(qdd_cmd_send, -self.per_joint_acc_limit, self.per_joint_acc_limit)
 
         self._send_servoj_rt(q_cmd_send, qd_cmd_send, qdd_cmd_send, self.servo_dt)
@@ -637,7 +640,7 @@ class RobotControllerNode(Node):
         self.last_qd_cmd = qd_cmd_send.copy()
         self.last_qdd_cmd = qdd_cmd_send.copy()
 
-    def _check_goal(self, robot_grasp_pos_w: np.ndarray, object_grasp_pos_w: np.ndarray) -> bool:
+    def _check_goal(self, robot_grasp_pos_w: np.ndarray, object_grasp_pos_w: np.ndarray, verbose: bool = False) -> bool:
         to_object = object_grasp_pos_w - robot_grasp_pos_w
         xz_error = float(np.linalg.norm(to_object[[0, 2]]))
         y_error = float(abs(to_object[1]))
@@ -647,20 +650,33 @@ class RobotControllerNode(Node):
         else:
             speed = float(np.linalg.norm(self.last_qd_cmd))
 
+        is_stable = False
+        spread = 0.0
+        if len(self.pos_history) >= self.rl_cfg.settle_count:
+            pos_history_np = np.array(self.pos_history)
+            min_p = np.min(pos_history_np, axis=0)
+            max_p = np.max(pos_history_np, axis=0)
+            spread = float(np.linalg.norm(max_p - min_p))
+            if spread < self.rl_cfg.stop_spread_tolerance: # Strict 5mm spread requirement
+                is_stable = True
+
+        # STRICT CONVERGENCE: Close AND Slow (<0.01 rad/s) AND Stable (<5mm jitter)
         if (
-            xz_error < self.rl_cfg.pos_tolerance_m
-            and y_error < self.rl_cfg.goal_y_tolerance
-            and speed < self.rl_cfg.stop_vel_tolerance_rad_s
+            #xz_error < self.rl_cfg.pos_tolerance_m
+            #and y_error < self.rl_cfg.goal_y_tolerance
+            speed < self.rl_cfg.stop_vel_tolerance_rad_s # Now 0.01
+            and is_stable
         ):
             self.reached_counter += 1
         else:
             self.reached_counter = 0
 
-        self.get_logger().info(
-            f"[RL_GOAL_CHECK] xz_error={xz_error:.4f} "
-            f"y_error={y_error:.4f} speed={speed:.4f} "
-            f"counter={self.reached_counter}/{self.rl_cfg.settle_count}"
-        )
+        if verbose:
+            self.get_logger().info(
+                f"[RL_GOAL] xz_err={xz_error:.4f} y_err={y_error:.4f} "
+                f"speed={speed:.4f} spread={spread:.4f} stable={is_stable} "
+                f"counter={self.reached_counter}/{self.rl_cfg.settle_count}"
+            )
         return self.reached_counter >= self.rl_cfg.settle_count
 
     def _move_to_rl_ready_pose(self):
@@ -702,98 +718,122 @@ class RobotControllerNode(Node):
         self.next_policy_qd_cmd = None
         self.next_policy_qdd_cmd = None
         self.reached_counter = 0
+        self.pos_history = []
         self.start_time_monotonic = time.monotonic()
+        last_log_time = 0.0
 
         dt_policy = self.policy_dt
         dt_servo = self.servo_dt
         servo_per_policy = max(1, int(round(self.rl_cfg.servo_hz / self.rl_cfg.policy_hz)))
-        max_policy_steps = int(self.rl_cfg.policy_hz * 20.0 * 10.0)
+        max_policy_steps = int(self.rl_cfg.policy_hz * 200.0)
 
         self.get_logger().info(
             f"[RL] start target_xyz_m={np.round(target_xyz_m, 4).tolist()}, "
             f"policy_hz={self.rl_cfg.policy_hz:.1f}, servo_hz={self.rl_cfg.servo_hz:.1f}"
         )
 
-        for step in range(max_policy_steps):
-            if self.q_meas is None:
-                time.sleep(dt_policy)
-                continue
+        success = False
+        try:
+            for step in range(max_policy_steps):
+                if self.q_meas is None:
+                    time.sleep(dt_policy)
+                    continue
 
-            dq_now = self.dq_meas.copy() if self.dq_meas is not None else np.zeros(6, dtype=np.float64)
-            ee_state = self._get_ee_pose()
-            if ee_state is None:
-                self.get_logger().warn("[RL] Waiting for TF ee pose...")
-                time.sleep(dt_policy)
-                continue
+                dq_now = self.dq_meas.copy() if self.dq_meas is not None else np.zeros(6, dtype=np.float64)
+                ee_state = self._get_ee_pose()
+                if ee_state is None:
+                    self.get_logger().warn("[RL] Waiting for TF ee pose...")
+                    time.sleep(dt_policy)
+                    continue
 
-            ee_pos, ee_rot = ee_state
-            robot_grasp_pos_w = self._get_robot_grasp_pos_w(ee_pos, ee_rot)
-            object_grasp_pos_w = target_xyz_m.copy()
-            tcp_axis_w = self._get_tcp_axis_w(ee_rot)
-            gripper_axis_w = self._get_gripper_axis_w(ee_rot)
-            object_axis_w = self._get_object_axis_w()
-            axis_align = float(np.clip(np.dot(gripper_axis_w, object_axis_w), -1.0, 1.0))
+                ee_pos, ee_rot = ee_state
+                robot_grasp_pos_w = self._get_robot_grasp_pos_w(ee_pos, ee_rot)
+                object_grasp_pos_w = target_xyz_m.copy()
+                tcp_axis_w = self._get_tcp_axis_w(ee_rot)
+                gripper_axis_w = self._get_gripper_axis_w(ee_rot)
+                object_axis_w = self._get_object_axis_w()
+                axis_align = float(np.clip(np.dot(gripper_axis_w, object_axis_w), -1.0, 1.0))
 
-            q_obs_10 = (
-                self.q_obs_10.copy()
-                if self.q_obs_10 is not None
-                else np.concatenate([self.q_meas.copy(), self.rl_cfg.extra_pos_dim_4], axis=0)
-            )
-            dq_obs_10 = (
-                self.dq_obs_10.copy()
-                if self.dq_obs_10 is not None
-                else np.concatenate([dq_now.copy(), self.rl_cfg.extra_vel_dim_4], axis=0)
-            )
+                q_obs_10 = (
+                    self.q_obs_10.copy()
+                    if self.q_obs_10 is not None
+                    else np.concatenate([self.q_meas.copy(), self.rl_cfg.extra_pos_dim_4], axis=0)
+                )
+                dq_obs_10 = (
+                    self.dq_obs_10.copy()
+                    if self.dq_obs_10 is not None
+                    else np.concatenate([dq_now.copy(), self.rl_cfg.extra_vel_dim_4], axis=0)
+                )
 
-            obs = self._build_obs_27(
-                q_obs_10=q_obs_10,
-                dq_obs_10=dq_obs_10,
-                robot_grasp_pos_w=robot_grasp_pos_w,
-                object_grasp_pos_w=object_grasp_pos_w,
-                tcp_axis_w=tcp_axis_w,
-                gripper_axis_w=gripper_axis_w,
-                object_axis_w=object_axis_w,
-            )
+                obs = self._build_obs_27(
+                    q_obs_10=q_obs_10,
+                    dq_obs_10=dq_obs_10,
+                    robot_grasp_pos_w=robot_grasp_pos_w,
+                    object_grasp_pos_w=object_grasp_pos_w,
+                    tcp_axis_w=tcp_axis_w,
+                    gripper_axis_w=gripper_axis_w,
+                    object_axis_w=object_axis_w,
+                )
 
-            raw_action = self.policy.infer(obs)
-            if raw_action.shape[0] != 6:
-                raise RuntimeError(f"Policy output dim must be 6, got {raw_action.shape[0]}")
+                raw_action = self.policy.infer(obs)
+                if raw_action.shape[0] != 6:
+                    raise RuntimeError(f"Policy output dim must be 6, got {raw_action.shape[0]}")
 
-            action = clamp(raw_action, -1.0, 1.0)
-            q_cmd, qd_cmd, qdd_cmd = self._make_joint_command(
-                q_now=self.q_meas.copy(),
-                dq_now=dq_now,
-                action=action,
-                dt=dt_policy,
-            )
+                action = clamp(raw_action, -1.0, 1.0)
+                q_cmd, qd_cmd, qdd_cmd = self._make_joint_command(
+                    q_now=self.q_meas.copy(),
+                    dq_now=dq_now,
+                    action=action,
+                    dt=dt_policy,
+                )
 
-            self.latest_action = action.copy()
-            self.next_policy_q_cmd = q_cmd.copy()
-            self.next_policy_qd_cmd = qd_cmd.copy()
-            self.next_policy_qdd_cmd = qdd_cmd.copy()
-            self.last_robot_grasp_pos_w = robot_grasp_pos_w.copy()
-            self.last_object_grasp_pos_w = object_grasp_pos_w.copy()
-            self.last_axis_align = axis_align
+                self.latest_action = action.copy()
+                self.next_policy_q_cmd = q_cmd.copy()
+                self.next_policy_qd_cmd = qd_cmd.copy()
+                self.next_policy_qdd_cmd = qdd_cmd.copy()
+                self.last_robot_grasp_pos_w = robot_grasp_pos_w.copy()
+                self.last_object_grasp_pos_w = object_grasp_pos_w.copy()
+                self.last_axis_align = axis_align
 
-            for _ in range(servo_per_policy):
-                self._servo_interpolate_and_send()
-                time.sleep(dt_servo)
+                for _ in range(servo_per_policy):
+                    self._servo_interpolate_and_send()
+                    time.sleep(dt_servo)
 
-            err = object_grasp_pos_w - robot_grasp_pos_w
-            dist = float(np.linalg.norm(err))
-            self.get_logger().info(
-                f"[RL] step={step:03d} dist={dist:.4f} "
-                f"err={np.round(err, 4).tolist()} "
-                f"action={np.round(action, 4).tolist()} "
-                f"target={object_grasp_pos_w}"
-            )
+                self.pos_history.append(robot_grasp_pos_w.copy())
+                if len(self.pos_history) > self.rl_cfg.settle_count:
+                    self.pos_history.pop(0)
 
-            if self._check_goal(robot_grasp_pos_w, object_grasp_pos_w):
-                self.get_logger().info("[RL] target reached and settled.")
-                return True
+                now = time.monotonic()
+                should_log = (now - last_log_time) > 1.0 # 1Hz logging
+                if should_log:
+                    err = object_grasp_pos_w - robot_grasp_pos_w
+                    dist = float(np.linalg.norm(err))
+                    self.get_logger().info(
+                        f"[RL] step={step:03d} dist={dist:.4f} "
+                        f"err={np.round(err, 4).tolist()} "
+                        f"target={object_grasp_pos_w}"
+                    )
+                    last_log_time = now
 
-            self._publish_target(object_grasp_pos_w)
+                if self._check_goal(robot_grasp_pos_w, object_grasp_pos_w, verbose=should_log):
+                    self.get_logger().info("=" * 50)
+                    self.get_logger().info("[RL] status: DONE. Target reached and converged.")
+                    self.get_logger().info("=" * 50)
+                    success = True
+                    break
 
+                self._publish_target(object_grasp_pos_w)
+        finally:
+            self.arm_q_targets = None
+            self.next_policy_q_cmd = None
+            self.next_policy_qd_cmd = None
+            self.next_policy_qdd_cmd = None
+            # Clear target publication to stop data stream
+            self._publish_target(np.zeros(3))
+            self.get_logger().info("[RL] status: TERMINATED. Logging and data transmission stopped.")
+
+        if success:
+            return True
         raise RuntimeError("RL approach timeout")
 
     def load_yolo(self):
@@ -833,7 +873,7 @@ class RobotControllerNode(Node):
         return CancelResponse.ACCEPT
 
     def execute_callback(self, goal_handle):
-        from DSR_ROBOT2 import movej, set_robot_mode, wait, ROBOT_MODE_AUTONOMOUS
+        from DSR_ROBOT2 import movej, movel, get_current_posx, set_robot_mode, wait, ROBOT_MODE_AUTONOMOUS, DR_BASE, DR_TOOL, DR_MV_MOD_REL
 
         self.get_logger().info(f'--- [PICK] EXECUTION STARTED for: {goal_handle.request.bottle_name} ---')
         feedback_msg = PickBottle.Feedback()
@@ -901,6 +941,32 @@ class RobotControllerNode(Node):
                 self.get_logger().warn("Cancel requested during Step 3.")
                 return self._abort(goal_handle, result)
 
+            # --- POST-RL SEQUENCE ---
+            self.get_logger().info("Step 3.1: Moving to Base Z=650mm with target orientation...")
+            curr_posx = list(get_current_posx()[0])
+            # Move to Z=650 while keeping current X,Y and Orientation from the end of RL.
+            # Applying offsets referenced in Base frame.
+            target_base_pregrasp = [
+                p_robot[0] + PICK_PLACE_X_OFFSET,
+                p_robot[1] + PICK_PLACE_Y_OFFSET,
+                650.0, 
+                curr_posx[3], curr_posx[4], curr_posx[5]
+            ]
+            movel(target_base_pregrasp, vel=[40.0, 40.0], acc=[40.0, 40.0], ref=DR_BASE)
+
+            self.get_logger().info("Step 3.2: Moving in Tool frame to reach bottle height...")
+            # Capture actual position after Step 3.1 to compute true remaining distance
+            pos_after_z650 = list(get_current_posx()[0])
+            current_xyz = np.array(pos_after_z650[:3])
+            bottle_xyz = np.array(p_robot[:3])
+            
+            # Distance from current position to target bottle position
+            tool_move_dist = float(np.linalg.norm(bottle_xyz - current_xyz))
+            self.get_logger().info(f"Remaining distance to target: {tool_move_dist:.2f}mm. Moving in Tool frame.")
+            
+            # Move relative in Tool Frame along the Z-axis (magnitude of calculated distance)
+            #movel([0.0, 0.0, tool_move_dist, 0.0, 0.0, 0.0], vel=[VEL_APPROACH, VEL_APPROACH], acc=[ACC_APPROACH, ACC_APPROACH], ref=DR_TOOL, mod=DR_MV_MOD_REL)
+
             self.get_logger().info("Step 4: Executing grasp logic...")
             feedback_msg.current_state, feedback_msg.progress = "STEP 4: GRASPING", 0.7
             goal_handle.publish_feedback(feedback_msg)
@@ -926,7 +992,7 @@ class RobotControllerNode(Node):
         return result
 
     def _grasp_logic(self, target_name):
-        from DSR_ROBOT2 import movel, get_current_posx, fkin
+        from DSR_ROBOT2 import movel, get_current_posx, fkin, DR_BASE
         cfg = BOTTLE_CONFIG.get(target_name, BOTTLE_CONFIG['soju'])
         self.get_logger().info(f"Grasp logic for {target_name}, closing gripper to {cfg['gripper_pos']}")
         self._gripper_move_sync(cfg['gripper_pos'], cfg['gripper_force'])
@@ -940,15 +1006,15 @@ class RobotControllerNode(Node):
         curr = list(get_current_posx()[0])
         self.get_logger().info("Lifting bottle (+30mm Z)")
         target_pos_lift = [curr[0], curr[1], curr[2] + 30.0, curr[3], curr[4], curr[5]]
-        movel(target_pos_lift, vel=[VEL_LIFT, VEL_LIFT], acc=[ACC_LIFT, ACC_LIFT])
+        movel(target_pos_lift, vel=[VEL_LIFT, VEL_LIFT], acc=[ACC_LIFT, ACC_LIFT], ref=DR_BASE)
 
-        ready_posx = list(fkin(POSJ_PICK_READY, ref=0))
+        ready_posx = list(fkin(POSJ_PICK_READY, ref=DR_BASE))
         ready_y = ready_posx[1]
 
         curr_lifted = list(get_current_posx()[0])
         self.get_logger().info(f"Retreating Y to {ready_y:.1f}")
         target_pos_retreat = [curr_lifted[0], ready_y, curr_lifted[2], curr_lifted[3], curr_lifted[4], curr_lifted[5]]
-        movel(target_pos_retreat, vel=[VEL_RETREAT, VEL_RETREAT], acc=[ACC_RETREAT, ACC_RETREAT])
+        movel(target_pos_retreat, vel=[VEL_RETREAT, VEL_RETREAT], acc=[ACC_RETREAT, ACC_RETREAT], ref=DR_BASE)
         return True
 
     def _gripper_move_sync(self, pos, force):
