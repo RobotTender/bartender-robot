@@ -965,7 +965,7 @@ class RobotControllerNode(Node):
             self.get_logger().info(f"Remaining distance to target: {tool_move_dist:.2f}mm. Moving in Tool frame.")
             
             # Move relative in Tool Frame along the Z-axis (magnitude of calculated distance)
-            #movel([0.0, 0.0, tool_move_dist, 0.0, 0.0, 0.0], vel=[VEL_APPROACH, VEL_APPROACH], acc=[ACC_APPROACH, ACC_APPROACH], ref=DR_TOOL, mod=DR_MV_MOD_REL)
+            #movel([0.0, 0.0, tool_move_dist, 0.0, 0.0, 0.0], vel=[40.0, 40.0], acc=[40.0, 40.0], ref=DR_TOOL, mod=DR_MV_MOD_REL)
 
             self.get_logger().info("Step 4: Executing grasp logic...")
             feedback_msg.current_state, feedback_msg.progress = "STEP 4: GRASPING", 0.7
