@@ -7,27 +7,27 @@
   - `/IsaacLab/source/isaaclab_tasks/isaaclab_tasks/direct/test_e0509`
 - 즉, `direct` 아래에 `test_e0509` 폴더 전체(현재 폴더)를 그대로 넣어야 합니다.
 - 학습/체크포인트 운영 메모는 [TRAINING.md](./TRAINING.md)를 참고하세요.
-- USD 자산 자체의 역할과 보존 기준은 [USD/README.md](./USD/README.md)를 참고하세요.
+- USD 모델 자체의 역할과 보존 기준은 [USD/README.md](./USD/README.md)를 참고하세요.
 - sim2real 실행법, ROS2/실기 연결법, 체크포인트 교체법은 상위 문서인 [`../README.md`](../README.md)를 참고하세요.
 
 읽는 순서 추천:
 
 - 이 문서: 관측/액션 의미, 정규화 기준, stage 차이
 - `TRAINING.md`: 학습/재생/평가 메모
-- `USD/README.md`: 워크스페이스/로봇/오브젝트 USD 자산 메모
+- `USD/README.md`: 워크스페이스/로봇/오브젝트 USD 모델 메모
 - 루트 `README.md`: sim2real 이식/연결/실행 방법
 
 ## 환경 시나리오 요약 (Grip Bottle 기준)
 
 이전 브랜치 README에서 쓰던 "환경 맥락"을 유지해서 정리하면 아래와 같습니다.
 
-- 로봇 에셋:
+- 로봇 모델:
   - `USD/e0509/e0509_model.usd`: Doosan E0509 암 + RH-P12-RN(A) 그리퍼 결합 모델(암 `joint_1~joint_6`, 그리퍼 `rh_r1_joint` 기준 제어)
-- 워크스페이스 에셋:
+- 워크스페이스 모델:
   - `USD/table_hole.usd`: 로봇이 얹히는 작업대(워크스페이스) 모델
   - `USD/tables_3.usd`: 실제 환경을 반영한 선반/테이블 배경 모델(오브젝트 위치 맥락/충돌 공간 반영)
     - 모델 내부 고정 오프셋: `(-55, 1120, 728) mm` (`(-0.055, 1.120, 0.728) m`)
-- 오브젝트 에셋:
+- 오브젝트 모델:
   - `USD/soju.usd`, `USD/orange.usd`, `USD/beer.usd`: 랜덤 active 병 후보 3종
 
 배치/해석 포인트:
@@ -49,7 +49,7 @@
 
 ## 환경 시나리오 요약 (Move Bottle 기준)
 
-MoveBottle은 GripBottleEnv를 상속하므로, 기본 scene 에셋(로봇/선반 USD 경로)은 동일하게 사용합니다.
+MoveBottle은 GripBottleEnv를 상속하므로, 기본 scene 구성(로봇/선반 USD 경로)은 동일하게 사용합니다.
 
 핵심 차이:
 
