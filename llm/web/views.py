@@ -3,14 +3,14 @@ import json
 import sys
 import logging
 
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_POST
 from django.views import View
 
 from web.order_engine.common import MENU_LABELS
 from web.order_engine.stt_pipeline import transcribe_audio_bytes
-from web.order_engine.tts_pipeline import synthesize_speech
+from web.order_engine.tts_pipeline import stream_speech, synthesize_speech
 from web.order_engine.robot_topic import _start_robot_topic_publish
 
 ORDER_ENGINE_DIR = Path(__file__).resolve().parent / "order_engine"
@@ -103,6 +103,7 @@ def stt_transcribe(request):
         "status": saved_status,
         "emotion": result.emotion,
         "recommend_menu": recommend_menu,
+        "selected_menu": session_state.get("selected_menu", ""),
         "reason": result.reason,
         "retry": saved_retry,
         "ratio": saved_ratio,
@@ -126,6 +127,7 @@ def stt_transcribe(request):
         "status": new_status,
         "retry": new_retry,
         "recommend_menu": new_recommend_menu,
+        "selected_menu": selected_menu,
         "ratio": new_ratio,
         "ratio_reason": new_ratio_reason,
     }
@@ -174,6 +176,26 @@ def robot_status(request):
 
 
 class TTSView(View):
+    def get(self, request):
+        text = request.GET.get("text", "").strip()
+        if not text:
+            return JsonResponse({"error": "text is required"}, status=400)
+
+        try:
+            response = StreamingHttpResponse(
+                stream_speech(text),
+                content_type="audio/wav",
+            )
+        except Exception as exc:
+            status_code = getattr(exc, "status_code", 500)
+            if not isinstance(status_code, int):
+                status_code = 500
+            return JsonResponse({"error": str(exc)}, status=status_code)
+
+        response["Content-Disposition"] = 'inline; filename="synthesized.wav"'
+        response["Cache-Control"] = "no-store"
+        return response
+
     def post(self, request):
         text = request.POST.get("text", "").strip()
         if not text:

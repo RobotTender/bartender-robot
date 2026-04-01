@@ -522,30 +522,12 @@
       statusEl.textContent = "Speaking...";
       micBtn.disabled = true;
 
-      const formData = new FormData();
-      formData.append("text", text);
-
-      const response = await fetch(ttsUrl, {
-        method: "POST",
-        headers: { "X-CSRFToken": csrfToken },
-        body: formData,
-      });
-
-      if (!response.ok) {
-        let message = "TTS failed";
-        try {
-          const data = await response.json();
-          message = data.error || message;
-        } catch (_e) {}
-        throw new Error(message);
+      if (currentAudio) currentAudio.pause();
+      if (currentAudioUrl && currentAudioUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(currentAudioUrl);
       }
 
-      const audioBlob = await response.blob();
-
-      if (currentAudio) currentAudio.pause();
-      if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
-
-      currentAudioUrl = URL.createObjectURL(audioBlob);
+      currentAudioUrl = ttsUrl + "?text=" + encodeURIComponent(text);
       currentAudio = new Audio(currentAudioUrl);
       await currentAudio.play();
       await new Promise(function (resolve) {
