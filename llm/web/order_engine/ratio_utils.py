@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -21,6 +22,15 @@ RATIO_INGREDIENTS = {
     "somaek": ("소주", "맥주"),
     "koktail": ("소주", "주스"),
 }
+
+
+def extract_ratio_from_text(text: str) -> str:
+    normalized = (text or "").replace(" ", "")
+    match = re.search(r"(1)\s*[:：대]\s*(1|2|5)", normalized)
+    if not match:
+        return ""
+    ratio = f"{match.group(1)}:{match.group(2)}"
+    return ratio if ratio in RATIO_MAP else ""
 
 
 def select_ratio_with_llm(menu: str, text: str, emotion: str, user_profile: dict | None) -> tuple[str, str]:

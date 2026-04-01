@@ -57,7 +57,8 @@ def make_order_node(state: GraphState) -> GraphState:
     status = state.get("status")
     text = str(state.get("input_text", "") or "").strip()
     detected = detect_menu_from_text(text)
-    recommend_menu = detected if detected else state.get("recommend_menu", "")
+    context_menu = state.get("recommend_menu", "") or state.get("selected_menu", "")
+    recommend_menu = detected if detected else context_menu
     retry = state.get("retry")
     selected_menu = state.get("selected_menu", "")
     ratio = state.get("ratio", "")
@@ -94,6 +95,7 @@ def make_order_node(state: GraphState) -> GraphState:
         **state,
         "retry": retry,
         "status": status,
+        "recommend_menu": recommend_menu,
         "selected_menu":selected_menu,
         "tts_text":tts_text
     }
